@@ -16,8 +16,7 @@ new MaterialManager(device, canvas, ctx);
 new PipelineManager(device, canvas, ctx);
 const mainLayer = new MainLayer(device, canvas, ctx, 200, 200)
 const loader = new GLTFLoader()
-const {meshes, root} = await loader.load("/m.glb")
-console.log(root.listExtensionsUsed())
+const {meshes, root} = await loader.load("/a.glb")
 const computeBoundingSphere = new ComputeFrustumCulling()
 const modelRenderer = new ModelRenderer(device, canvas, ctx, root, computeBoundingSphere);
 

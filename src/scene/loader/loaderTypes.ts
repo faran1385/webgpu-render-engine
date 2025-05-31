@@ -1,11 +1,6 @@
 import {Material, vec2, vec4} from "@gltf-transform/core";
 import {vec3} from "gl-matrix";
 
-export type AttributeFormat =
-    | 'float32'
-    | 'float32x2'
-    | 'float32x3'
-    | 'float32x4';
 
 export type LODRange = { start: number; count: number, baseVertex: number };
 export type AttributeData = { array: Float32Array; itemSize: number };
@@ -206,9 +201,9 @@ export const enum PipelineFlags {
     OPACITY = 1 << 15,
     GLOSSINESS_SPECULAR = 1 << 16,
     SPECULAR_FO = 1 << 17,
-    CLEARCOAT_TEXTURE = 1 << 18,
-    CLEARCOAT_ROUGHNESS_TEXTURE = 1 << 19,
-    CLEARCOAT__NORMAL_TEXTURE = 1 << 20,
+    CLEARCOAT = 1 << 18,
+    CLEARCOAT_ROUGHNESS = 1 << 19,
+    CLEARCOAT__NORMAL = 1 << 20,
 }
 
 export const enum ResourcesBindingPoints {
@@ -277,6 +272,6 @@ export type ShaderFlag =
     | PipelineFlags.OPACITY
     | PipelineFlags.GLOSSINESS_SPECULAR
     | PipelineFlags.SPECULAR_FO
-    | PipelineFlags.CLEARCOAT_TEXTURE
-    | PipelineFlags.CLEARCOAT_ROUGHNESS_TEXTURE
-    | PipelineFlags.CLEARCOAT__NORMAL_TEXTURE
+    | PipelineFlags.CLEARCOAT
+    | PipelineFlags.CLEARCOAT_ROUGHNESS
+    | PipelineFlags.CLEARCOAT__NORMAL

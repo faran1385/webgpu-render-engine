@@ -65,13 +65,13 @@ export const determineShaderCode = (
                 }
                 
                 @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
-                ${decodedMaterial.hasBaseColorTexture ? `@group(1) @binding(${ResourcesBindingPoints.BASE_COLOR_TEXTURE}) var targetTexture : texture_2d<f32>;` : ''}
+                ${decodedMaterial.hasBaseColorTexture ? `@group(1) @binding(${ResourcesBindingPoints.BASE_COLOR_TEXTURE}) var baseColorTexture : texture_2d<f32>;` : ''}
                 ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
                 @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
                 
                 @fragment fn fs(in:vsOut)->@location(0) vec4f{
                     let colorFactor=vec4f(factors[0],factors[1],factors[2],factors[3]);
-                    ${decodedMaterial.hasBaseColorTexture ? 'var model=textureSample(targetTexture,textureSampler,in.uv);' : ''}
+                    ${decodedMaterial.hasBaseColorTexture ? 'var model=textureSample(baseColorTexture,textureSampler,in.uv);' : ''}
                     ${decodedMaterial.hasBaseColorTexture ? 'model=model * colorFactor;' : ''}
                     let alphaValue=${decodedMaterial.hasBaseColorTexture ? 'model.a' : 'colorFactor.a'};
                     let alphaCutOff=factors[15];
@@ -105,13 +105,13 @@ export const determineShaderCode = (
                 }
                 
                 @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
-                ${decodedMaterial.hasBaseColorTexture ? `@group(1) @binding(${ResourcesBindingPoints.BASE_COLOR_TEXTURE}) var targetTexture : texture_2d<f32>;` : ''}
+                ${decodedMaterial.hasBaseColorTexture ? `@group(1) @binding(${ResourcesBindingPoints.BASE_COLOR_TEXTURE}) var baseColorTexture : texture_2d<f32>;` : ''}
                 ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
                 @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
                 
                 @fragment fn fs(in:vsOut)->@location(0) vec4f{
                     let colorFactor=vec4f(factors[0],factors[1],factors[2],factors[3]);
-                    ${decodedMaterial.hasBaseColorTexture ? 'var model=textureSample(targetTexture,textureSampler,in.uv);' : ''}
+                    ${decodedMaterial.hasBaseColorTexture ? 'var model=textureSample(baseColorTexture,textureSampler,in.uv);' : ''}
                     ${decodedMaterial.hasBaseColorTexture ? 'model=model * colorFactor;' : ''}
                     let alphaValue=${decodedMaterial.hasBaseColorTexture ? 'model.a' : 'colorFactor.a'};
                     let alphaCutOff=factors[15];
@@ -146,22 +146,22 @@ export const determineShaderCode = (
                 }
                 
                 @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
-                ${decodedMaterial.hasEmissiveTexture ? `@group(1) @binding(${ResourcesBindingPoints.EMISSIVE_TEXTURE}) var targetTexture : texture_2d<f32>;` : ''}
+                ${decodedMaterial.hasEmissiveTexture ? `@group(1) @binding(${ResourcesBindingPoints.EMISSIVE_TEXTURE}) var emissiveTexture : texture_2d<f32>;` : ''}
                 ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
                 @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
                 
                 @fragment fn fs(in:vsOut)->@location(0) vec4f{
-                    let colorFactor=vec4f(vec3f(factors[4],factors[5],factors[6]) * factors[14],1.);
-                    ${decodedMaterial.hasEmissiveTexture ? 'var model=textureSample(targetTexture,textureSampler,in.uv);' : ''}
-                    ${decodedMaterial.hasEmissiveTexture ? 'model=model * colorFactor;' : ''}
-                    let alphaValue=${decodedMaterial.hasEmissiveTexture ? 'model.a' : 'colorFactor.a'};
+                    let emissiveFactor=vec4f(vec3f(factors[4],factors[5],factors[6]) * factors[14],1.);
+                    ${decodedMaterial.hasEmissiveTexture ? 'var model=textureSample(emissiveTexture,textureSampler,in.uv);' : ''}
+                    ${decodedMaterial.hasEmissiveTexture ? 'model=model * emissiveFactor;' : ''}
+                    let alphaValue=${decodedMaterial.hasEmissiveTexture ? 'model.a' : 'emissiveFactor.a'};
                     let alphaCutOff=factors[15];
                     
                     if(i32(alphaMode) == 2 && alphaValue < alphaCutOff){
                         discard;
                     }
                     let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
-                    ${decodedMaterial.hasEmissiveTexture ? 'return vec4f(model.xyz,alpha);' : 'return vec4f(colorFactor.xyz,alpha);'}
+                    ${decodedMaterial.hasEmissiveTexture ? 'return vec4f(model.xyz,alpha);' : 'return vec4f(emissiveFactor.xyz,alpha);'}
                 }
             `
     } else if (isOcclusion) {
@@ -187,22 +187,22 @@ export const determineShaderCode = (
                 }
                 
                 @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
-                ${decodedMaterial.hasOcclusionTexture ? `@group(1) @binding(${ResourcesBindingPoints.OCCLUSION_TEXTURE}) var targetTexture : texture_2d<f32>;` : ''}
+                ${decodedMaterial.hasOcclusionTexture ? `@group(1) @binding(${ResourcesBindingPoints.OCCLUSION_TEXTURE}) var occlusionTexture : texture_2d<f32>;` : ''}
                 ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
                 @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
                 
                 @fragment fn fs(in:vsOut)->@location(0) vec4f{
-                    let colorFactor=factors[7];
-                    ${decodedMaterial.hasOcclusionTexture ? 'var model=textureSample(targetTexture,textureSampler,in.uv);' : ''}
-                    ${decodedMaterial.hasOcclusionTexture ? 'model=model * colorFactor;' : ''}
-                    let alphaValue=${decodedMaterial.hasOcclusionTexture ? 'model.a' : 'colorFactor'};
+                    let strength=factors[7];
+                    ${decodedMaterial.hasOcclusionTexture ? 'var model=textureSample(occlusionTexture,textureSampler,in.uv);' : ''}
+                    ${decodedMaterial.hasOcclusionTexture ? 'model=model * strength;' : ''}
+                    let alphaValue=${decodedMaterial.hasOcclusionTexture ? 'model.a' : 'strength'};
                     let alphaCutOff=factors[15];
                     
                     if(i32(alphaMode) == 2 && alphaValue < alphaCutOff){
                         discard;
                     }
                     let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
-                    ${decodedMaterial.hasOcclusionTexture ? 'return vec4f(vec3f(model.r),alpha);' : 'return vec4f(vec3f(colorFactor),alpha);'}
+                    ${decodedMaterial.hasOcclusionTexture ? 'return vec4f(vec3f(model.r),alpha);' : 'return vec4f(vec3f(strength),alpha);'}
                 }
             `
     } else if (isNormal) {
@@ -227,22 +227,22 @@ export const determineShaderCode = (
                 }
                 
                 @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
-                ${decodedMaterial.hasNormalTexture ? `@group(1) @binding(${ResourcesBindingPoints.NORMAL_TEXTURE}) var targetTexture : texture_2d<f32>;` : ''}
+                ${decodedMaterial.hasNormalTexture ? `@group(1) @binding(${ResourcesBindingPoints.NORMAL_TEXTURE}) var normalTexture : texture_2d<f32>;` : ''}
                 ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
                 @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
                 
                 @fragment fn fs(in:vsOut)->@location(0) vec4f{
-                    let colorFactor=factors[8];
-                    ${decodedMaterial.hasNormalTexture ? 'var model=textureSample(targetTexture,textureSampler,in.uv);' : ''}
-                    ${decodedMaterial.hasNormalTexture ? 'model=model * colorFactor;' : ''}
-                    let alphaValue=${decodedMaterial.hasNormalTexture ? 'model.a' : 'colorFactor'};
+                    let scale=factors[8];
+                    ${decodedMaterial.hasNormalTexture ? 'var model=textureSample(normalTexture,textureSampler,in.uv);' : ''}
+                    ${decodedMaterial.hasNormalTexture ? 'model=model * scale;' : ''}
+                    let alphaValue=${decodedMaterial.hasNormalTexture ? 'model.a' : 'scale'};
                     let alphaCutOff=factors[15];
                     
                     if(i32(alphaMode) == 2 && alphaValue < alphaCutOff){
                         discard;
                     }
                     let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
-                    ${decodedMaterial.hasNormalTexture ? 'return vec4f(model.xyz,alpha);' : 'return vec4f(vec3f(colorFactor),alpha);'}
+                    ${decodedMaterial.hasNormalTexture ? 'return vec4f(model.xyz,alpha);' : 'return vec4f(vec3f(scale),alpha);'}
                 }
             `
     } else if (isMetallic || isRoughness) {
@@ -268,22 +268,22 @@ export const determineShaderCode = (
                 }
                 
                 @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
-                ${decodedMaterial.hasMetallicRoughnessTex ? `@group(1) @binding(${ResourcesBindingPoints.METALLIC_ROUGHNESS_TEXTURE}) var targetTexture : texture_2d<f32>;` : ''}
+                ${decodedMaterial.hasMetallicRoughnessTex ? `@group(1) @binding(${ResourcesBindingPoints.METALLIC_ROUGHNESS_TEXTURE}) var metallicRoughnessTexture : texture_2d<f32>;` : ''}
                 ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
                 @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
                 
                 @fragment fn fs(in:vsOut)->@location(0) vec4f{
-                    let colorFactor=factors[${isMetallic ? 9 : 10}];
-                    ${decodedMaterial.hasMetallicRoughnessTex ? 'var model=textureSample(targetTexture,textureSampler,in.uv);' : ''}
-                    ${decodedMaterial.hasMetallicRoughnessTex ? 'model=model * colorFactor;' : ''}
-                    let alphaValue=${decodedMaterial.hasMetallicRoughnessTex ? 'model.a' : 'colorFactor'};
+                    let factor=factors[${isMetallic ? 9 : 10}];
+                    ${decodedMaterial.hasMetallicRoughnessTex ? 'var model=textureSample(metallicRoughnessTexture,textureSampler,in.uv);' : ''}
+                    ${decodedMaterial.hasMetallicRoughnessTex ? 'model=model * factor;' : ''}
+                    let alphaValue=${decodedMaterial.hasMetallicRoughnessTex ? 'model.a' : 'factor'};
                     let alphaCutOff=factors[15];
                     
                     if(i32(alphaMode) == 2 && alphaValue < alphaCutOff){
                         discard;
                     }
                     let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
-                    ${decodedMaterial.hasMetallicRoughnessTex ? `return vec4f(vec3f(model.${isMetallic ? 'b' : 'g'}),alpha);` : 'return vec4f(vec3f(colorFactor),alpha);'}
+                    ${decodedMaterial.hasMetallicRoughnessTex ? `return vec4f(vec3f(model.${isMetallic ? 'b' : 'g'}),alpha);` : 'return vec4f(vec3f(factor),alpha);'}
                 }
             `
     } else if (isTransmission) {
@@ -308,22 +308,22 @@ export const determineShaderCode = (
                 }
                 
                 @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
-                ${decodedMaterial.hasTransmissionTexture ? `@group(1) @binding(${ResourcesBindingPoints.TRANSMISSION_TEXTURE}) var targetTexture : texture_2d<f32>;` : ''}
+                ${decodedMaterial.hasTransmissionTexture ? `@group(1) @binding(${ResourcesBindingPoints.TRANSMISSION_TEXTURE}) var transmissionTexture : texture_2d<f32>;` : ''}
                 ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
                 @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
                 
                 @fragment fn fs(in:vsOut)->@location(0) vec4f{
-                    let colorFactor=factors[11];
-                    ${decodedMaterial.hasTransmissionTexture ? 'var model=textureSample(targetTexture,textureSampler,in.uv);' : ''}
-                    ${decodedMaterial.hasTransmissionTexture ? 'model=model * colorFactor;' : ''}
-                    let alphaValue=${decodedMaterial.hasTransmissionTexture ? 'model.a' : 'colorFactor'};
+                    let transmissionFactor=factors[11];
+                    ${decodedMaterial.hasTransmissionTexture ? 'var model=textureSample(transmissionTexture,textureSampler,in.uv);' : ''}
+                    ${decodedMaterial.hasTransmissionTexture ? 'model=model * transmissionFactor;' : ''}
+                    let alphaValue=${decodedMaterial.hasTransmissionTexture ? 'model.a' : 'transmissionFactor'};
                     let alphaCutOff=factors[15];
                     
                     if(i32(alphaMode) == 2 && alphaValue < alphaCutOff){
                         discard;
                     }
                     let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
-                    ${decodedMaterial.hasTransmissionTexture ? `return vec4f(vec3f(model.r),alpha);` : 'return vec4f(vec3f(colorFactor),alpha);'}
+                    ${decodedMaterial.hasTransmissionTexture ? `return vec4f(vec3f(model.r),alpha);` : 'return vec4f(vec3f(transmissionFactor),alpha);'}
                 }
             `
     } else if (isGlossiness) {
@@ -348,22 +348,22 @@ export const determineShaderCode = (
                 }
                 
                 @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
-                ${decodedMaterial.hasGlossinessTexture ? `@group(1) @binding(${ResourcesBindingPoints.GLOSSINESS_TEXTURE}) var targetTexture : texture_2d<f32>;` : ''}
+                ${decodedMaterial.hasGlossinessTexture ? `@group(1) @binding(${ResourcesBindingPoints.GLOSSINESS_TEXTURE}) var glossinessTexture : texture_2d<f32>;` : ''}
                 ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
                 @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
                 
                 @fragment fn fs(in:vsOut)->@location(0) vec4f{
                     let glossinessFactor = factors[12];
-                    ${decodedMaterial.hasGlossinessTexture ? 'var model=textureSample(targetTexture,textureSampler,in.uv);' : ''}
-                    ${decodedMaterial.hasGlossinessTexture ? 'model=model * colorFactor;' : ''}
-                    let alphaValue=${decodedMaterial.hasGlossinessTexture ? 'model.a' : 'colorFactor'};
+                    ${decodedMaterial.hasGlossinessTexture ? 'var model=textureSample(glossinessTexture,textureSampler,in.uv);' : ''}
+                    ${decodedMaterial.hasGlossinessTexture ? 'model=model * glossinessFactor;' : ''}
+                    let alphaValue=${decodedMaterial.hasGlossinessTexture ? 'model.a' : 'glossinessFactor'};
                     let alphaCutOff=factors[15];
                     
                     if(i32(alphaMode) == 2 && alphaValue < alphaCutOff){
                         discard;
                     }
                     let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
-                    ${decodedMaterial.hasGlossinessTexture ? `return vec4f(vec3f(model.a),alpha);` : 'return vec4f(vec3f(colorFactor),alpha);'}
+                    ${decodedMaterial.hasGlossinessTexture ? `return vec4f(vec3f(model.a),alpha);` : 'return vec4f(vec3f(glossinessFactor),alpha);'}
                 }
             `
     } else if (isSpecular) {
@@ -388,22 +388,22 @@ export const determineShaderCode = (
                 }
                 
                 @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
-                ${decodedMaterial.hasSpecularTexture ? `@group(1) @binding(${ResourcesBindingPoints.SPECULAR_TEXTURE}) var targetTexture : texture_2d<f32>;` : ''}
+                ${decodedMaterial.hasSpecularTexture ? `@group(1) @binding(${ResourcesBindingPoints.SPECULAR_TEXTURE}) var specularTexture : texture_2d<f32>;` : ''}
                 ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
                 @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
                 
                 @fragment fn fs(in:vsOut)->@location(0) vec4f{
-                    let colorFactor=factors[13];
-                    ${decodedMaterial.hasSpecularTexture ? 'var model=textureSample(targetTexture,textureSampler,in.uv);' : ''}
-                    ${decodedMaterial.hasSpecularTexture ? 'model=model * colorFactor;' : ''}
-                    let alphaValue=${decodedMaterial.hasSpecularTexture ? 'model.a' : 'colorFactor.a'};
+                    let specularFactor=factors[13];
+                    ${decodedMaterial.hasSpecularTexture ? 'var model=textureSample(specularTexture,textureSampler,in.uv);' : ''}
+                    ${decodedMaterial.hasSpecularTexture ? 'model=model * specularFactor;' : ''}
+                    let alphaValue=${decodedMaterial.hasSpecularTexture ? 'model.a' : 'specularFactor'};
                     let alphaCutOff=factors[15];
                     
                     if(i32(alphaMode) == 2 && alphaValue < alphaCutOff){
                         discard;
                     }
                     let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
-                    ${decodedMaterial.hasSpecularTexture ? `return vec4f(vec3f(model.a),alpha);` : 'return vec4f(colorFactor.xyz,alpha);'}
+                    ${decodedMaterial.hasSpecularTexture ? `return vec4f(vec3f(model.a),alpha);` : 'return vec4f(vec3f(specularFactor),alpha);'}
                 }
             `
     } else if (isSpecularGlossiness) {
@@ -429,22 +429,22 @@ export const determineShaderCode = (
                 }
                 
                 @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
-                ${decodedMaterial.hasGlossinessSpecularTexture ? `@group(1) @binding(${ResourcesBindingPoints.GLOSSINESS_SPECULAR_TEXTURE}) var targetTexture : texture_2d<f32>;` : ''}
+                ${decodedMaterial.hasGlossinessSpecularTexture ? `@group(1) @binding(${ResourcesBindingPoints.GLOSSINESS_SPECULAR_TEXTURE}) var glossinessSpecularTexture : texture_2d<f32>;` : ''}
                 ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
                 @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
                 
                 @fragment fn fs(in:vsOut)->@location(0) vec4f{
-                    let colorFactor=vec4f(vec3f(factors[16],factors[17],factors[18]),1);
-                    ${decodedMaterial.hasGlossinessSpecularTexture ? 'var model=textureSample(targetTexture,textureSampler,in.uv);' : ''}
-                    ${decodedMaterial.hasGlossinessSpecularTexture ? 'model=model * colorFactor;' : ''}
-                    let alphaValue=${decodedMaterial.hasGlossinessSpecularTexture ? 'model.a' : 'colorFactor.a'};
+                    let specularFactor=vec4f(vec3f(factors[16],factors[17],factors[18]),1);
+                    ${decodedMaterial.hasGlossinessSpecularTexture ? 'var model=textureSample(glossinessSpecularTexture,textureSampler,in.uv);' : ''}
+                    ${decodedMaterial.hasGlossinessSpecularTexture ? 'model=model * specularFactor;' : ''}
+                    let alphaValue=${decodedMaterial.hasGlossinessSpecularTexture ? 'model.a' : 'specularFactor.a'};
                     let alphaCutOff=factors[15];
                     
                     if(i32(alphaMode) == 2 && alphaValue < alphaCutOff){
                         discard;
                     }
                     let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
-                    ${decodedMaterial.hasGlossinessSpecularTexture ? `return vec4f(model.xyz,alpha);` : 'return vec4f(colorFactor.xyz,alpha);'}
+                    ${decodedMaterial.hasGlossinessSpecularTexture ? `return vec4f(model.xyz,alpha);` : 'return vec4f(specularFactor.xyz,alpha);'}
                 }
             `
     } else if (isSpecularColor) {
@@ -470,22 +470,22 @@ export const determineShaderCode = (
                 }
                 
                 @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
-                ${decodedMaterial.hasSpecularColorTexture ? `@group(1) @binding(${ResourcesBindingPoints.SPECULAR_FO_TEXTURE}) var targetTexture : texture_2d<f32>;` : ''}
+                ${decodedMaterial.hasSpecularColorTexture ? `@group(1) @binding(${ResourcesBindingPoints.SPECULAR_FO_TEXTURE}) var specularFOTexture : texture_2d<f32>;` : ''}
                 ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
                 @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
                 
                 @fragment fn fs(in:vsOut)->@location(0) vec4f{
-                    let colorFactor=vec4f(vec3f(factors[19],factors[20],factors[21]),1);
-                    ${decodedMaterial.hasSpecularColorTexture ? 'var model=textureSample(targetTexture,textureSampler,in.uv);' : ''}
-                    ${decodedMaterial.hasSpecularColorTexture ? 'model=model * colorFactor;' : ''}
-                    let alphaValue=${decodedMaterial.hasSpecularColorTexture ? 'model.a' : 'colorFactor.a'};
+                    let specularFOFactor=vec4f(vec3f(factors[19],factors[20],factors[21]),1);
+                    ${decodedMaterial.hasSpecularColorTexture ? 'var model=textureSample(specularFOTexture,textureSampler,in.uv);' : ''}
+                    ${decodedMaterial.hasSpecularColorTexture ? 'model=model * specularFOFactor;' : ''}
+                    let alphaValue=${decodedMaterial.hasSpecularColorTexture ? 'model.a' : 'specularFOFactor.a'};
                     let alphaCutOff=factors[15];
                     
                     if(i32(alphaMode) == 2 && alphaValue < alphaCutOff){
                         discard;
                     }
                     let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
-                    ${decodedMaterial.hasSpecularColorTexture ? `return vec4f(model.xyz,alpha);` : 'return vec4f(colorFactor.xyz,alpha);'}
+                    ${decodedMaterial.hasSpecularColorTexture ? `return vec4f(model.xyz,alpha);` : 'return vec4f(specularFOFactor.xyz,alpha);'}
                 }
             `
 
@@ -512,22 +512,22 @@ export const determineShaderCode = (
                 }
                 
                 @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
-                ${decodedMaterial.hasClearcoatTexture ? `@group(1) @binding(${ResourcesBindingPoints.CLEARCOAT_TEXTURE}) var targetTexture : texture_2d<f32>;` : ''}
+                ${decodedMaterial.hasClearcoatTexture ? `@group(1) @binding(${ResourcesBindingPoints.CLEARCOAT_TEXTURE}) var clearcoatTexture : texture_2d<f32>;` : ''}
                 ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
                 @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
                 
                 @fragment fn fs(in:vsOut)->@location(0) vec4f{
-                    let colorFactor=factors[22];
-                    ${decodedMaterial.hasClearcoatTexture ? 'var model=textureSample(targetTexture,textureSampler,in.uv);' : ''}
-                    ${decodedMaterial.hasClearcoatTexture ? 'model=model * colorFactor;' : ''}
-                    let alphaValue=${decodedMaterial.hasClearcoatTexture ? 'model.a' : 'colorFactor'};
+                    let clearcoatFactor=factors[22];
+                    ${decodedMaterial.hasClearcoatTexture ? 'var model=textureSample(clearcoatTexture,textureSampler,in.uv);' : ''}
+                    ${decodedMaterial.hasClearcoatTexture ? 'model=model * clearcoatFactor;' : ''}
+                    let alphaValue=${decodedMaterial.hasClearcoatTexture ? 'model.a' : 'clearcoatFactor'};
                     let alphaCutOff=factors[15];
                     
                     if(i32(alphaMode) == 2 && alphaValue < alphaCutOff){
                         discard;
                     }
                     let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
-                    ${decodedMaterial.hasClearcoatTexture ? `return vec4f(vec3f(model.r),alpha);` : 'return vec4f(vec3f(colorFactor),alpha);'}
+                    ${decodedMaterial.hasClearcoatTexture ? `return vec4f(vec3f(model.r),alpha);` : 'return vec4f(vec3f(clearcoatFactor),alpha);'}
                 }
             `
 
@@ -554,22 +554,22 @@ export const determineShaderCode = (
                 }
                 
                 @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
-                ${decodedMaterial.hasClearcoatNormalTexture ? `@group(1) @binding(${ResourcesBindingPoints.CLEARCOAT__NORMAL_TEXTURE}) var targetTexture : texture_2d<f32>;` : ''}
+                ${decodedMaterial.hasClearcoatNormalTexture ? `@group(1) @binding(${ResourcesBindingPoints.CLEARCOAT__NORMAL_TEXTURE}) var clearcoatNormalTexture : texture_2d<f32>;` : ''}
                 ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
                 @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
                 
                 @fragment fn fs(in:vsOut)->@location(0) vec4f{
-                    let colorFactor=factors[24];
-                    ${decodedMaterial.hasClearcoatNormalTexture ? 'var model=textureSample(targetTexture,textureSampler,in.uv);' : ''}
-                    ${decodedMaterial.hasClearcoatNormalTexture ? 'model=model * colorFactor;' : ''}
-                    let alphaValue=${decodedMaterial.hasClearcoatNormalTexture ? 'model.a' : 'colorFactor'};
+                    let clearcoatNormalScale=factors[24];
+                    ${decodedMaterial.hasClearcoatNormalTexture ? 'var model=textureSample(clearcoatNormalTexture,textureSampler,in.uv);' : ''}
+                    ${decodedMaterial.hasClearcoatNormalTexture ? 'model=model * clearcoatNormalScale;' : ''}
+                    let alphaValue=${decodedMaterial.hasClearcoatNormalTexture ? 'model.a' : 'clearcoatNormalScale'};
                     let alphaCutOff=factors[15];
                     
                     if(i32(alphaMode) == 2 && alphaValue < alphaCutOff){
                         discard;
                     }
                     let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
-                    ${decodedMaterial.hasClearcoatNormalTexture ? `return vec4f(model.xyz,alpha);` : 'return vec4f(vec3f(colorFactor),alpha);'}
+                    ${decodedMaterial.hasClearcoatNormalTexture ? `return vec4f(model.xyz,alpha);` : 'return vec4f(vec3f(clearcoatNormalScale),alpha);'}
                 }
             `
 
@@ -596,22 +596,22 @@ export const determineShaderCode = (
                 }
                 
                 @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
-                ${decodedMaterial.hasClearcoatRoughnessTexture ? `@group(1) @binding(${ResourcesBindingPoints.CLEARCOAT_ROUGHNESS_TEXTURE}) var targetTexture : texture_2d<f32>;` : ''}
+                ${decodedMaterial.hasClearcoatRoughnessTexture ? `@group(1) @binding(${ResourcesBindingPoints.CLEARCOAT_ROUGHNESS_TEXTURE}) var clearcoatRoughnessTexture : texture_2d<f32>;` : ''}
                 ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
                 @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
                 
                 @fragment fn fs(in:vsOut)->@location(0) vec4f{
-                    let colorFactor=factors[23];
-                    ${decodedMaterial.hasClearcoatRoughnessTexture ? 'var model=textureSample(targetTexture,textureSampler,in.uv);' : ''}
-                    ${decodedMaterial.hasClearcoatRoughnessTexture ? 'model=model * colorFactor;' : ''}
-                    let alphaValue=${decodedMaterial.hasClearcoatRoughnessTexture ? 'model.a' : 'colorFactor'};
+                    let roughnessFactor=factors[23];
+                    ${decodedMaterial.hasClearcoatRoughnessTexture ? 'var model=textureSample(clearcoatRoughnessTexture,textureSampler,in.uv);' : ''}
+                    ${decodedMaterial.hasClearcoatRoughnessTexture ? 'model=model * roughnessFactor;' : ''}
+                    let alphaValue=${decodedMaterial.hasClearcoatRoughnessTexture ? 'model.a' : 'roughnessFactor'};
                     let alphaCutOff=factors[15];
                     
                     if(i32(alphaMode) == 2 && alphaValue < alphaCutOff){
                         discard;
                     }
                     let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
-                    ${decodedMaterial.hasClearcoatRoughnessTexture ? `return vec4f(vec3f(model.g),alpha);` : 'return vec4f(vec3f(colorFactor),alpha);'}
+                    ${decodedMaterial.hasClearcoatRoughnessTexture ? `return vec4f(vec3f(model.g),alpha);` : 'return vec4f(vec3f(roughnessFactor),alpha);'}
                 }
             `
 

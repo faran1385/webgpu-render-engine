@@ -97,7 +97,7 @@ export class GLTFLoader {
 
         const geometryData: GeometryData[] = [];
         for (const prim of primitives) {
-
+            console.log(prim.getMode())
             let lodRanges: LODRange[] | undefined = undefined;
             if (prim.getExtras().lodRanges) {
                 lodRanges = prim.getExtras().lodRanges;

@@ -221,7 +221,7 @@ export class Material extends MaterialManager {
         if ((this.selectiveResource === "ALL" || this.selectiveResource.includes(SelectiveResource.SPECULAR_TEXTURE)) && this.materialData.specular?.texture?.array) {
             hash |= MaterialFlags.HasSpecularTexture;
         }
-        if ((this.selectiveResource === "ALL" || this.selectiveResource.includes(SelectiveResource.SPECULAR_COLOR_TEXTURE)) && this.materialData.specularColor?.texture?.array) {
+        if ((this.selectiveResource === "ALL" || this.selectiveResource.includes(SelectiveResource.SPECULAR_FO_TEXTURE)) && this.materialData.specularColor?.texture?.array) {
             hash |= MaterialFlags.HasSpecularColorTexture;
         }
         if ((this.selectiveResource === "ALL" || this.selectiveResource.includes(SelectiveResource.GLOSSINESS_SPECULAR_TEXTURE)) && this.materialData.glossinessSpecular?.texture?.array) {

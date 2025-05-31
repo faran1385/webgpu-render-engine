@@ -205,7 +205,7 @@ export const enum PipelineFlags {
     SPECULAR = 1 << 14,
     OPACITY = 1 << 15,
     GLOSSINESS_SPECULAR = 1 << 16,
-    SPECULAR_COLOR = 1 << 17,
+    SPECULAR_FO = 1 << 17,
     CLEARCOAT_TEXTURE = 1 << 18,
     CLEARCOAT_ROUGHNESS_TEXTURE = 1 << 19,
     CLEARCOAT__NORMAL_TEXTURE = 1 << 20,
@@ -224,7 +224,7 @@ export const enum ResourcesBindingPoints {
     SAMPLER,
     ALPHA,
     GLOSSINESS_SPECULAR_TEXTURE,
-    SPECULAR_COLOR_TEXTURE,
+    SPECULAR_FO_TEXTURE,
     CLEARCOAT_TEXTURE,
     CLEARCOAT_ROUGHNESS_TEXTURE,
     CLEARCOAT__NORMAL_TEXTURE,
@@ -254,7 +254,7 @@ export const enum SelectiveResource {
     UV = 1 << 11,
     DOUBLE_SIDED = 1 << 12,
     GLOSSINESS_SPECULAR_TEXTURE = 1 << 13,
-    SPECULAR_COLOR_TEXTURE = 1 << 14,
+    SPECULAR_FO_TEXTURE = 1 << 14,
     CLEARCOAT_TEXTURE = 1 << 15,
     CLEARCOAT_ROUGHNESS_TEXTURE = 1 << 16,
     CLEARCOAT__NORMAL_TEXTURE = 1 << 17,
@@ -276,7 +276,7 @@ export type ShaderFlag =
     | PipelineFlags.SPECULAR
     | PipelineFlags.OPACITY
     | PipelineFlags.GLOSSINESS_SPECULAR
-    | PipelineFlags.SPECULAR_COLOR
+    | PipelineFlags.SPECULAR_FO
     | PipelineFlags.CLEARCOAT_TEXTURE
     | PipelineFlags.CLEARCOAT_ROUGHNESS_TEXTURE
     | PipelineFlags.CLEARCOAT__NORMAL_TEXTURE

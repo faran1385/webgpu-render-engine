@@ -163,7 +163,7 @@ export class MaterialManager extends BaseLayer {
             texture: {sampleType: "float"}
         })
         if (decodedFlags.hasSpecularColorTexture) bindGroupEntries.push({
-            binding: ResourcesBindingPoints.SPECULAR_COLOR_TEXTURE,
+            binding: ResourcesBindingPoints.SPECULAR_FO_TEXTURE,
             texture: {sampleType: "float"},
             visibility: GPUShaderStage.FRAGMENT
         })
@@ -322,7 +322,7 @@ export class MaterialManager extends BaseLayer {
 
         if (decodedHash.hasSpecularColorTexture) {
             entries.push({
-                binding: ResourcesBindingPoints.SPECULAR_COLOR_TEXTURE,
+                binding: ResourcesBindingPoints.SPECULAR_FO_TEXTURE,
                 resource: (await getTextureFromData(this.device, (data.specularColor as any).texture?.size as vec2, (data.specularColor as any).texture?.array as TypedArray)).createView()
             })
         }

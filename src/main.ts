@@ -16,15 +16,14 @@ new MaterialManager(device, canvas, ctx);
 new PipelineManager(device, canvas, ctx);
 const mainLayer = new MainLayer(device, canvas, ctx, 200, 200)
 const loader = new GLTFLoader()
-const {meshes, root} = await loader.load("/merged1.glb")
+const {meshes, root} = await loader.load("/m.glb")
 console.log(root.listExtensionsUsed())
 const computeBoundingSphere = new ComputeFrustumCulling()
 const modelRenderer = new ModelRenderer(device, canvas, ctx, root, computeBoundingSphere);
 
 await modelRenderer.init({
     meshes: meshes,
-    shaderCode: PipelineFlags.CLEARCOAT_ROUGHNESS_TEXTURE,
-    // materialSelectiveResources: [SelectiveResource.OCCLUSION_TEXTURE],
+    shaderCode: PipelineFlags.SPECULAR,
     pipelineSelectiveResources: [SelectiveResource.UV, SelectiveResource.ALPHA,SelectiveResource.DOUBLE_SIDED],
 })
 

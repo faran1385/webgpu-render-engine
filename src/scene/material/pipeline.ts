@@ -147,9 +147,9 @@ export class Pipeline extends PipelineManager {
 
             hash |= PipelineFlags.GLOSSINESS_SPECULAR;
         }
-        if (this.shaderCode === PipelineFlags.SPECULAR_COLOR) {
+        if (this.shaderCode === PipelineFlags.SPECULAR_FO) {
 
-            hash |= PipelineFlags.SPECULAR_COLOR;
+            hash |= PipelineFlags.SPECULAR_FO;
         }
         if (this.shaderCode === PipelineFlags.CLEARCOAT_TEXTURE) {
 

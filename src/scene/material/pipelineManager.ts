@@ -58,7 +58,7 @@ export class PipelineManager extends BaseLayer {
         const isSpecular = (hash & PipelineFlags.SPECULAR) !== 0;
         const isOpacity = (hash & PipelineFlags.OPACITY) !== 0;
         const isSpecularGlossiness = (hash & PipelineFlags.GLOSSINESS_SPECULAR) !== 0;
-        const isSpecularColor = (hash & PipelineFlags.SPECULAR_COLOR) !== 0;
+        const isSpecularColor = (hash & PipelineFlags.SPECULAR_FO) !== 0;
         const isClearcoat = (hash & PipelineFlags.CLEARCOAT_TEXTURE) !== 0;
         const isClearcoatRoughness = (hash & PipelineFlags.CLEARCOAT_ROUGHNESS_TEXTURE) !== 0;
         const isClearcoatNormal = (hash & PipelineFlags.CLEARCOAT__NORMAL_TEXTURE) !== 0;

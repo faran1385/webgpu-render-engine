@@ -7,8 +7,10 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-*.glb
-*.gltf
+public/*.glb
+public/*.gltf
+
+!public/
 
 node_modules
 dist

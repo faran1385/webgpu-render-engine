@@ -16,19 +16,19 @@ new MaterialManager(device, canvas, ctx);
 new PipelineManager(device, canvas, ctx);
 const mainLayer = new MainLayer(device, canvas, ctx, 200, 200)
 const loader = new GLTFLoader()
-const {meshes, root} = await loader.load("/merged2.glb")
+const {meshes, root} = await loader.load("/merged1.glb")
 console.log(root.listExtensionsUsed())
 const computeBoundingSphere = new ComputeFrustumCulling()
 const modelRenderer = new ModelRenderer(device, canvas, ctx, root, computeBoundingSphere);
 
 await modelRenderer.init({
     meshes: meshes,
-    shaderCode: PipelineFlags.BASE,
-    materialSelectiveResources: [SelectiveResource.BASE_COLOR_TEXTURE],
+    shaderCode: PipelineFlags.CLEARCOAT_ROUGHNESS_TEXTURE,
+    // materialSelectiveResources: [SelectiveResource.OCCLUSION_TEXTURE],
     pipelineSelectiveResources: [SelectiveResource.UV, SelectiveResource.ALPHA,SelectiveResource.DOUBLE_SIDED],
 })
 
-modelRenderer.applyTransformationsToRenderData({scale: [.009, .009, .009]})
+// modelRenderer.applyTransformationsToRenderData({scale: [.009, .009, .009]})
 const render = () => {
     const commandEncoder = device.createCommandEncoder()
     mainLayer.render(commandEncoder);

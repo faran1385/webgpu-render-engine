@@ -49,6 +49,9 @@ export class MaterialManager extends BaseLayer {
         const hasSpecularTexture = (hash & MaterialFlags.HasSpecularTexture) !== 0;
         const hasSpecularColorTexture = (hash & MaterialFlags.HasSpecularColorTexture) !== 0;
         const hasGlossinessSpecularTexture = (hash & MaterialFlags.HasGlossinessSpecularTexture) !== 0;
+        const hasClearcoatTexture = (hash & MaterialFlags.HasClearcoatTexture) !== 0;
+        const hasClearcoatRoughnessTexture = (hash & MaterialFlags.HasClearcoatRoughnessTexture) !== 0;
+        const hasClearcoatNormalTexture = (hash & MaterialFlags.HasClearcoatNormalTexture) !== 0;
 
         const alphaBits = hash & MaterialFlags.AlphaMode_Mask;
         let alphaMode: 'opaque' | 'mask' | 'blend';
@@ -76,7 +79,10 @@ export class MaterialManager extends BaseLayer {
             hasMetallicRoughnessTex ||
             hasNormalTexture ||
             hasSpecularColorTexture ||
-            hasGlossinessSpecularTexture
+            hasGlossinessSpecularTexture ||
+            hasClearcoatTexture ||
+            hasClearcoatRoughnessTexture ||
+            hasClearcoatNormalTexture
         ) hasSampler = true;
 
         return {
@@ -92,6 +98,9 @@ export class MaterialManager extends BaseLayer {
             alphaMode,
             hasSpecularColorTexture,
             hasGlossinessSpecularTexture,
+            hasClearcoatTexture,
+            hasClearcoatRoughnessTexture,
+            hasClearcoatNormalTexture,
             unlit,
         };
     }
@@ -155,6 +164,21 @@ export class MaterialManager extends BaseLayer {
         })
         if (decodedFlags.hasSpecularColorTexture) bindGroupEntries.push({
             binding: ResourcesBindingPoints.SPECULAR_COLOR_TEXTURE,
+            texture: {sampleType: "float"},
+            visibility: GPUShaderStage.FRAGMENT
+        })
+        if (decodedFlags.hasClearcoatTexture) bindGroupEntries.push({
+            binding: ResourcesBindingPoints.CLEARCOAT_TEXTURE,
+            visibility: GPUShaderStage.FRAGMENT,
+            texture: {sampleType: "float"}
+        })
+        if (decodedFlags.hasClearcoatRoughnessTexture) bindGroupEntries.push({
+            binding: ResourcesBindingPoints.CLEARCOAT_ROUGHNESS_TEXTURE,
+            texture: {sampleType: "float"},
+            visibility: GPUShaderStage.FRAGMENT
+        })
+        if (decodedFlags.hasClearcoatNormalTexture) bindGroupEntries.push({
+            binding: ResourcesBindingPoints.CLEARCOAT__NORMAL_TEXTURE,
             texture: {sampleType: "float"},
             visibility: GPUShaderStage.FRAGMENT
         })
@@ -302,7 +326,31 @@ export class MaterialManager extends BaseLayer {
                 resource: (await getTextureFromData(this.device, (data.specularColor as any).texture?.size as vec2, (data.specularColor as any).texture?.array as TypedArray)).createView()
             })
         }
-        factors.push(...data?.specularColor?.factor ?? [0, 1, 0])
+        factors.push(...data?.specularColor?.factor ?? [0, 0, 0])
+
+        if (decodedHash.hasClearcoatTexture) {
+            entries.push({
+                binding: ResourcesBindingPoints.CLEARCOAT_TEXTURE,
+                resource: (await getTextureFromData(this.device, (data.clearcoat as any).texture?.size as vec2, (data.clearcoat as any).texture?.array as TypedArray)).createView()
+            })
+        }
+        factors.push(data?.clearcoat?.factor ?? 0)
+
+        if (decodedHash.hasClearcoatRoughnessTexture) {
+            entries.push({
+                binding: ResourcesBindingPoints.CLEARCOAT_ROUGHNESS_TEXTURE,
+                resource: (await getTextureFromData(this.device, (data.clearcoat as any).roughnessTexture?.size as vec2, (data.clearcoat as any).roughnessTexture?.array as TypedArray)).createView()
+            })
+        }
+        factors.push(data?.clearcoat?.roughnessFactor ?? 0)
+
+        if (decodedHash.hasClearcoatNormalTexture) {
+            entries.push({
+                binding: ResourcesBindingPoints.CLEARCOAT__NORMAL_TEXTURE,
+                resource: (await getTextureFromData(this.device, (data.clearcoat as any).normalTexture?.size as vec2, (data.clearcoat as any).normalTexture?.array as TypedArray)).createView()
+            })
+        }
+        factors.push(data?.clearcoat?.normalScale ?? 0)
 
 
         entries.push({

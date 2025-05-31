@@ -75,6 +75,23 @@ export type MaterialData = {
 } & MaterialExtension
 
 export type MaterialExtension = {
+    clearcoat: {
+        texture: {
+            array: Uint8Array | null,
+            size: [number, number]
+        } | null,
+        factor: number,
+        normalTexture: {
+            array: Uint8Array | null,
+            size: [number, number]
+        } | null,
+        normalScale: number,
+        roughnessTexture: {
+            array: Uint8Array | null,
+            size: [number, number]
+        } | null,
+        roughnessFactor: number,
+    } | null,
     transmission: {
         texture: {
             array: Uint8Array | null,
@@ -126,6 +143,9 @@ export interface DecodedMaterialFlags {
     hasSpecularTexture: boolean;
     hasSpecularColorTexture: boolean;
     hasGlossinessSpecularTexture: boolean;
+    hasClearcoatTexture: boolean;
+    hasClearcoatRoughnessTexture: boolean;
+    hasClearcoatNormalTexture: boolean;
     hasSampler: boolean;
 
     alphaMode: 'opaque' | 'mask' | 'blend';
@@ -161,6 +181,9 @@ export const enum MaterialFlags {
     IsUnlit = 1 << 10,
     HasGlossinessSpecularTexture = 1 << 11,
     HasSpecularColorTexture = 1 << 12,
+    HasClearcoatTexture = 1 << 13,
+    HasClearcoatRoughnessTexture = 1 << 14,
+    HasClearcoatNormalTexture = 1 << 15,
 }
 
 export const enum PipelineFlags {
@@ -183,6 +206,9 @@ export const enum PipelineFlags {
     OPACITY = 1 << 15,
     GLOSSINESS_SPECULAR = 1 << 16,
     SPECULAR_COLOR = 1 << 17,
+    CLEARCOAT_TEXTURE = 1 << 18,
+    CLEARCOAT_ROUGHNESS_TEXTURE = 1 << 19,
+    CLEARCOAT__NORMAL_TEXTURE = 1 << 20,
 }
 
 export const enum ResourcesBindingPoints {
@@ -199,6 +225,9 @@ export const enum ResourcesBindingPoints {
     ALPHA,
     GLOSSINESS_SPECULAR_TEXTURE,
     SPECULAR_COLOR_TEXTURE,
+    CLEARCOAT_TEXTURE,
+    CLEARCOAT_ROUGHNESS_TEXTURE,
+    CLEARCOAT__NORMAL_TEXTURE,
 }
 
 export type RenderSetup = {
@@ -226,6 +255,9 @@ export const enum SelectiveResource {
     DOUBLE_SIDED = 1 << 12,
     GLOSSINESS_SPECULAR_TEXTURE = 1 << 13,
     SPECULAR_COLOR_TEXTURE = 1 << 14,
+    CLEARCOAT_TEXTURE = 1 << 15,
+    CLEARCOAT_ROUGHNESS_TEXTURE = 1 << 16,
+    CLEARCOAT__NORMAL_TEXTURE = 1 << 17,
 }
 
 export const enum GeometryLayout {
@@ -245,3 +277,6 @@ export type ShaderFlag =
     | PipelineFlags.OPACITY
     | PipelineFlags.GLOSSINESS_SPECULAR
     | PipelineFlags.SPECULAR_COLOR
+    | PipelineFlags.CLEARCOAT_TEXTURE
+    | PipelineFlags.CLEARCOAT_ROUGHNESS_TEXTURE
+    | PipelineFlags.CLEARCOAT__NORMAL_TEXTURE

@@ -14,6 +14,9 @@ export type DetermineShaderCode = {
     isGlossiness: boolean,
     isSpecularGlossiness: boolean,
     isSpecularColor: boolean,
+    isClearcoat: boolean,
+    isClearcoatRoughness: boolean,
+    isClearcoatNormal: boolean,
     decodedMaterial: DecodedMaterialFlags,
 
 }
@@ -32,7 +35,10 @@ export const determineShaderCode = (
         isSpecularGlossiness,
         isMetallic,
         isOpacity,
-        isRoughness
+        isRoughness,
+        isClearcoatRoughness,
+        isClearcoat,
+        isClearcoatNormal
     }: DetermineShaderCode
 ): string => {
     let shaderCode = ''
@@ -480,6 +486,132 @@ export const determineShaderCode = (
                     }
                     let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
                     ${decodedMaterial.hasSpecularColorTexture ? `return vec4f(model.xyz,alpha);` : 'return vec4f(colorFactor.xyz,alpha);'}
+                }
+            `
+
+    } else if (isClearcoat) {
+
+        shaderCode = `
+                struct vsIn{
+                    @location(0) pos:vec3f,
+                    ${hasUv ? '@location(1) uv:vec2f' : ''}
+                }
+                struct vsOut{
+                    @builtin(position) clipPos:vec4f,
+                    ${hasUv ? '@location(0) uv:vec2f' : ''}
+                }
+                @group(0) @binding(0) var<uniform> projectionMatrix:mat4x4<f32>;
+                @group(0) @binding(1) var<uniform> viewMatrix:mat4x4<f32>;
+                @group(2) @binding(0) var<uniform> modelMatrix:mat4x4<f32>;
+                @vertex fn vs(in:vsIn)->vsOut{
+                    var output:vsOut;
+                    var worldPos = modelMatrix * vec4f(in.pos, 1);
+                    output.clipPos = projectionMatrix * viewMatrix * worldPos;
+                    ${hasUv ? 'output.uv=in.uv;' : ''}
+                    return output;
+                }
+                
+                @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
+                ${decodedMaterial.hasClearcoatTexture ? `@group(1) @binding(${ResourcesBindingPoints.CLEARCOAT_TEXTURE}) var targetTexture : texture_2d<f32>;` : ''}
+                ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
+                @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
+                
+                @fragment fn fs(in:vsOut)->@location(0) vec4f{
+                    let colorFactor=vec4f(vec3f(factors[22]),1);
+                    ${decodedMaterial.hasClearcoatTexture ? 'var model=textureSample(targetTexture,textureSampler,in.uv);' : ''}
+                    ${decodedMaterial.hasClearcoatTexture ? 'model=model * colorFactor;' : ''}
+                    let alphaValue=${decodedMaterial.hasClearcoatTexture ? 'model.a' : 'colorFactor.a'};
+                    let alphaCutOff=factors[15];
+                    
+                    if(i32(alphaMode) == 2 && alphaValue < alphaCutOff){
+                        discard;
+                    }
+                    let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
+                    ${decodedMaterial.hasClearcoatTexture ? `return vec4f(vec3f(model.r),alpha);` : 'return vec4f(colorFactor.xyz,alpha);'}
+                }
+            `
+
+    }else if (isClearcoatNormal) {
+
+        shaderCode = `
+                struct vsIn{
+                    @location(0) pos:vec3f,
+                    ${hasUv ? '@location(1) uv:vec2f' : ''}
+                }
+                struct vsOut{
+                    @builtin(position) clipPos:vec4f,
+                    ${hasUv ? '@location(0) uv:vec2f' : ''}
+                }
+                @group(0) @binding(0) var<uniform> projectionMatrix:mat4x4<f32>;
+                @group(0) @binding(1) var<uniform> viewMatrix:mat4x4<f32>;
+                @group(2) @binding(0) var<uniform> modelMatrix:mat4x4<f32>;
+                @vertex fn vs(in:vsIn)->vsOut{
+                    var output:vsOut;
+                    var worldPos = modelMatrix * vec4f(in.pos, 1);
+                    output.clipPos = projectionMatrix * viewMatrix * worldPos;
+                    ${hasUv ? 'output.uv=in.uv;' : ''}
+                    return output;
+                }
+                
+                @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
+                ${decodedMaterial.hasClearcoatNormalTexture ? `@group(1) @binding(${ResourcesBindingPoints.CLEARCOAT__NORMAL_TEXTURE}) var targetTexture : texture_2d<f32>;` : ''}
+                ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
+                @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
+                
+                @fragment fn fs(in:vsOut)->@location(0) vec4f{
+                    let colorFactor=vec4f(vec3f(factors[24]),1);
+                    ${decodedMaterial.hasClearcoatNormalTexture ? 'var model=textureSample(targetTexture,textureSampler,in.uv);' : ''}
+                    ${decodedMaterial.hasClearcoatNormalTexture ? 'model=model * colorFactor;' : ''}
+                    let alphaValue=${decodedMaterial.hasClearcoatNormalTexture ? 'model.a' : 'colorFactor.a'};
+                    let alphaCutOff=factors[15];
+                    
+                    if(i32(alphaMode) == 2 && alphaValue < alphaCutOff){
+                        discard;
+                    }
+                    let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
+                    ${decodedMaterial.hasClearcoatNormalTexture ? `return vec4f(model.xyz,alpha);` : 'return vec4f(colorFactor.xyz,alpha);'}
+                }
+            `
+
+    }else if (isClearcoatRoughness) {
+
+        shaderCode = `
+                struct vsIn{
+                    @location(0) pos:vec3f,
+                    ${hasUv ? '@location(1) uv:vec2f' : ''}
+                }
+                struct vsOut{
+                    @builtin(position) clipPos:vec4f,
+                    ${hasUv ? '@location(0) uv:vec2f' : ''}
+                }
+                @group(0) @binding(0) var<uniform> projectionMatrix:mat4x4<f32>;
+                @group(0) @binding(1) var<uniform> viewMatrix:mat4x4<f32>;
+                @group(2) @binding(0) var<uniform> modelMatrix:mat4x4<f32>;
+                @vertex fn vs(in:vsIn)->vsOut{
+                    var output:vsOut;
+                    var worldPos = modelMatrix * vec4f(in.pos, 1);
+                    output.clipPos = projectionMatrix * viewMatrix * worldPos;
+                    ${hasUv ? 'output.uv=in.uv;' : ''}
+                    return output;
+                }
+                
+                @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
+                ${decodedMaterial.hasClearcoatRoughnessTexture ? `@group(1) @binding(${ResourcesBindingPoints.CLEARCOAT_ROUGHNESS_TEXTURE}) var targetTexture : texture_2d<f32>;` : ''}
+                ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
+                @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
+                
+                @fragment fn fs(in:vsOut)->@location(0) vec4f{
+                    let colorFactor=vec4f(vec3f(factors[23]),1);
+                    ${decodedMaterial.hasClearcoatRoughnessTexture ? 'var model=textureSample(targetTexture,textureSampler,in.uv);' : ''}
+                    ${decodedMaterial.hasClearcoatRoughnessTexture ? 'model=model * colorFactor;' : ''}
+                    let alphaValue=${decodedMaterial.hasClearcoatRoughnessTexture ? 'model.a' : 'colorFactor.a'};
+                    let alphaCutOff=factors[15];
+                    
+                    if(i32(alphaMode) == 2 && alphaValue < alphaCutOff){
+                        discard;
+                    }
+                    let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
+                    ${decodedMaterial.hasClearcoatRoughnessTexture ? `return vec4f(vec3f(model.g),alpha);` : 'return vec4f(colorFactor.xyz,alpha);'}
                 }
             `
 

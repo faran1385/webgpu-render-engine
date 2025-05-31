@@ -151,6 +151,18 @@ export class Pipeline extends PipelineManager {
 
             hash |= PipelineFlags.SPECULAR_COLOR;
         }
+        if (this.shaderCode === PipelineFlags.CLEARCOAT_TEXTURE) {
+
+            hash |= PipelineFlags.CLEARCOAT_TEXTURE;
+        }
+        if (this.shaderCode === PipelineFlags.CLEARCOAT_ROUGHNESS_TEXTURE) {
+
+            hash |= PipelineFlags.CLEARCOAT_ROUGHNESS_TEXTURE;
+        }
+        if (this.shaderCode === PipelineFlags.CLEARCOAT__NORMAL_TEXTURE) {
+
+            hash |= PipelineFlags.CLEARCOAT__NORMAL_TEXTURE;
+        }
         this.pipelineHash = hash;
     }
 }

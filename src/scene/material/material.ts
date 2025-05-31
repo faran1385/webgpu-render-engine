@@ -1,6 +1,7 @@
 import {MaterialData, MaterialFlags, SelectiveResource} from "../loader/loaderTypes.ts";
 import {Extension, Material as GLTFMaterial, Texture, vec2} from "@gltf-transform/core";
 import {
+    Clearcoat,
     EmissiveStrength,
     PBRSpecularGlossiness,
     Specular,
@@ -16,6 +17,14 @@ export class Material extends MaterialManager {
             mode: 'OPAQUE',
             value: 0,
             cutoffAlpha: 0
+        },
+        clearcoat: {
+            texture: null,
+            normalTexture: null,
+            roughnessTexture: null,
+            normalScale: 0,
+            factor: 0,
+            roughnessFactor: 0
         },
         emissive: {texture: null, factor: [0, 0, 0]},
         glossinessSpecular: {texture: null, factor: [0, 0, 0]},
@@ -153,6 +162,31 @@ export class Material extends MaterialManager {
                     }
                 }
             }
+            if (extension.extensionName === "KHR_materials_clearcoat") {
+                const clearcoat = this.materialPointer.getExtension<Clearcoat>(extension.extensionName);
+                if (clearcoat) {
+                    const clearcoatTexture = clearcoat.getClearcoatTexture();
+                    const clearcoatRoughnessTexture = clearcoat.getClearcoatRoughnessTexture();
+                    const clearcoatNormalTexture = clearcoat.getClearcoatNormalTexture();
+                    this.materialData.clearcoat = {
+                        texture: clearcoatTexture ? {
+                            array: clearcoatTexture.getImage(),
+                            size: clearcoatTexture.getSize() as vec2
+                        } : null,
+                        factor: clearcoat.getClearcoatFactor(),
+                        roughnessTexture: clearcoatRoughnessTexture ? {
+                            array: clearcoatRoughnessTexture.getImage(),
+                            size: clearcoatRoughnessTexture.getSize() as vec2
+                        } : null,
+                        roughnessFactor: clearcoat.getClearcoatRoughnessFactor(),
+                        normalTexture: clearcoatNormalTexture ? {
+                            array: clearcoatNormalTexture.getImage(),
+                            size: clearcoatNormalTexture.getSize() as vec2
+                        } : null,
+                        normalScale: clearcoat.getClearcoatNormalScale(),
+                    }
+                }
+            }
 
             if (extension.extensionName === "KHR_materials_unlit") {
                 this.materialData.unlit = Boolean(this.materialPointer.getExtension<Unlit>(extension.extensionName))
@@ -172,7 +206,6 @@ export class Material extends MaterialManager {
             hash |= MaterialFlags.HasOcclusionTexture;
         }
         if ((this.selectiveResource === "ALL" || this.selectiveResource.includes(SelectiveResource.NORMAL_TEXTURE)) && this.materialData.normal.texture?.array) {
-            console.log(hash)
             hash |= MaterialFlags.HasNormalTexture;
         }
 
@@ -193,6 +226,15 @@ export class Material extends MaterialManager {
         }
         if ((this.selectiveResource === "ALL" || this.selectiveResource.includes(SelectiveResource.GLOSSINESS_SPECULAR_TEXTURE)) && this.materialData.glossinessSpecular?.texture?.array) {
             hash |= MaterialFlags.HasGlossinessSpecularTexture;
+        }
+        if ((this.selectiveResource === "ALL" || this.selectiveResource.includes(SelectiveResource.CLEARCOAT_TEXTURE)) && this.materialData.clearcoat?.texture?.array) {
+            hash |= MaterialFlags.HasClearcoatTexture;
+        }
+        if ((this.selectiveResource === "ALL" || this.selectiveResource.includes(SelectiveResource.CLEARCOAT_ROUGHNESS_TEXTURE)) && this.materialData.clearcoat?.roughnessTexture?.array) {
+            hash |= MaterialFlags.HasClearcoatRoughnessTexture;
+        }
+        if ((this.selectiveResource === "ALL" || this.selectiveResource.includes(SelectiveResource.CLEARCOAT__NORMAL_TEXTURE)) && this.materialData.clearcoat?.normalTexture?.array) {
+            hash |= MaterialFlags.HasClearcoatNormalTexture;
         }
 
         if (this.materialData.alpha.mode === 'OPAQUE') {

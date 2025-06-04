@@ -1,13 +1,7 @@
-import {Document, WebIO, Root} from '@gltf-transform/core';
+import {Document, Root, WebIO} from '@gltf-transform/core';
 import {ALL_EXTENSIONS} from '@gltf-transform/extensions';
 import {mat3} from 'gl-matrix';
-import {
-    AttributeData,
-    GeometryData,
-    LoaderOptions,
-    LODRange,
-    MeshData,
-} from "./loaderTypes.ts";
+import {AttributeData, GeometryData, LoaderOptions, LODRange, MeshData,} from "./loaderTypes.ts";
 
 const io = new WebIO().registerExtensions(ALL_EXTENSIONS);
 
@@ -97,13 +91,12 @@ export class GLTFLoader {
 
         const geometryData: GeometryData[] = [];
         for (const prim of primitives) {
-            console.log(prim.getMode())
+
             let lodRanges: LODRange[] | undefined = undefined;
             if (prim.getExtras().lodRanges) {
                 lodRanges = prim.getExtras().lodRanges;
             }
             const uniforms: Record<string, AttributeData> = {};
-            const vertex: Partial<Record<'position' | 'normal' | 'uv', AttributeData>> = {};
             const semantics = prim.listSemantics();
 
             prim.listAttributes().forEach((accessor: any, i: number) => {
@@ -115,20 +108,7 @@ export class GLTFLoader {
                             type === 'VEC3' ? 3 :
                                 type === 'VEC4' ? 4 : array.length;
                 const name = semantics[i];
-                const data: AttributeData = {array, itemSize};
-                if (name === 'POSITION' || name === 'NORMAL' || name === 'TEXCOORD_0' || name === "TANGENT") {
-                    const key = name === 'TEXCOORD_0' ? 'uv' : name.toLowerCase() as 'position' | 'normal' | "tangent";
-                    (vertex as any)[key] = data;
-                } else {
-                    uniforms[name] = data;
-                }
-            });
-
-            // Warn if missing essential vertex attributes
-            ['position', 'normal', 'uv'].forEach((attr) => {
-                if (!vertex[attr as keyof typeof vertex]) {
-                    console.warn(`Missing vertex attribute: ${attr}`);
-                }
+                uniforms[name] = {array, itemSize};
             });
 
             const indexAcc = prim.getIndices();
@@ -144,8 +124,7 @@ export class GLTFLoader {
             }
 
             geometryData.push({
-                uniforms,
-                vertex,
+                dataList: uniforms,
                 indices: indices.byteLength % 4 !== 0 ? correctedIndices : indices,
                 indexType,
                 lodRanges: lodRanges,

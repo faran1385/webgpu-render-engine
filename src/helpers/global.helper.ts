@@ -5,7 +5,7 @@ import {TypedArray, vec2} from "@gltf-transform/core";
 
 export function createGPUBuffer(
     device: GPUDevice,
-    data: Float32Array | Uint16Array | Uint32Array | mat4,
+    data: TypedArray,
     usage: GPUBufferUsageFlags,
     label: string
 ): GPUBuffer {
@@ -92,20 +92,24 @@ export const updateBuffer = (device: GPUDevice, buffer: GPUBuffer, data: TypedAr
 }
 
 export const getTextureFromData = async (device: GPUDevice, size: vec2 | vec3, data: TypedArray) => {
-    const imageBitmap = await createImageBitmap(new Blob([data]));
 
+    const imageBitmap = await createImageBitmap(new Blob([data]));
     const texture = device.createTexture({
         size: [...size],
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
         textureBindingViewDimension: "2d",
         format: "bgra8unorm",
     })
-
     device.queue.copyExternalImageToTexture(
         {source: imageBitmap},
         {texture: texture},
         size
     );
 
+
     return texture;
+}
+
+export const convertAlphaMode = (mode: "BLEND" | "MASK" | "OPAQUE") => {
+    return mode === "OPAQUE" ? 0 : mode === "BLEND" ? 1 : 2
 }

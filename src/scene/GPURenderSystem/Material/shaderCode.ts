@@ -1,4 +1,4 @@
-import {DecodedMaterialFlags, ResourcesBindingPoints} from "../loader/loaderTypes.ts";
+import {DecodedMaterialFlags, ResourcesBindingPoints} from "../../loader/loaderTypes.ts";
 
 export type DetermineShaderCode = {
     isBase: boolean,
@@ -126,43 +126,7 @@ export const determineShaderCode = (
     } else if (isEmissive) {
 
         shaderCode = `
-                struct vsIn{
-                    @location(0) pos:vec3f,
-                    ${hasUv ? '@location(1) uv:vec2f' : ''}
-                }
-                struct vsOut{
-                    @builtin(position) clipPos:vec4f,
-                    ${hasUv ? '@location(0) uv:vec2f' : ''}
-                }
-                @group(0) @binding(0) var<uniform> projectionMatrix:mat4x4<f32>;
-                @group(0) @binding(1) var<uniform> viewMatrix:mat4x4<f32>;
-                @group(2) @binding(0) var<uniform> modelMatrix:mat4x4<f32>;
-                @vertex fn vs(in:vsIn)->vsOut{
-                    var output:vsOut;
-                    var worldPos = modelMatrix * vec4f(in.pos, 1);
-                    output.clipPos = projectionMatrix * viewMatrix * worldPos;
-                    ${hasUv ? 'output.uv=in.uv;' : ''}
-                    return output;
-                }
                 
-                @group(1) @binding(${ResourcesBindingPoints.FACTORS}) var<storage,read> factors:array<f32>; 
-                ${decodedMaterial.hasEmissiveTexture ? `@group(1) @binding(${ResourcesBindingPoints.EMISSIVE_TEXTURE}) var emissiveTexture : texture_2d<f32>;` : ''}
-                ${decodedMaterial.hasSampler ? `@group(1) @binding(${ResourcesBindingPoints.SAMPLER}) var textureSampler:sampler;` : ''}
-                @group(1) @binding(${ResourcesBindingPoints.ALPHA}) var<uniform> alphaMode:f32;
-                
-                @fragment fn fs(in:vsOut)->@location(0) vec4f{
-                    let emissiveFactor=vec4f(vec3f(factors[4],factors[5],factors[6]) * factors[14],1.);
-                    ${decodedMaterial.hasEmissiveTexture ? 'var model=textureSample(emissiveTexture,textureSampler,in.uv);' : ''}
-                    ${decodedMaterial.hasEmissiveTexture ? 'model=model * emissiveFactor;' : ''}
-                    let alphaValue=${decodedMaterial.hasEmissiveTexture ? 'model.a' : 'emissiveFactor.a'};
-                    let alphaCutOff=factors[15];
-                    
-                    if(i32(alphaMode) == 2 && alphaValue < alphaCutOff){
-                        discard;
-                    }
-                    let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
-                    ${decodedMaterial.hasEmissiveTexture ? 'return vec4f(model.xyz,alpha);' : 'return vec4f(emissiveFactor.xyz,alpha);'}
-                }
             `
     } else if (isOcclusion) {
 

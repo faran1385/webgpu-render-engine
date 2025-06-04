@@ -2,10 +2,11 @@ import {BaseLayer, RenderAble, RenderAblePrim} from "../layers/baseLayer.ts";
 import {computeNormalMatrix3x4, createGPUBuffer, updateBuffer} from "../helpers/global.helper.ts";
 import {ComputeFrustumCulling} from "../scene/computeFrustumCulling.ts";
 import {mat4} from "gl-matrix";
-import {LODRange, MeshData, RenderSetup, SelectiveResource, ShaderFlag} from "../scene/loader/loaderTypes.ts";
-import {Root} from "@gltf-transform/core";
-import {Material} from "../scene/material/material.ts";
-import {Pipeline} from "../scene/material/pipeline.ts";
+import {LODRange, MeshData} from "../scene/loader/loaderTypes.ts";
+import {Material, Root} from "@gltf-transform/core";
+import {hashCreationBindGroupEntry, HashGenerator} from "../scene/GPURenderSystem/Hasher/HashGenerator.ts";
+import {GPUCache} from "../scene/GPURenderSystem/GPUCache/GPUCache.ts";
+import {BindGroupEntryCreationType, RenderState} from "../scene/GPURenderSystem/GPUCache/GPUCacheTypes.ts";
 
 export type Lod = {
     defaultLod: number
@@ -23,23 +24,47 @@ export type ComputeShader = {
 type initEntry = {
     meshes: MeshData[],
     lod?: Lod,
-    computeShader?: ComputeShader
-    shaderCode: ShaderFlag,
-    materialSelectiveResources?: SelectiveResource[],
-    pipelineSelectiveResources?: SelectiveResource[],
+    computeShader?: ComputeShader,
+    materialBindGroupLayout: { layoutsEntries: GPUBindGroupLayoutEntry[][], primitiveIndex: number[] },
+    geometryBindGroupLayout: { entries: GPUBindGroupLayoutEntry[][], primitiveIndex: number[] },
+    pipelineDescriptors: RenderState[],
+    geometryBindGroup: {
+        entries: (GPUBindGroupEntry & {
+            name: "model" | "normal";
+        })[], mesh: MeshData
+    }[],
+    materialBindGroup: {
+        hashEntries: hashCreationBindGroupEntry,
+        entries: BindGroupEntryCreationType[],
+        material: Material
+    }[],
+    shaderCodes: { codes: string[], primitiveIndex: number[] },
 }
 
+type modelRendererEntry = {
+    device: GPUDevice,
+    canvas: HTMLCanvasElement,
+    ctx: GPUCanvasContext,
+    root: Root,
+    boundingComputer: ComputeFrustumCulling,
+    hasher: HashGenerator,
+    gpuCache: GPUCache,
+}
 
 export class ModelRenderer extends BaseLayer {
     private ComputeBoundingSphere: ComputeFrustumCulling;
     private pushedIndices: { onRenderAble: number, onMeshes: number }[] = [];
     private meshes: MeshData[] = [];
     private root: Root;
+    private hasher: HashGenerator;
+    private gpuCache: GPUCache;
 
-    constructor(device: GPUDevice, canvas: HTMLCanvasElement, ctx: GPUCanvasContext, root: Root, boundingComputer: ComputeFrustumCulling) {
+    constructor({device, canvas, ctx, root, hasher, gpuCache, boundingComputer}: modelRendererEntry) {
         super(device, canvas, ctx);
         this.ComputeBoundingSphere = boundingComputer;
         this.root = root;
+        this.hasher = hasher;
+        this.gpuCache = gpuCache;
     }
 
     applyTransformationsToRenderData({scale, translate, rotate}: {
@@ -89,43 +114,104 @@ export class ModelRenderer extends BaseLayer {
     }
 
 
-    public async init({
-                          meshes,
-                          materialSelectiveResources,
-                          pipelineSelectiveResources,
-                          shaderCode,
-                          computeShader,
-                          lod
-                      }: initEntry) {
-        this.meshes = meshes;
-        const materialList = this.root.listMaterials();
-        const extensions = this.root.listExtensionsUsed();
-
-        const renderSetups = await Promise.all(materialList.map(async (mat) => {
-            const material = new Material(this.device, this.canvas, this.ctx, mat, extensions, materialSelectiveResources);
-            return {
-                ...await material.init(),
-                materialPointer: mat,
-            }
-        }))
+    public async init(
+        {
+            meshes,
+            computeShader,
+            lod,
+            geometryBindGroup,
+            materialBindGroup,
+            geometryBindGroupLayout,
+            pipelineDescriptors,
+            materialBindGroupLayout,
+            shaderCodes,
+        }: initEntry
+    ) {
         const pushedPrimIndices: { onRenderAble: number, onMeshes: number }[] = []
+        this.meshes = meshes;
+
+        const primitives = this.meshes.map((mesh) => mesh.geometry.flat());
+        const materialLayoutHashes = materialBindGroupLayout.layoutsEntries.map((item) => {
+            const hash = this.hasher.hashBindGroupLayout(item);
+            this.gpuCache.appendBindGroupLayout(item, hash)
+            return hash
+        })
+
+        const geometryLayoutHashes = geometryBindGroupLayout.entries.map((item) => {
+            const hash = this.hasher.hashBindGroupLayout(item);
+            this.gpuCache.appendBindGroupLayout(item, hash)
+            return hash
+        })
+        const materialBindGroupHashes: number[] = [];
+
+
+        for (let i = 0; i < materialBindGroup.length; i++) {
+            const item = materialBindGroup[i];
+            const hash = await this.hasher.hashBindGroup(item.hashEntries);
+            materialBindGroupHashes[i] = hash;
+            await this.gpuCache.appendMaterialBindGroup(
+                item.entries,
+                hash,
+                materialLayoutHashes[materialBindGroupLayout.primitiveIndex[i]],
+                item.material,
+                this.root.listExtensionsUsed()
+            );
+        }
+        const shaderCodesHashes: number[] = [];
+        for (let i = 0; i < primitives.length; i++) {
+            const code = shaderCodes.codes[shaderCodes.primitiveIndex[i]];
+            const hash = await this.hasher.hashShaderModule(code)
+            shaderCodesHashes[i] = hash;
+
+            this.gpuCache.appendShaderModule(code, hash)
+        }
+        const pipelineLayoutsHashes = primitives.map((_, i) => {
+            const hash = this.hasher.hashPipelineLayout(materialLayoutHashes[materialBindGroupLayout.primitiveIndex[i]], geometryLayoutHashes[geometryBindGroupLayout.primitiveIndex[i]])
+            this.gpuCache.appendPipelineLayout(hash, materialLayoutHashes[materialBindGroupLayout.primitiveIndex[i]], geometryLayoutHashes[geometryBindGroupLayout.primitiveIndex[i]])
+            return hash
+        })
+        const pipelineHashes = primitives.map((_, i) => {
+            const hash = this.hasher.hashPipeline(pipelineDescriptors[i],pipelineLayoutsHashes[i])
+            this.gpuCache.appendPipeline(pipelineDescriptors[i], hash, pipelineLayoutsHashes[i], shaderCodesHashes[i])
+            return hash
+        })
+
+        const renderSetups = primitives.map((_, i) => {
+
+
+            return this.gpuCache.getRenderSetup(
+                pipelineHashes[i],
+                pipelineLayoutsHashes[i],
+                materialBindGroupHashes[i],
+                materialLayoutHashes[materialBindGroupLayout.primitiveIndex[i]],
+                geometryLayoutHashes[geometryBindGroupLayout.primitiveIndex[i]],
+                shaderCodesHashes[shaderCodes.primitiveIndex[i]]
+            )
+        })
+
+        const geometryBindGroups = geometryBindGroup.map((item, i) => {
+            const bindGroup = this.device.createBindGroup({
+                entries: item.entries,
+                layout: renderSetups[i].geometryBindGroupLayout
+            })
+            return item.mesh.geometry.map(() => bindGroup)
+        }).flat()
+        let globalPrimIndex = 0;
 
         meshes.forEach((mesh, index) => {
-            const modelBuffer = createGPUBuffer(this.device, mesh.localMatrix, GPUBufferUsage.UNIFORM, `model important data ${mesh.nodeName}`);
-            // const normalBuffer = createGPUBuffer(this.device, mesh.normalMatrix, GPUBufferUsage.UNIFORM, `normal important data ${mesh.nodeName}`)
 
             let renderAble: RenderAble = {
                 prims: [],
                 renderData: {
                     name: mesh.nodeName,
                     model: {
-                        data: mesh.localMatrix,
-                        buffer: modelBuffer
+                        buffer: (geometryBindGroup[index].entries.find(item => item.name === "model") as any).resource.buffer as GPUBuffer,
+                        data: mesh.localMatrix
                     },
-                    // normal: {
-                    //     data: mesh.normalMatrix,
-                    //     buffer: normalBuffer
-                    // }
+                    normal: geometryBindGroup[index].entries.find(item => item.name === "normal") ? {
+                        buffer: (geometryBindGroup[index].entries.find(item => item.name === "normal") as any).resource.buffer,
+                        data: mesh.normalMatrix
+                    } : undefined
                 },
                 computeShader: computeShader ? {
                     frustumCulling: {
@@ -139,30 +225,19 @@ export class ModelRenderer extends BaseLayer {
             }
 
             mesh.geometry.forEach((prim, i) => {
-                const renderSetup = renderSetups.find((item) => item.materialPointer === prim.material) as RenderSetup
-                const pipelineInstance = new Pipeline(
-                    this.device, this.canvas,
-                    this.ctx, renderSetup, prim,
-                    shaderCode, modelBuffer, undefined, pipelineSelectiveResources
-                );
-                const {bindGroup, pipeline} = pipelineInstance.init()
+                const renderSetup = renderSetups[globalPrimIndex]
 
                 let renderAblePrim: RenderAblePrim = {
-                    pipeline: pipeline,
-                    bindGroups: [ModelRenderer.globalBindGroup.bindGroup, renderSetup.bindGroup, bindGroup],
+                    pipeline: renderSetup.pipeline,
+                    bindGroups: [ModelRenderer.globalBindGroup.bindGroup, renderSetup.materialBindGroup, geometryBindGroups[globalPrimIndex]],
                     vertexBuffers: [],
                     index: null,
                     lodRanges: prim.lodRanges,
                 }
-                renderAblePrim.vertexBuffers.push(createGPUBuffer(this.device, prim.vertex.position?.array as Float32Array, GPUBufferUsage.VERTEX, `${mesh.nodeName} prim ${i} position`))
-                if (pipelineSelectiveResources?.includes(SelectiveResource.UV) && prim.vertex.uv) {
 
-                    renderAblePrim.vertexBuffers.push(createGPUBuffer(this.device, prim.vertex.uv.array, GPUBufferUsage.VERTEX, `${mesh.nodeName} prim ${i} uv`))
-                }
-                if (pipelineSelectiveResources?.includes(SelectiveResource.NORMAL) && prim.vertex.normal) {
-
-                    renderAblePrim.vertexBuffers.push(createGPUBuffer(this.device, prim.vertex.normal.array, GPUBufferUsage.VERTEX, `${mesh.nodeName} prim ${i} normal`))
-                }
+                pipelineDescriptors[globalPrimIndex].buffers.forEach((item) => {
+                    renderAblePrim.vertexBuffers.push(createGPUBuffer(this.device, prim.dataList[item.name]?.array as Float32Array, GPUBufferUsage.VERTEX, `${mesh.nodeName} prim ${i} ${item.name}`))
+                })
 
                 if (meshes[index].geometry[i].indexType !== "Unknown" && meshes[index].geometry[i].indices) {
 
@@ -194,6 +269,7 @@ export class ModelRenderer extends BaseLayer {
                     }
                 }
                 renderAble.prims.push(renderAblePrim)
+                globalPrimIndex++
             })
             pushedPrimIndices.push({
                 onMeshes: index,
@@ -201,11 +277,10 @@ export class ModelRenderer extends BaseLayer {
             })
             ModelRenderer.setRenderAble = renderAble;
         })
+
         this.pushedIndices = pushedPrimIndices;
 
-
         if (computeShader) {
-
             meshes.forEach(mesh => {
                 this.ComputeBoundingSphere.findNonBusyWorker(mesh, (T) => {
 

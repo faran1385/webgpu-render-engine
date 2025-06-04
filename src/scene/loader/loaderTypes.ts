@@ -15,8 +15,7 @@ export type MeshData = {
 };
 
 export type GeometryData = {
-    uniforms: Record<string, AttributeData>;
-    vertex: Partial<Record<'position' | 'normal' | 'uv' | "tangent", AttributeData>>;
+    dataList: Record<string, AttributeData>;
     indices?: Uint16Array | Uint32Array;
     indexType: 'uint16' | 'uint32' | 'Unknown';
     indexCount: number;

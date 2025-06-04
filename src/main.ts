@@ -2,31 +2,38 @@ import {MainLayer} from "./layers/mainLayer.ts";
 import {GLTFLoader} from "./scene/loader/loader.ts";
 import {BaseLayer} from "./layers/baseLayer.ts";
 import {getStats, initWebGPU,} from "./helpers/global.helper.ts";
-import {MaterialManager} from "./scene/material/materialManager.ts";
-import {PipelineFlags, SelectiveResource} from "./scene/loader/loaderTypes.ts";
-import {PipelineManager} from "./scene/material/pipelineManager.ts";
+import {HashGenerator} from "./scene/GPURenderSystem/Hasher/HashGenerator.ts";
+import {GPUCache} from "./scene/GPURenderSystem/GPUCache/GPUCache.ts";
 import {ModelRenderer} from "./renderers/modelRenderer.ts";
 import {ComputeFrustumCulling} from "./scene/computeFrustumCulling.ts";
+import {SmartRender} from "./scene/GPURenderSystem/SmartRender/SmartRender.ts";
 
 
 const {device, canvas, ctx} = await initWebGPU()
 const stats = getStats()
 const baseLayer = new BaseLayer(device, canvas, ctx);
-new MaterialManager(device, canvas, ctx);
-new PipelineManager(device, canvas, ctx);
+
 const mainLayer = new MainLayer(device, canvas, ctx, 200, 200)
 const loader = new GLTFLoader()
-const {meshes, root} = await loader.load("/a.glb")
-const computeBoundingSphere = new ComputeFrustumCulling()
-const modelRenderer = new ModelRenderer(device, canvas, ctx, root, computeBoundingSphere);
-
+const smartRender = new SmartRender(device, ctx)
+const boundingCompute = new ComputeFrustumCulling();
+const hasher = new HashGenerator()
+await hasher.init()
+const gpuCache = new GPUCache(device, canvas, ctx);
+const {meshes, root} = await loader.load("/e.glb")
+const modelRenderer = new ModelRenderer({
+    device,
+    canvas,
+    ctx,
+    root,
+    boundingComputer: boundingCompute,
+    hasher,
+    gpuCache
+});
 await modelRenderer.init({
-    meshes: meshes,
-    shaderCode: PipelineFlags.SPECULAR,
-    pipelineSelectiveResources: [SelectiveResource.UV, SelectiveResource.ALPHA,SelectiveResource.DOUBLE_SIDED],
+    ...smartRender.emissive([meshes[0]])
 })
 
-// modelRenderer.applyTransformationsToRenderData({scale: [.009, .009, .009]})
 const render = () => {
     const commandEncoder = device.createCommandEncoder()
     mainLayer.render(commandEncoder);

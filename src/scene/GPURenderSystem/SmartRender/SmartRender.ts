@@ -1,9 +1,17 @@
 import {BindGroupEntryCreationType, RenderState} from "../GPUCache/GPUCacheTypes.ts";
 import {hashCreationBindGroupEntry} from "../Hasher/HashGenerator.ts";
 import {convertAlphaMode, createGPUBuffer, getTextureFromData} from "../../../helpers/global.helper.ts";
-import {Material, Texture, vec2} from "@gltf-transform/core";
+import {Material, Texture, TypedArray, vec2} from "@gltf-transform/core";
 import {MeshData} from "../../loader/loaderTypes.ts";
-import {EmissiveStrength} from "@gltf-transform/extensions";
+import {Clearcoat, EmissiveStrength, Specular, Transmission} from "@gltf-transform/extensions";
+import {
+    baseColorCodes, clearcoatCodes, clearcoatNormalCodes,
+    emissiveCodes,
+    metallicCodes,
+    normalCodes,
+    occlusionCodes,
+    opacityCodes, roughnessCodes, specularCodes, transmissionCodes
+} from "./shaderCodes.ts";
 
 type outputType = {
     meshes: MeshData[],
@@ -22,8 +30,22 @@ type outputType = {
     }[],
     shaderCodes: { codes: string[], primitiveIndex: number[] },
 }
+type CallableTexture =
+    "getBaseColorTexture"
+    | "getEmissiveTexture"
+    | "getMetallicRoughnessTexture"
+    | "getNormalTexture"
+    | "getOcclusionTexture";
+type CallableFactor =
+    "getBaseColorFactor"
+    | "getEmissiveFactor"
+    | "getNormalScale"
+    | "getOcclusionStrength"
+    | "getMetallicFactor"
+    | "getRoughnessFactor";
 
-type callFrom = "Emissive" | "BaseColor"
+type callFrom = { texture: CallableTexture, factor: CallableFactor }
+
 
 export class SmartRender {
     static defaultSampler: GPUSampler;
@@ -120,42 +142,50 @@ export class SmartRender {
 
     private getMaterialBindGroups(
         meshes: MeshData[],
-        callFrom: "Emissive" | "BaseColor",
-        getExtraFactor: ((material: Material) => number[]) | undefined = undefined
+        callFrom: callFrom,
+        getExtra: ((material: Material) => {
+            texture: {
+                data: TypedArray,
+                size: vec2,
+                usedUv: number
+            } | null,
+            factor: number[] | number,
+        }) | undefined = undefined
     ) {
         const usedTextureUvIndices: number[] = []
         return {
             groups: meshes.map(mesh => mesh.geometry.map((prim, i) => {
                 const entries: BindGroupEntryCreationType[] = []
                 const hashEntries: hashCreationBindGroupEntry = []
-                const factors: number[] = [
-                    ...prim.material[`get${callFrom}Factor`]()
-                ]
 
-                console.log(mesh.nodeName, prim.material.getEmissiveFactor())
-                if (getExtraFactor) {
-                    factors.push(...getExtraFactor(prim.material))
+                const factors: number[] = [
+                    ...[prim.material[callFrom.factor]()].flat()
+                ]
+                if (getExtra) {
+                    factors.push(...[getExtra(prim.material).factor].flat())
                 }
+                const factorsTypedArray = new Float32Array(factors);
                 entries.push({
                     bindingPoint: 0,
                     typedArray: {
                         conversion: createGPUBuffer,
                         usage: GPUBufferUsage.UNIFORM,
                         label: `${mesh.nodeName} factors at prim : ${i}`,
-                        data: new Float32Array(factors),
+                        data: factorsTypedArray,
                         conversionType: "buffer"
                     },
                 })
-
-                if (prim.material[`get${callFrom}Texture`]()) {
-                    usedTextureUvIndices.push(prim.material[`get${callFrom}TextureInfo`]()?.getTexCoord() as number)
-                    const image = (prim.material[`get${callFrom}Texture`]() as Texture).getImage() as Uint8Array
+                hashEntries.push(factorsTypedArray)
+                const infoKey = callFrom.texture + 'Info' as any
+                if (prim.material[callFrom.texture]()) {
+                    usedTextureUvIndices.push((prim.material as any)[infoKey]()?.getTexCoord() as number)
+                    const image = (prim.material[callFrom.texture]() as Texture).getImage() as Uint8Array
                     entries.push({
                         bindingPoint: 1,
                         typedArray: {
                             conversion: getTextureFromData,
                             conversionType: "texture",
-                            size: (prim.material[`get${callFrom}Texture`]() as Texture).getSize() as vec2,
+                            size: (prim.material[callFrom.texture]() as Texture).getSize() as vec2,
                             data: image
                         },
                     })
@@ -176,7 +206,7 @@ export class SmartRender {
                 }
                 const alpha = new Float32Array([convertAlphaMode(prim.material.getAlphaMode()), prim.material.getAlphaCutoff()]);
                 entries.push({
-                    bindingPoint: prim.material[`get${callFrom}Texture`]() ? 3 : 1,
+                    bindingPoint: prim.material[callFrom.texture]() ? 3 : 1,
                     typedArray: {
                         conversion: createGPUBuffer,
                         conversionType: "buffer",
@@ -253,23 +283,143 @@ export class SmartRender {
         })).flat()
     }
 
+    private getExtensionMaterialBindGroups(
+        meshes: MeshData[],
+        getExtra: ((material: Material) => {
+            texture: {
+                data: TypedArray,
+                size: vec2,
+                usedUv: number
+            } | null,
+            factor: number[] | number,
+        })
+    ) {
+        const usedTextureUvIndices: number[] = []
+        return {
+            groups: meshes.map(mesh => mesh.geometry.map((prim, i) => {
+                const entries: BindGroupEntryCreationType[] = []
+                const hashEntries: hashCreationBindGroupEntry = []
+                const extra = getExtra(prim.material);
+                const factorsTypedArray = new Float32Array([...[extra.factor].flat()]);
+
+                entries.push({
+                    bindingPoint: 0,
+                    typedArray: {
+                        conversion: createGPUBuffer,
+                        usage: GPUBufferUsage.UNIFORM,
+                        label: `${mesh.nodeName} factors at prim : ${i}`,
+                        data: factorsTypedArray,
+                        conversionType: "buffer"
+                    },
+                })
+                hashEntries.push(factorsTypedArray)
+                if (extra.texture) {
+                    usedTextureUvIndices.push(extra.texture.usedUv)
+
+                    entries.push({
+                        bindingPoint: 1,
+                        typedArray: {
+                            conversion: getTextureFromData,
+                            conversionType: "texture",
+                            size: extra.texture.size,
+                            data: extra.texture.data
+                        },
+                    })
+
+                    entries.push({
+                        bindingPoint: 2,
+                        sampler: SmartRender.defaultSampler
+                    })
+                    hashEntries.push(extra.texture.data)
+                    hashEntries.push({
+                        label: "default sampler",
+                        addressModeW: "repeat",
+                        addressModeV: "repeat",
+                        addressModeU: "repeat",
+                        minFilter: "linear",
+                        magFilter: "linear"
+                    })
+                }
+                const alpha = new Float32Array([convertAlphaMode(prim.material.getAlphaMode()), prim.material.getAlphaCutoff()]);
+                entries.push({
+                    bindingPoint: extra.texture ? 3 : 1,
+                    typedArray: {
+                        conversion: createGPUBuffer,
+                        conversionType: "buffer",
+                        data: alpha,
+                        label: `${mesh.nodeName} alphaMode at prim : ${i}`,
+                        usage: GPUBufferUsage.UNIFORM
+                    },
+                })
+
+                hashEntries.push(alpha)
+
+                return {
+                    entries,
+                    material: prim.material,
+                    hashEntries
+                }
+            })).flat(),
+            usedTextureUvIndices: usedTextureUvIndices
+        }
+    }
+
 
     private entryCreator(
         meshes: MeshData[],
-        callFrom: callFrom,
+        callFrom: callFrom | undefined = undefined,
         codes: string[],
-        getExtraFactor: ((material: Material) => number[]) | undefined = undefined
+        getExtra: ((material: Material) => {
+            texture: {
+                data: TypedArray,
+                size: vec2,
+                usedUv: number
+            } | null,
+            factor: number[] | number,
+        }) | undefined = undefined,
+        type: 'ExtensionTexture' | "JustTexture" = "JustTexture"
     ): outputType {
-        const {groups, usedTextureUvIndices} = this.getMaterialBindGroups(meshes, callFrom, getExtraFactor)
+        let groups: any;
+        let usedTextureUvIndices: any;
+        if (type === "JustTexture" && callFrom) {
+
+            const {
+                groups: materialGroups,
+                usedTextureUvIndices: materialUsedTextureUvIndices
+            } = this.getMaterialBindGroups(meshes, callFrom, getExtra)
+            groups = materialGroups;
+            usedTextureUvIndices = materialUsedTextureUvIndices;
+        } else if (getExtra) {
+
+            const {
+                groups: materialGroups,
+                usedTextureUvIndices: materialUsedTextureUvIndices
+            } = this.getExtensionMaterialBindGroups(meshes, getExtra)
+            groups = materialGroups;
+            usedTextureUvIndices = materialUsedTextureUvIndices;
+        }
         const pipelineDescriptors = this.getPipelineDescriptors(meshes, usedTextureUvIndices)
         const geometryBindGroup = this.getGeometryBindGroups(meshes)
-
+        let onlyShow = -1;
+        if (meshes.length === 1 && meshes[0].geometry.length === 1) {
+            if (callFrom) {
+                onlyShow = meshes[0].geometry[0].material[callFrom.texture]() ? 0 : 1
+            } else if (getExtra) {
+                const extra = getExtra(meshes[0].geometry[0].material)
+                if (extra.texture) {
+                    onlyShow = 0
+                } else {
+                    onlyShow = 1
+                }
+            }
+        }
         return {
             meshes: meshes,
             materialBindGroupLayout: {
                 layoutsEntries: SmartRender.defaultMaterialBindGroupLayout,
                 primitiveIndex: meshes.map(mesh => mesh.geometry.map(prim => {
-                    if (prim.material[`get${callFrom}Texture`]()) {
+                    const extra = getExtra ? getExtra(prim.material) : undefined
+                    if ((callFrom && prim.material[callFrom.texture]()) || (extra?.texture)) {
                         return 0
                     }
                     return 1
@@ -282,12 +432,19 @@ export class SmartRender {
             },
             pipelineDescriptors,
             shaderCodes: {
-                codes,
+                codes: onlyShow === -1 ? codes : [codes[onlyShow]],
                 primitiveIndex: meshes.map((mesh) => mesh.geometry.map((prim) => {
-                    if (prim.material[`get${callFrom}Texture`]()) {
+                    if (onlyShow === -1) {
+                        const extra = getExtra ? getExtra(prim.material) : undefined
+
+                        if ((callFrom && prim.material[callFrom.texture]()) || (extra?.texture)) {
+                            return 0
+                        }
+                        return 1
+                    } else {
                         return 0
                     }
-                    return 1
+
                 })).flat()
             },
             geometryBindGroup: geometryBindGroup
@@ -295,166 +452,193 @@ export class SmartRender {
     }
 
     public base(meshes: MeshData[]): outputType {
-        const codes = [
-            `struct vsIn{
-                    @location(0) pos:vec3f,
-                    @location(1) uv:vec2f
-                }
-                struct vsOut{
-                    @builtin(position) clipPos:vec4f,
-                    @location(0) uv:vec2f
-                }
-                @group(0) @binding(0) var<uniform> projectionMatrix:mat4x4<f32>;
-                @group(0) @binding(1) var<uniform> viewMatrix:mat4x4<f32>;
-                @group(2) @binding(0) var<uniform> modelMatrix:mat4x4<f32>;
-                @vertex fn vs(in:vsIn)->vsOut{
-                    var output:vsOut;
-                    var worldPos = modelMatrix * vec4f(in.pos, 1);
-                    output.clipPos = projectionMatrix * viewMatrix * worldPos;
-                    output.uv=in.uv;
-                    return output;
-                }
-                
-                @group(1) @binding(0) var<uniform> factors:vec4f; 
-                @group(1) @binding(1) var baseColorTexture : texture_2d<f32>;
-                @group(1) @binding(2) var textureSampler:sampler;
-                @group(1) @binding(3) var<uniform> alphaMode:vec2f;
-                
-                @fragment fn fs(in:vsOut)->@location(0) vec4f{
-                    var model=textureSample(baseColorTexture,textureSampler,in.uv);
-                    model=model * factors;
-                    let alphaValue=model.a;
-                    
-                    if(i32(alphaMode.r) == 2 && alphaValue < alphaMode.g){
-                        discard;
-                    }
-                    let alpha = select(1.0, alphaValue, u32(alphaMode.r) == 1u);
-                    return vec4f(model.xyz,alpha);
-                }`, `struct vsIn{
-                    @location(0) pos:vec3f,
-                }
-                struct vsOut{
-                    @builtin(position) clipPos:vec4f,
-                }
-                @group(0) @binding(0) var<uniform> projectionMatrix:mat4x4<f32>;
-                @group(0) @binding(1) var<uniform> viewMatrix:mat4x4<f32>;
-                @group(2) @binding(0) var<uniform> modelMatrix:mat4x4<f32>;
-                @vertex fn vs(in:vsIn)->vsOut{
-                    var output:vsOut;
-                    var worldPos = modelMatrix * vec4f(in.pos, 1);
-                    output.clipPos = projectionMatrix * viewMatrix * worldPos;
-                    return output;
-                }
-                
-                @group(1) @binding(0) var<uniform> factors:vec4f; 
-                @group(1) @binding(1) var<uniform> alphaMode:vec2f;
-                
-                @fragment fn fs(in:vsOut)->@location(0) vec4f{
 
-                    let alphaValue=factors.a;
-                    
-                    if(i32(alphaMode.r) == 2 && alphaValue < alphaMode.y){
-                        discard;
-                    }
-                    let alpha = select(1.0, alphaValue, u32(alphaMode.r) == 1u);
-                    return vec4f(factors.xyz,alpha);
-            }`
-        ]
-        return this.entryCreator(meshes, "BaseColor", codes)
+        return this.entryCreator(meshes, {
+            texture: "getBaseColorTexture",
+            factor: "getBaseColorFactor"
+        }, baseColorCodes)
     }
 
     public emissive(meshes: MeshData[]): outputType {
-        const codes = [
-            `struct vsIn {
-    @location(0) pos: vec3f,
-    @location(1) uv: vec2f
-};
 
-struct vsOut {
-    @builtin(position) clipPos: vec4f,
-    @location(0) uv: vec2f
-};
-
-@group(0) @binding(0) var<uniform> projectionMatrix: mat4x4<f32>;
-@group(0) @binding(1) var<uniform> viewMatrix: mat4x4<f32>;
-@group(2) @binding(0) var<uniform> modelMatrix: mat4x4<f32>;
-
-@vertex fn vs(in: vsIn) -> vsOut {
-    var output: vsOut;
-    let worldPos = modelMatrix * vec4f(in.pos, 1.0);
-    output.clipPos = projectionMatrix * viewMatrix * worldPos;
-    output.uv = in.uv;
-    return output;
-}
-
-@group(1) @binding(0) var<uniform> factors: vec4f;
-@group(1) @binding(1) var emissiveTexture: texture_2d<f32>;
-@group(1) @binding(2) var textureSampler: sampler;
-@group(1) @binding(3) var<uniform> alphaMode: vec2f;
-
-@fragment fn fs(in: vsOut) -> @location(0) vec4f {
-    let emissiveRGB = factors.xyz * factors.w;
-    let emissiveFactor = vec4f(emissiveRGB, 1.0);
-    var model = textureSample(emissiveTexture, textureSampler, in.uv);
-    model = model * emissiveFactor;
-
-    let alphaValue = model.a;
-    let alphaCutOff = alphaMode.y;
-
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaCutOff) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(model.xyz, alpha);
-}
-`,
-            `struct vsIn {
-    @location(0) pos: vec3f
-};
-
-struct vsOut {
-    @builtin(position) clipPos: vec4f
-};
-
-@group(0) @binding(0) var<uniform> projectionMatrix: mat4x4<f32>;
-@group(0) @binding(1) var<uniform> viewMatrix: mat4x4<f32>;
-@group(2) @binding(0) var<uniform> modelMatrix: mat4x4<f32>;
-
-@vertex fn vs(in: vsIn) -> vsOut {
-    var output: vsOut;
-    let worldPos = modelMatrix * vec4f(in.pos, 1.0);
-    output.clipPos = projectionMatrix * viewMatrix * worldPos;
-    return output;
-}
-
-@group(1) @binding(0) var<uniform> factors: vec4f;
-@group(1) @binding(1) var<uniform> alphaMode: vec2f;
-
-@fragment fn fs(in: vsOut) -> @location(0) vec4f {
-    let emissiveRGB = factors.xyz * factors.w;
-    let emissiveFactor = vec4f(emissiveRGB, 1.0);
-
-    let alphaValue = emissiveFactor.a;
-    let alphaCutOff = alphaMode.y;
-
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaCutOff) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(emissiveFactor.xyz, alpha);
-}
-`
-        ]
-
-        return this.entryCreator(meshes, "Emissive", codes, (material) => {
+        return this.entryCreator(meshes, {
+            texture: "getEmissiveTexture",
+            factor: "getEmissiveFactor"
+        }, emissiveCodes, (material) => {
             const emissiveExtension = material.getExtension<EmissiveStrength>("KHR_materials_emissive_strength")
-
             if (emissiveExtension) {
-                return [emissiveExtension.getEmissiveStrength()]
+                return {
+                    factor: [emissiveExtension.getEmissiveStrength()],
+                    texture: null,
+                }
             }
-            return [1]
+            return {
+                factor: [1],
+                texture: null,
+            }
         })
     }
+
+    public opacity(meshes: MeshData[]): outputType {
+
+        return this.entryCreator(meshes, {
+            texture: "getBaseColorTexture",
+            factor: "getBaseColorFactor"
+        }, opacityCodes)
+    }
+
+    public occlusion(meshes: MeshData[]): outputType {
+
+        return this.entryCreator(meshes, {
+            texture: "getOcclusionTexture",
+            factor: "getOcclusionStrength"
+        }, occlusionCodes)
+    }
+
+    public normal(meshes: MeshData[]): outputType {
+
+        return this.entryCreator(meshes, {
+            texture: "getNormalTexture",
+            factor: "getNormalScale"
+        }, normalCodes)
+    }
+
+    public metallic(meshes: MeshData[]): outputType {
+
+        return this.entryCreator(meshes, {
+            texture: "getMetallicRoughnessTexture",
+            factor: "getMetallicFactor"
+        }, metallicCodes)
+    }
+
+    public roughness(meshes: MeshData[]): outputType {
+
+        return this.entryCreator(meshes, {
+            texture: "getMetallicRoughnessTexture",
+            factor: "getRoughnessFactor"
+        }, roughnessCodes)
+    }
+
+    public transmission(meshes: MeshData[]): outputType {
+
+        return this.entryCreator(meshes, undefined, transmissionCodes, (material) => {
+            const transmission = material.getExtension<Transmission>('KHR_materials_transmission')
+            if (transmission) {
+                const texture = transmission.getTransmissionTexture()
+                const textureInfo = transmission.getTransmissionTextureInfo()
+                return {
+                    texture: texture ? {
+                        data: texture.getImage() as Uint8Array,
+                        usedUv: textureInfo?.getTexCoord() as number,
+                        size: texture.getSize() as vec2
+                    } : null,
+                    factor: transmission.getTransmissionFactor()
+                }
+            }
+
+            return {
+                texture: null,
+                factor: 0
+            }
+        })
+    }
+
+    public specular(meshes: MeshData[]): outputType {
+
+        return this.entryCreator(meshes, undefined, specularCodes, (material) => {
+            const specular = material.getExtension<Specular>("KHR_materials_specular")
+            if (specular) {
+                const texture = specular.getSpecularTexture()
+                const textureInfo = specular.getSpecularTextureInfo()
+                return {
+                    texture: texture ? {
+                        data: texture.getImage() as Uint8Array,
+                        usedUv: textureInfo?.getTexCoord() as number,
+                        size: texture.getSize() as vec2
+                    } : null,
+                    factor: specular.getSpecularFactor()
+                }
+            }
+
+            return {
+                texture: null,
+                factor: 0
+            }
+        })
+    }
+
+    public clearcoat(meshes: MeshData[]): outputType {
+
+        return this.entryCreator(meshes, undefined, clearcoatCodes, (material) => {
+            const clearcoat = material.getExtension<Clearcoat>("KHR_materials_clearcoat")
+            if (clearcoat) {
+                const texture = clearcoat.getClearcoatTexture()
+                const textureInfo = clearcoat.getClearcoatTextureInfo()
+                return {
+                    texture: texture ? {
+                        data: texture.getImage() as Uint8Array,
+                        usedUv: textureInfo?.getTexCoord() as number,
+                        size: texture.getSize() as vec2
+                    } : null,
+                    factor: clearcoat.getClearcoatFactor()
+                }
+            }
+
+            return {
+                texture: null,
+                factor: 0
+            }
+        })
+    }
+
+    public clearcoatNormal(meshes: MeshData[]): outputType {
+
+        return this.entryCreator(meshes, undefined, clearcoatNormalCodes, (material) => {
+            const clearcoatNormal = material.getExtension<Clearcoat>("KHR_materials_clearcoat")
+            if (clearcoatNormal) {
+                const texture = clearcoatNormal.getClearcoatNormalTexture()
+                const textureInfo = clearcoatNormal.getClearcoatNormalTextureInfo()
+                console.log(clearcoatNormal.getClearcoatNormalScale())
+                return {
+                    texture: texture ? {
+                        data: texture.getImage() as Uint8Array,
+                        usedUv: textureInfo?.getTexCoord() as number,
+                        size: texture.getSize() as vec2
+                    } : null,
+                    factor: clearcoatNormal.getClearcoatNormalScale()
+                }
+            }
+
+            return {
+                texture: null,
+                factor: 0
+            }
+        })
+    }
+
+    public clearcoatRoughness(meshes: MeshData[]): outputType {
+
+        return this.entryCreator(meshes, undefined, clearcoatCodes, (material) => {
+            const clearcoatRoughness = material.getExtension<Clearcoat>("KHR_materials_clearcoat")
+            if (clearcoatRoughness) {
+                const texture = clearcoatRoughness.getClearcoatRoughnessTexture()
+                const textureInfo = clearcoatRoughness.getClearcoatRoughnessTextureInfo()
+
+                return {
+                    texture: texture ? {
+                        data: texture.getImage() as Uint8Array,
+                        usedUv: textureInfo?.getTexCoord() as number,
+                        size: texture.getSize() as vec2
+                    } : null,
+                    factor: clearcoatRoughness.getClearcoatRoughnessFactor()
+                }
+            }
+
+            return {
+                texture: null,
+                factor: 0
+            }
+        })
+    }
+
 }

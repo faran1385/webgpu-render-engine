@@ -129,14 +129,13 @@ export class ModelRenderer extends BaseLayer {
     ) {
         const pushedPrimIndices: { onRenderAble: number, onMeshes: number }[] = []
         this.meshes = meshes;
-
         const primitives = this.meshes.map((mesh) => mesh.geometry.flat());
+
         const materialLayoutHashes = materialBindGroupLayout.layoutsEntries.map((item) => {
             const hash = this.hasher.hashBindGroupLayout(item);
             this.gpuCache.appendBindGroupLayout(item, hash)
             return hash
         })
-
         const geometryLayoutHashes = geometryBindGroupLayout.entries.map((item) => {
             const hash = this.hasher.hashBindGroupLayout(item);
             this.gpuCache.appendBindGroupLayout(item, hash)
@@ -144,10 +143,11 @@ export class ModelRenderer extends BaseLayer {
         })
         const materialBindGroupHashes: number[] = [];
 
-
         for (let i = 0; i < materialBindGroup.length; i++) {
+
             const item = materialBindGroup[i];
             const hash = await this.hasher.hashBindGroup(item.hashEntries);
+
             materialBindGroupHashes[i] = hash;
             await this.gpuCache.appendMaterialBindGroup(
                 item.entries,
@@ -157,12 +157,12 @@ export class ModelRenderer extends BaseLayer {
                 this.root.listExtensionsUsed()
             );
         }
+
         const shaderCodesHashes: number[] = [];
         for (let i = 0; i < primitives.length; i++) {
             const code = shaderCodes.codes[shaderCodes.primitiveIndex[i]];
             const hash = await this.hasher.hashShaderModule(code)
             shaderCodesHashes[i] = hash;
-
             this.gpuCache.appendShaderModule(code, hash)
         }
         const pipelineLayoutsHashes = primitives.map((_, i) => {
@@ -171,7 +171,7 @@ export class ModelRenderer extends BaseLayer {
             return hash
         })
         const pipelineHashes = primitives.map((_, i) => {
-            const hash = this.hasher.hashPipeline(pipelineDescriptors[i],pipelineLayoutsHashes[i])
+            const hash = this.hasher.hashPipeline(pipelineDescriptors[i], pipelineLayoutsHashes[i])
             this.gpuCache.appendPipeline(pipelineDescriptors[i], hash, pipelineLayoutsHashes[i], shaderCodesHashes[i])
             return hash
         })

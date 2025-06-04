@@ -20,16 +20,16 @@ export class HashGenerator {
 
         const stringParts = await Promise.all(entries.map(async (entry) => {
             if ("BYTES_PER_ELEMENT" in entry) {
+
                 const buffer = entry.buffer.slice(
                     entry.byteOffset,
                     entry.byteOffset + entry.byteLength
                 );
-
                 const digest = await crypto.subtle.digest("SHA-1", buffer)
+
                 return Array.from(new Uint8Array(digest))
                     .map(b => b.toString(16).padStart(2, "0"))
                     .join("");
-
             }
             let string = ''
             string += entry.magFilter === "linear" ? 0 : entry.magFilter === "nearest" ? 1 : 2;

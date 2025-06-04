@@ -183,6 +183,7 @@ export class GPUCache extends BaseLayer {
     ) {
         const alreadyExists = GPUCache.materialBindGroupList.some((item) => item.hash === bindGroupHash);
         if (!alreadyExists) {
+
             const bindGroup = await this.createBindGroup({
                 creationEntries: entries,
                 layoutList: GPUCache.bindGroupLayoutList,

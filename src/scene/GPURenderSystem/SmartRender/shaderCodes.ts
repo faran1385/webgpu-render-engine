@@ -90,23 +90,13 @@ struct vsOut {
 @group(1) @binding(0) var<uniform> factors: vec4f;
 @group(1) @binding(1) var emissiveTexture: texture_2d<f32>;
 @group(1) @binding(2) var textureSampler: sampler;
-@group(1) @binding(3) var<uniform> alphaMode: vec2f;
 
 @fragment fn fs(in: vsOut) -> @location(0) vec4f {
     let emissiveRGB = factors.xyz * factors.w;
     let emissiveFactor = vec4f(emissiveRGB, 1.0);
     var model = textureSample(emissiveTexture, textureSampler, in.uv);
-    model = model * emissiveFactor;
 
-    let alphaValue = model.a;
-    let alphaCutOff = alphaMode.y;
-
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaCutOff) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(model.xyz, alpha);
+    return vec4f(model.xyz, 1.);
 }
 `,
     `struct vsIn {
@@ -135,15 +125,7 @@ struct vsOut {
     let emissiveRGB = factors.xyz * factors.w;
     let emissiveFactor = vec4f(emissiveRGB, 1.0);
 
-    let alphaValue = emissiveFactor.a;
-    let alphaCutOff = alphaMode.y;
-
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaCutOff) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(factors.xyz, alpha);
+    return emissiveFactor;
 }
 `
 ]
@@ -255,21 +237,12 @@ struct vsOut {
 @group(1) @binding(0) var<uniform> strength: f32;
 @group(1) @binding(1) var occlusionTexture: texture_2d<f32>;
 @group(1) @binding(2) var textureSampler: sampler;
-@group(1) @binding(3) var<uniform> alphaMode: vec2f; // x: mode, y: cutoff
 
 @fragment fn fs(in: vsOut) -> @location(0) vec4f {
     var model = textureSample(occlusionTexture, textureSampler, in.uv);
     model = model * strength;
-
-    let alphaValue = model.a;
-    let alphaCutOff = alphaMode.y;
-
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaCutOff) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(vec3f(model.r), alpha);
+    
+    return vec4f(vec3f(model.r), 1.);
 }
 `, `struct vsIn {
     @location(0) pos: vec3f
@@ -291,18 +264,10 @@ struct vsOut {
 }
 
 @group(1) @binding(0) var<uniform> strength: f32;
-@group(1) @binding(1) var<uniform> alphaMode: vec2f;
 
 @fragment fn fs(in: vsOut) -> @location(0) vec4f {
-    let alphaValue = strength;
-    let alphaCutOff = alphaMode.y;
 
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaCutOff) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(vec3f(strength), alpha);
+    return vec4f(vec3f(strength), 1.);
 }
 `
 ]
@@ -333,21 +298,12 @@ struct vsOut {
 @group(1) @binding(0) var<uniform> scale: f32;
 @group(1) @binding(1) var normalTexture: texture_2d<f32>;
 @group(1) @binding(2) var textureSampler: sampler;
-@group(1) @binding(3) var<uniform> alphaMode: vec2f;
 
 @fragment fn fs(in: vsOut) -> @location(0) vec4f {
     var model = textureSample(normalTexture, textureSampler, in.uv);
     model = model * scale;
-
-    let alphaValue = model.a;
-    let alphaCutOff = alphaMode.y;
-
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaCutOff) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(model.xyz, alpha);
+    
+    return vec4f(model.xyz, 1.);
 }
 `,
     `struct vsIn {
@@ -370,18 +326,10 @@ struct vsOut {
 }
 
 @group(1) @binding(0) var<uniform> scale: f32;
-@group(1) @binding(1) var<uniform> alphaMode: vec2f;
 
 @fragment fn fs(in: vsOut) -> @location(0) vec4f {
-    let alphaValue = scale;
-    let alphaCutOff = alphaMode.y;
 
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaCutOff) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(vec3f(scale), alpha);
+    return vec4f(vec3f(scale), 1.);
 }
 `
 ]
@@ -419,15 +367,7 @@ struct vsOut {
     var model = textureSample(metallicRoughnessTexture, textureSampler, in.uv);
     model = model * metallicFactor;
 
-    let alphaValue = model.a;
-    let alphaCutOff = alphaMode.y;
-
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaCutOff) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(vec3f(model.b), alpha);
+    return vec4f(vec3f(model.b), 1);
 }
 `,
     `struct vsIn {
@@ -453,15 +393,8 @@ struct vsOut {
 }
 
 @fragment fn fs(in: vsOut) -> @location(0) vec4f {
-    let alphaValue = metallicFactor;
-    let alphaCutOff = alphaMode.y;
 
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaCutOff) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(vec3f(metallicFactor), alpha);
+    return vec4f(vec3f(metallicFactor), 1);
 }`
 ]
 export const roughnessCodes=[
@@ -497,25 +430,15 @@ struct vsOut {
     var model = textureSample(metallicRoughnessTexture, textureSampler, in.uv);
     model = model * roughnessFactor;
 
-    let alphaValue = model.a;
-    let alphaCutOff = alphaMode.y;
-
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaCutOff) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(vec3f(model.g), alpha);
+    return vec4f(vec3f(model.g), 1);
 }
 `,
     `struct vsIn {
     @location(0) pos: vec3f,
-    @location(1) uv: vec2f,
 };
 
 struct vsOut {
     @builtin(position) clipPos: vec4f,
-    @location(0) uv: vec2f,
 };
 
 @group(0) @binding(0) var<uniform> projectionMatrix: mat4x4<f32>;
@@ -523,34 +446,19 @@ struct vsOut {
 @group(2) @binding(0) var<uniform> modelMatrix: mat4x4<f32>;
 
 @group(1) @binding(0) var<uniform> roughnessFactor: f32;
-@group(1) @binding(1) var metallicRoughnessTexture: texture_2d<f32>;
-@group(1) @binding(2) var textureSampler: sampler;
-@group(1) @binding(3) var<uniform> alphaMode: vec2f;
+@group(1) @binding(1) var<uniform> alphaMode: vec2f;
 
 @vertex fn vs(in: vsIn) -> vsOut {
     var out: vsOut;
     let worldPos = modelMatrix * vec4f(in.pos, 1.0);
     out.clipPos = projectionMatrix * viewMatrix * worldPos;
-    out.uv = in.uv;
     return out;
 }
 
 @fragment fn fs(in: vsOut) -> @location(0) vec4f {
-    var model = textureSample(metallicRoughnessTexture, textureSampler, in.uv);
-    model = model * roughnessFactor;
 
-    let alphaValue = model.a;
-    let alphaCutOff = alphaMode.y;
-
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaCutOff) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(vec3f(model.g), alpha);
-}
-`
-]
+    return vec4f(vec3f(roughnessFactor), 1);
+}`]
 
 export const transmissionCodes=[
     `struct vsIn {
@@ -584,15 +492,7 @@ struct vsOut {
 @fragment fn fs(in: vsOut) -> @location(0) vec4f {
     var model = textureSample(transmissionTexture, textureSampler, in.uv);
     model = model * transmissionFactor;
-
-    let alphaValue = model.a;
-
-    if (i32(alphaMode) == 2 && alphaValue < alphaCutOff) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode) == 1u);
-    return vec4f(vec3f(model.r), alpha);
+    return vec4f(vec3f(model.r), 1);
 }
 `,
     `struct vsIn {
@@ -618,14 +518,7 @@ struct vsOut {
 @group(1) @binding(1) var<uniform> alphaMode: vec2f;
 
 @fragment fn fs(in: vsOut) -> @location(0) vec4f {
-    let alphaValue = transmissionFactor;
-
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaMode.y) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(vec3f(transmissionFactor), alpha);
+    return vec4f(vec3f(transmissionFactor), 1.);
 }
 `
 ]
@@ -662,13 +555,7 @@ struct vsOut {
     var model = textureSample(specularTexture, textureSampler, in.uv);
     model *= specularFactor;
 
-    let alphaValue = model.a;
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaMode.y) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(vec3f(model.a), alpha);
+    return vec4f(vec3f(model.xyz), 1);
 }
 `,
     `struct vsIn {
@@ -694,13 +581,7 @@ struct vsOut {
 @group(1) @binding(1) var<uniform> alphaMode: vec2f;
 
 @fragment fn fs(in: vsOut) -> @location(0) vec4f {
-    let alphaValue = specularFactor;
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaMode.y) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(vec3f(specularFactor), alpha);
+    return vec4f(vec3f(specularFactor), 1);
 }
 `
 ]
@@ -736,14 +617,7 @@ struct vsOut {
 @fragment fn fs(in: vsOut) -> @location(0) vec4f {
     var model = textureSample(clearcoatTexture, textureSampler, in.uv);
     model = model * clearcoatFactor;
-
-    let alphaValue = model.a;
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaMode.y) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(vec3f(model.r), alpha);
+        return vec4f(vec3f(model.r), 1);
 }
 `,
     `struct vsIn {
@@ -766,94 +640,12 @@ struct vsOut {
 }
 
 @group(1) @binding(0) var<uniform> clearcoatFactor: f32;
-@group(1) @binding(1) var<uniform> alphaMode: vec2f;
 
 @fragment fn fs(in: vsOut) -> @location(0) vec4f {
-    let alphaValue = clearcoatFactor;
 
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaMode.y) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(vec3f(clearcoatFactor), alpha);
+    return vec4f(vec3f(clearcoatFactor), 1);
 }
 `
 ]
 
-export const clearcoatNormalCodes=[
-    `struct vsIn {
-    @location(0) pos: vec3f,
-    @location(1) uv: vec2f
-};
-
-struct vsOut {
-    @builtin(position) clipPos: vec4f,
-    @location(0) uv: vec2f
-};
-
-@group(0) @binding(0) var<uniform> projectionMatrix: mat4x4<f32>;
-@group(0) @binding(1) var<uniform> viewMatrix: mat4x4<f32>;
-@group(2) @binding(0) var<uniform> modelMatrix: mat4x4<f32>;
-
-@vertex fn vs(in: vsIn) -> vsOut {
-    var output: vsOut;
-    let worldPos = modelMatrix * vec4f(in.pos, 1);
-    output.clipPos = projectionMatrix * viewMatrix * worldPos;
-    output.uv = in.uv;
-    return output;
-}
-
-@group(1) @binding(0) var<uniform> clearcoatNormalScale: f32;
-@group(1) @binding(1) var clearcoatTexture: texture_2d<f32>;
-@group(1) @binding(2) var textureSampler: sampler;
-@group(1) @binding(3) var<uniform> alphaMode: vec2f;
-
-@fragment fn fs(in: vsOut) -> @location(0) vec4f {
-    var model = textureSample(clearcoatTexture, textureSampler, in.uv);
-    model = model * clearcoatNormalScale;
-
-    let alphaValue = model.a;
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaMode.y) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(vec3f(model.xyz), alpha);
-}
-`,
-    `struct vsIn {
-    @location(0) pos: vec3f
-};
-
-struct vsOut {
-    @builtin(position) clipPos: vec4f
-};
-
-@group(0) @binding(0) var<uniform> projectionMatrix: mat4x4<f32>;
-@group(0) @binding(1) var<uniform> viewMatrix: mat4x4<f32>;
-@group(2) @binding(0) var<uniform> modelMatrix: mat4x4<f32>;
-
-@vertex fn vs(in: vsIn) -> vsOut {
-    var output: vsOut;
-    let worldPos = modelMatrix * vec4f(in.pos, 1);
-    output.clipPos = projectionMatrix * viewMatrix * worldPos;
-    return output;
-}
-
-@group(1) @binding(0) var<uniform> clearcoatNormalScale: f32;
-@group(1) @binding(1) var<uniform> alphaMode: vec2f;
-
-@fragment fn fs(in: vsOut) -> @location(0) vec4f {
-    let alphaValue = clearcoatNormalScale;
-
-    if (i32(alphaMode.x) == 2 && alphaValue < alphaMode.y) {
-        discard;
-    }
-
-    let alpha = select(1.0, alphaValue, u32(alphaMode.x) == 1u);
-    return vec4f(vec3f(clearcoatNormalScale), alpha);
-}
-`
-]
 

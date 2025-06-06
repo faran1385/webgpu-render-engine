@@ -76,6 +76,7 @@ export class GLTFLoader {
                     localMatrix: localMat,
                     normalMatrix: normalMatData,
                     geometry,
+                    meshId: Math.random()
                 });
             }
             count++;
@@ -129,7 +130,8 @@ export class GLTFLoader {
                 indexType,
                 lodRanges: lodRanges,
                 indexCount: indices?.length ?? 0,
-                material: prim.getMaterial()
+                material: prim.getMaterial(),
+                id: Math.random()
             });
         }
 

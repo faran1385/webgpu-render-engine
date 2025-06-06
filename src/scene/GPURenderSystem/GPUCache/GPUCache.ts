@@ -200,6 +200,10 @@ export class GPUCache extends BaseLayer {
     }
 
 
+    public getGeometryLayout(geometryBindGroupLayoutHash: number) {
+        return (GPUCache.bindGroupLayoutList.find(item => item.hash === geometryBindGroupLayoutHash) as BindGroupLayoutListItem).layout
+    }
+
     public getRenderSetup(pipelineHash: number, pipelineLayout: number, materialBindGroupHash: number, materialBindGroupLayoutHash: number, geometryBindGroupLayoutHash: number, shaderCodeHash: number) {
         return {
             pipeline: (GPUCache.pipelineList.find(item => item.hash === pipelineHash) as PipelineListItem).pipeline,

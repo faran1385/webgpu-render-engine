@@ -12,9 +12,11 @@ export type MeshData = {
     localMatrix: Float32Array;
     normalMatrix: Float32Array;
     geometry: GeometryData[];
+    meshId: number
 };
 
 export type GeometryData = {
+    id: number,
     dataList: Record<string, AttributeData>;
     indices?: Uint16Array | Uint32Array;
     indexType: 'uint16' | 'uint32' | 'Unknown';

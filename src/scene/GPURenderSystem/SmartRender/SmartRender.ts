@@ -1,35 +1,24 @@
-import {BindGroupEntryCreationType, RenderState} from "../GPUCache/GPUCacheTypes.ts";
+import {BindGroupEntryCreationType} from "../GPUCache/GPUCacheTypes.ts";
 import {hashCreationBindGroupEntry} from "../Hasher/HashGenerator.ts";
 import {convertAlphaMode, createGPUBuffer, getTextureFromData} from "../../../helpers/global.helper.ts";
 import {Material, Texture, TypedArray, vec2} from "@gltf-transform/core";
 import {MeshData} from "../../loader/loaderTypes.ts";
 import {Clearcoat, EmissiveStrength, Specular, Transmission} from "@gltf-transform/extensions";
 import {
-    baseColorCodes, clearcoatCodes, clearcoatNormalCodes,
+    baseColorCodes, clearcoatCodes,
     emissiveCodes,
     metallicCodes,
     normalCodes,
     occlusionCodes,
     opacityCodes, roughnessCodes, specularCodes, transmissionCodes
 } from "./shaderCodes.ts";
+import {
+    MaterialBindGroupEntry, BindGroupEntryLayout,
+    ShaderCodeEntry,
+    SmartRenderInitEntryPassType, PipelineEntry, GeometryBindGroupEntry
+} from "../../../renderers/modelRenderer.ts";
 
-type outputType = {
-    meshes: MeshData[],
-    materialBindGroupLayout: { layoutsEntries: GPUBindGroupLayoutEntry[][], primitiveIndex: number[] },
-    geometryBindGroupLayout: { entries: GPUBindGroupLayoutEntry[][], primitiveIndex: number[] },
-    pipelineDescriptors: RenderState[],
-    geometryBindGroup: {
-        entries: (GPUBindGroupEntry & {
-            name: "model" | "normal";
-        })[], mesh: MeshData
-    }[],
-    materialBindGroup: {
-        hashEntries: hashCreationBindGroupEntry,
-        entries: BindGroupEntryCreationType[],
-        material: Material
-    }[],
-    shaderCodes: { codes: string[], primitiveIndex: number[] },
-}
+
 type CallableTexture =
     "getBaseColorTexture"
     | "getEmissiveTexture"
@@ -123,9 +112,10 @@ export class SmartRender {
         }
     }
 
-    private getGeometryBindGroups(meshes: MeshData[]) {
-        return meshes.map((mesh) => {
+    private getGeometryBindGroups(meshes: MeshData[]): GeometryBindGroupEntry {
+        return meshes.map((mesh, i) => {
             return {
+                indexOnMeshes: i,
                 entries: [
                     {
                         binding: 0,
@@ -135,7 +125,8 @@ export class SmartRender {
                         name: "model"
                     },
                 ] as (GPUBindGroupEntry & { name: "model" | "normal" })[],
-                mesh
+                mesh,
+                primitivesId: mesh.geometry.map(prim => prim.id)
             }
         })
     }
@@ -154,7 +145,7 @@ export class SmartRender {
     ) {
         const usedTextureUvIndices: number[] = []
         return {
-            groups: meshes.map(mesh => mesh.geometry.map((prim, i) => {
+            groups: meshes.map(mesh => mesh.geometry.map((prim, i): MaterialBindGroupEntry => {
                 const entries: BindGroupEntryCreationType[] = []
                 const hashEntries: hashCreationBindGroupEntry = []
 
@@ -164,6 +155,7 @@ export class SmartRender {
                 if (getExtra) {
                     factors.push(...[getExtra(prim.material).factor].flat())
                 }
+
                 const factorsTypedArray = new Float32Array(factors);
                 entries.push({
                     bindingPoint: 0,
@@ -221,66 +213,147 @@ export class SmartRender {
                 return {
                     entries,
                     material: prim.material,
-                    hashEntries
+                    hashEntries,
+                    primitiveId: prim.id
                 }
             })).flat(),
             usedTextureUvIndices: usedTextureUvIndices
         }
     }
 
-    private getPipelineDescriptors(meshes: MeshData[], usedTextureUvIndices: number[]) {
-        return meshes.map((mesh) => mesh.geometry.map((prim, i): RenderState => {
-            const buffers: (GPUVertexBufferLayout & { name: string; })[] = [{
-                arrayStride: 3 * 4,
-                attributes: [{
-                    offset: 0,
-                    shaderLocation: 0,
-                    format: "float32x3"
-                }],
-                name: 'POSITION'
-            }]
+    private getPipelineDescriptors(meshes: MeshData[], usedTextureUvIndices: number[]): PipelineEntry {
+        const output: PipelineEntry = []
+        meshes.forEach((mesh) => {
+            const pipelineEntries: any[] = []
 
-            if (prim.dataList[`TEXCOORD_${usedTextureUvIndices[i]}`]) {
-                buffers.push({
-                    arrayStride: 2 * 4,
+            mesh.geometry.forEach((prim, i) => {
+                const buffers: (GPUVertexBufferLayout & { name: string; })[] = [{
+                    arrayStride: 3 * 4,
                     attributes: [{
                         offset: 0,
-                        shaderLocation: 1,
-                        format: "float32x2"
+                        shaderLocation: 0,
+                        format: "float32x3"
                     }],
-                    name: `TEXCOORD_${usedTextureUvIndices[i]}`
-                })
-            }
+                    name: 'POSITION'
+                }]
 
-            return {
-                primitive: {
-                    cullMode: prim.material.getDoubleSided() ? "none" : "back",
-                    frontFace: "ccw",
-                },
-                depthStencil: {
-                    depthCompare: "less",
-                    depthWriteEnabled: prim.material.getAlphaMode() !== "BLEND",
-                    format: "depth24plus"
-                },
-                targets: [{
-                    writeMask: GPUColorWrite.ALL,
-                    blend: prim.material.getAlphaMode() === "BLEND" ? {
-                        color: {
-                            srcFactor: "src-alpha",
-                            dstFactor: "one-minus-src-alpha",
-                            operation: "add",
+                if (prim.dataList[`TEXCOORD_${usedTextureUvIndices[i]}`]) {
+                    buffers.push({
+                        arrayStride: 2 * 4,
+                        attributes: [{
+                            offset: 0,
+                            shaderLocation: 1,
+                            format: "float32x2"
+                        }],
+                        name: `TEXCOORD_${usedTextureUvIndices[i]}`
+                    })
+                }
+                const isDoubleSided=prim.material.getDoubleSided()
+                const isTransparent=prim.material.getAlphaMode() === "BLEND"
+
+                if(isTransparent && isDoubleSided){
+                    pipelineEntries.push({
+                        primitiveId: prim.id,
+                        prim,
+                        primitive: {
+                            cullMode: "front",
+                            frontFace: "ccw",
                         },
-                        alpha: {
-                            srcFactor: "one",
-                            dstFactor: "zero",
-                            operation: "add",
+                        depthStencil: {
+                            depthCompare: "less",
+                            depthWriteEnabled: false,
+                            format: "depth24plus"
                         },
-                    } : undefined,
-                    format: SmartRender.ctx.getConfiguration()?.format as GPUTextureFormat
-                }],
-                buffers
-            }
-        })).flat()
+                        targets: [{
+                            writeMask: GPUColorWrite.ALL,
+                            blend: {
+                                color: {
+                                    srcFactor: "src-alpha",
+                                    dstFactor: "one-minus-src-alpha",
+                                    operation: "add",
+                                },
+                                alpha: {
+                                    srcFactor: "one",
+                                    dstFactor: "zero",
+                                    operation: "add",
+                                },
+                            },
+                            format: SmartRender.ctx.getConfiguration()?.format as GPUTextureFormat
+                        }],
+                        buffers
+                    })
+
+                    pipelineEntries.push({
+                        primitiveId: prim.id,
+                        prim,
+                        primitive: {
+                            cullMode: "back",
+                            frontFace: "ccw",
+                        },
+                        depthStencil: {
+                            depthCompare: "less",
+                            depthWriteEnabled: false,
+                            format: "depth24plus"
+                        },
+                        targets: [{
+                            writeMask: GPUColorWrite.ALL,
+                            blend: {
+                                color: {
+                                    srcFactor: "src-alpha",
+                                    dstFactor: "one-minus-src-alpha",
+                                    operation: "add",
+                                },
+                                alpha: {
+                                    srcFactor: "one",
+                                    dstFactor: "zero",
+                                    operation: "add",
+                                },
+                            },
+                            format: SmartRender.ctx.getConfiguration()?.format as GPUTextureFormat
+                        }],
+                        buffers
+                    })
+                }else{
+                    pipelineEntries.push({
+                        primitiveId: prim.id,
+                        prim,
+                        primitive: {
+                            cullMode: isDoubleSided ? "none" : "back",
+                            frontFace: "ccw",
+                        },
+                        depthStencil: {
+                            depthCompare: "less",
+                            depthWriteEnabled: !isTransparent,
+                            format: "depth24plus"
+                        },
+                        targets: [{
+                            writeMask: GPUColorWrite.ALL,
+                            blend: isTransparent ? {
+                                color: {
+                                    srcFactor: "src-alpha",
+                                    dstFactor: "one-minus-src-alpha",
+                                    operation: "add",
+                                },
+                                alpha: {
+                                    srcFactor: "one",
+                                    dstFactor: "zero",
+                                    operation: "add",
+                                },
+                            } : undefined,
+                            format: SmartRender.ctx.getConfiguration()?.format as GPUTextureFormat
+                        }],
+                        buffers
+                    })
+                }
+            })
+
+            output.push({
+                mesh,
+                pipelineEntries: pipelineEntries
+            })
+        })
+
+        return output
     }
 
     private getExtensionMaterialBindGroups(
@@ -378,7 +451,7 @@ export class SmartRender {
             factor: number[] | number,
         }) | undefined = undefined,
         type: 'ExtensionTexture' | "JustTexture" = "JustTexture"
-    ): outputType {
+    ): SmartRenderInitEntryPassType {
         let groups: any;
         let usedTextureUvIndices: any;
         if (type === "JustTexture" && callFrom) {
@@ -400,58 +473,45 @@ export class SmartRender {
         }
         const pipelineDescriptors = this.getPipelineDescriptors(meshes, usedTextureUvIndices)
         const geometryBindGroup = this.getGeometryBindGroups(meshes)
-        let onlyShow = -1;
-        if (meshes.length === 1 && meshes[0].geometry.length === 1) {
-            if (callFrom) {
-                onlyShow = meshes[0].geometry[0].material[callFrom.texture]() ? 0 : 1
-            } else if (getExtra) {
-                const extra = getExtra(meshes[0].geometry[0].material)
-                if (extra.texture) {
-                    onlyShow = 0
-                } else {
-                    onlyShow = 1
-                }
+
+        const codesWithIdArrays: ShaderCodeEntry[] = codes.map((code) => ({
+            code,
+            primitivesId: []
+        }))
+        const materialLayoutWithIds: BindGroupEntryLayout = SmartRender.defaultMaterialBindGroupLayout.map((layout) => ({
+            layoutsEntries: layout,
+            primitivesId: []
+        }))
+        const geometryLayoutWithIds: BindGroupEntryLayout = SmartRender.defaultGeometryBindGroupLayout.map((layout) => ({
+            layoutsEntries: layout,
+            primitivesId: []
+        }))
+
+        meshes.map((mesh) => mesh.geometry.map((prim) => {
+            const extra = getExtra ? getExtra(prim.material) : undefined
+            if ((callFrom && prim.material[callFrom.texture]()) || (extra?.texture)) {
+                codesWithIdArrays[0].primitivesId.push(prim.id)
+                materialLayoutWithIds[0].primitivesId.push(prim.id)
+            } else {
+                codesWithIdArrays[1].primitivesId.push(prim.id)
+                materialLayoutWithIds[1].primitivesId.push(prim.id)
             }
-        }
+            geometryLayoutWithIds[0].primitivesId.push(prim.id)
+        }))
+
+
         return {
-            meshes: meshes,
-            materialBindGroupLayout: {
-                layoutsEntries: SmartRender.defaultMaterialBindGroupLayout,
-                primitiveIndex: meshes.map(mesh => mesh.geometry.map(prim => {
-                    const extra = getExtra ? getExtra(prim.material) : undefined
-                    if ((callFrom && prim.material[callFrom.texture]()) || (extra?.texture)) {
-                        return 0
-                    }
-                    return 1
-                })).flat()
-            },
+            meshes,
+            materialBindGroupLayout: materialLayoutWithIds,
             materialBindGroup: groups,
-            geometryBindGroupLayout: {
-                entries: SmartRender.defaultGeometryBindGroupLayout,
-                primitiveIndex: meshes.map(mesh => mesh.geometry.map(() => 0)).flat()
-            },
+            geometryBindGroupLayout: geometryLayoutWithIds,
             pipelineDescriptors,
-            shaderCodes: {
-                codes: onlyShow === -1 ? codes : [codes[onlyShow]],
-                primitiveIndex: meshes.map((mesh) => mesh.geometry.map((prim) => {
-                    if (onlyShow === -1) {
-                        const extra = getExtra ? getExtra(prim.material) : undefined
-
-                        if ((callFrom && prim.material[callFrom.texture]()) || (extra?.texture)) {
-                            return 0
-                        }
-                        return 1
-                    } else {
-                        return 0
-                    }
-
-                })).flat()
-            },
-            geometryBindGroup: geometryBindGroup
+            shaderCodes: codesWithIdArrays,
+            geometryBindGroups: geometryBindGroup
         }
     }
 
-    public base(meshes: MeshData[]): outputType {
+    public base(meshes: MeshData[]): SmartRenderInitEntryPassType {
 
         return this.entryCreator(meshes, {
             texture: "getBaseColorTexture",
@@ -459,7 +519,7 @@ export class SmartRender {
         }, baseColorCodes)
     }
 
-    public emissive(meshes: MeshData[]): outputType {
+    public emissive(meshes: MeshData[]): SmartRenderInitEntryPassType {
 
         return this.entryCreator(meshes, {
             texture: "getEmissiveTexture",
@@ -479,7 +539,7 @@ export class SmartRender {
         })
     }
 
-    public opacity(meshes: MeshData[]): outputType {
+    public opacity(meshes: MeshData[]): SmartRenderInitEntryPassType {
 
         return this.entryCreator(meshes, {
             texture: "getBaseColorTexture",
@@ -487,7 +547,7 @@ export class SmartRender {
         }, opacityCodes)
     }
 
-    public occlusion(meshes: MeshData[]): outputType {
+    public occlusion(meshes: MeshData[]): SmartRenderInitEntryPassType {
 
         return this.entryCreator(meshes, {
             texture: "getOcclusionTexture",
@@ -495,7 +555,7 @@ export class SmartRender {
         }, occlusionCodes)
     }
 
-    public normal(meshes: MeshData[]): outputType {
+    public normal(meshes: MeshData[]): SmartRenderInitEntryPassType {
 
         return this.entryCreator(meshes, {
             texture: "getNormalTexture",
@@ -503,7 +563,7 @@ export class SmartRender {
         }, normalCodes)
     }
 
-    public metallic(meshes: MeshData[]): outputType {
+    public metallic(meshes: MeshData[]): SmartRenderInitEntryPassType {
 
         return this.entryCreator(meshes, {
             texture: "getMetallicRoughnessTexture",
@@ -511,7 +571,7 @@ export class SmartRender {
         }, metallicCodes)
     }
 
-    public roughness(meshes: MeshData[]): outputType {
+    public roughness(meshes: MeshData[]): SmartRenderInitEntryPassType {
 
         return this.entryCreator(meshes, {
             texture: "getMetallicRoughnessTexture",
@@ -519,7 +579,7 @@ export class SmartRender {
         }, roughnessCodes)
     }
 
-    public transmission(meshes: MeshData[]): outputType {
+    public transmission(meshes: MeshData[]): SmartRenderInitEntryPassType {
 
         return this.entryCreator(meshes, undefined, transmissionCodes, (material) => {
             const transmission = material.getExtension<Transmission>('KHR_materials_transmission')
@@ -543,7 +603,7 @@ export class SmartRender {
         })
     }
 
-    public specular(meshes: MeshData[]): outputType {
+    public specular(meshes: MeshData[]): SmartRenderInitEntryPassType {
 
         return this.entryCreator(meshes, undefined, specularCodes, (material) => {
             const specular = material.getExtension<Specular>("KHR_materials_specular")
@@ -567,7 +627,7 @@ export class SmartRender {
         })
     }
 
-    public clearcoat(meshes: MeshData[]): outputType {
+    public clearcoat(meshes: MeshData[]): SmartRenderInitEntryPassType {
 
         return this.entryCreator(meshes, undefined, clearcoatCodes, (material) => {
             const clearcoat = material.getExtension<Clearcoat>("KHR_materials_clearcoat")
@@ -581,56 +641,6 @@ export class SmartRender {
                         size: texture.getSize() as vec2
                     } : null,
                     factor: clearcoat.getClearcoatFactor()
-                }
-            }
-
-            return {
-                texture: null,
-                factor: 0
-            }
-        })
-    }
-
-    public clearcoatNormal(meshes: MeshData[]): outputType {
-
-        return this.entryCreator(meshes, undefined, clearcoatNormalCodes, (material) => {
-            const clearcoatNormal = material.getExtension<Clearcoat>("KHR_materials_clearcoat")
-            if (clearcoatNormal) {
-                const texture = clearcoatNormal.getClearcoatNormalTexture()
-                const textureInfo = clearcoatNormal.getClearcoatNormalTextureInfo()
-                console.log(clearcoatNormal.getClearcoatNormalScale())
-                return {
-                    texture: texture ? {
-                        data: texture.getImage() as Uint8Array,
-                        usedUv: textureInfo?.getTexCoord() as number,
-                        size: texture.getSize() as vec2
-                    } : null,
-                    factor: clearcoatNormal.getClearcoatNormalScale()
-                }
-            }
-
-            return {
-                texture: null,
-                factor: 0
-            }
-        })
-    }
-
-    public clearcoatRoughness(meshes: MeshData[]): outputType {
-
-        return this.entryCreator(meshes, undefined, clearcoatCodes, (material) => {
-            const clearcoatRoughness = material.getExtension<Clearcoat>("KHR_materials_clearcoat")
-            if (clearcoatRoughness) {
-                const texture = clearcoatRoughness.getClearcoatRoughnessTexture()
-                const textureInfo = clearcoatRoughness.getClearcoatRoughnessTextureInfo()
-
-                return {
-                    texture: texture ? {
-                        data: texture.getImage() as Uint8Array,
-                        usedUv: textureInfo?.getTexCoord() as number,
-                        size: texture.getSize() as vec2
-                    } : null,
-                    factor: clearcoatRoughness.getClearcoatRoughnessFactor()
                 }
             }
 

@@ -1,4 +1,4 @@
-import {BaseLayer} from "./baseLayer.ts";
+import {BaseLayer, RenderAble, TransparentRenderAble} from "./baseLayer.ts";
 // @ts-ignore
 import lodShader from "../shaders/builtin/lod.wgsl?raw"
 import {mat4, vec3} from "gl-matrix";
@@ -27,7 +27,6 @@ export class MainLayer extends BaseLayer {
     }
 
 
-
     private getCameraCurrentPosition() {
         let camPos: vec3;
         if (BaseLayer.getActiveCameraIndex === 0) {
@@ -44,9 +43,10 @@ export class MainLayer extends BaseLayer {
         return vec3.transformMat4(vec3.create(), localOrigin, modelMatrix);
     }
 
-    private updateViewProjection() {
+    private getCameraVP() {
         let projectionMatrix;
         let viewMatrix;
+
         if (MainLayer.getActiveCameraIndex === 0) {
             const updatedData = MainLayer.controls.update();
             projectionMatrix = updatedData.projectionMatrix;
@@ -56,6 +56,11 @@ export class MainLayer extends BaseLayer {
             viewMatrix = MainLayer.cameras[MainLayer.getActiveCameraIndex].getViewMatrix();
         }
 
+        return {projectionMatrix, viewMatrix}
+    }
+
+    private updateViewProjection() {
+        const {viewMatrix, projectionMatrix} = this.getCameraVP()
         const VP = mat4.multiply(mat4.create(), projectionMatrix, viewMatrix);
 
         updateBuffer(this.device, MainLayer.frustumCullingBuffer, VP as TypedArray);
@@ -174,47 +179,74 @@ export class MainLayer extends BaseLayer {
     }
 
 
+    private buildRenderQueue(
+        queues: {
+            opaque: RenderAble[];
+            transparent: TransparentRenderAble[];
+        },
+    ): RenderAble[] {
+        const {viewMatrix} = this.getCameraVP();
+        const out: RenderAble[] = [];
+
+        // 1) OPAQUE: no sorting needed
+        out.push(...queues.opaque);
+
+        // 2) TRANSPARENT: compute depth in view space for each entry
+        const withDepth = queues.transparent.map(r => {
+            const m = r.renderData.model.data;
+            // extract world position (translation) from model matrix
+            const worldPos: [number, number, number] = [m[12], m[13], m[14]];
+            // transform into view space
+            const viewPos = vec3.transformMat4(vec3.create(), worldPos, viewMatrix);
+            // use -Z (more negative Z in view = farther)
+            const depth = -viewPos[2];
+            return {r, depth};
+        });
+
+        // 3) Sort transparent entries back-to-front
+        withDepth.sort((a, b) => b.depth - a.depth);
+
+        // 4) Append sorted transparent entries
+        out.push(...withDepth.map(item => item.r));
+
+        return out;
+    }
+
     public render(commandEncoder: GPUCommandEncoder) {
-        let computes = BaseLayer.renderAble.filter((item) => item.computeShader)
+        const renderAbleArray: RenderAble[] = this.buildRenderQueue(BaseLayer.renderAble)
+
+        let computes = renderAbleArray.filter((item) => item.computeShader)
 
         if (computes.length !== 0) {
             this.updateViewProjection()
-            const computePrims = computes.map((item) => {
-                return item.prims.map((prim) => ({
-                    prim,
-                    mesh: item
-                }))
-            }).flat()
 
-            const renderAbleInfo = new Float32Array(computePrims.length * 12);
+            const renderAbleInfo = new Float32Array(computes.length * 12);
 
             const lodNumbers: number[] = computes.flatMap(renderAble =>
-                renderAble.prims.flatMap(prim =>
-                    prim.lodRanges?.flatMap(lod => [lod.count, lod.start, renderAble.computeShader?.lod.applyBaseVertex ? lod.baseVertex : 0]) ?? []
-                )
+                renderAble.primitive.lodRanges?.flatMap(lod => [lod.count, lod.start, renderAble.computeShader?.lod.applyBaseVertex ? lod.baseVertex : 0]) ?? []
             );
 
             const renderAbleLodRanges = new Float32Array(lodNumbers);
 
             let lodOffset = 0;
-            computePrims.forEach((data, i) => {
+            computes.forEach((data, i) => {
                 const i12 = i * 12;
-                const worldPos = this.getModelWorldPosition(data.mesh.renderData.model.data as mat4);
+                const worldPos = this.getModelWorldPosition(data.renderData.model.data as mat4);
 
                 renderAbleInfo[i12] = worldPos[0];
                 renderAbleInfo[i12 + 1] = worldPos[1];
                 renderAbleInfo[i12 + 2] = worldPos[2];
-                renderAbleInfo[i12 + 3] = (data.mesh.computeShader as any).lod.threshold;
-                renderAbleInfo[i12 + 4] = data.prim.lodRanges?.length ?? 0;
+                renderAbleInfo[i12 + 3] = (data.computeShader as any).lod.threshold;
+                renderAbleInfo[i12 + 4] = data.primitive.lodRanges?.length ?? 0;
                 renderAbleInfo[i12 + 5] = lodOffset;
-                renderAbleInfo[i12 + 6] = data.mesh.computeShader?.frustumCulling.min[0] ?? 0;
-                renderAbleInfo[i12 + 7] = data.mesh.computeShader?.frustumCulling.min[1] ?? 0;
-                renderAbleInfo[i12 + 8] = data.mesh.computeShader?.frustumCulling.min[2] ?? 0;
-                renderAbleInfo[i12 + 9] = data.mesh.computeShader?.frustumCulling.max[0] ?? 0;
-                renderAbleInfo[i12 + 10] = data.mesh.computeShader?.frustumCulling.max[1] ?? 0;
-                renderAbleInfo[i12 + 11] = data.mesh.computeShader?.frustumCulling.max[2] ?? 0;
+                renderAbleInfo[i12 + 6] = data.computeShader?.frustumCulling.min[0] ?? 0;
+                renderAbleInfo[i12 + 7] = data.computeShader?.frustumCulling.min[1] ?? 0;
+                renderAbleInfo[i12 + 8] = data.computeShader?.frustumCulling.min[2] ?? 0;
+                renderAbleInfo[i12 + 9] = data.computeShader?.frustumCulling.max[0] ?? 0;
+                renderAbleInfo[i12 + 10] = data.computeShader?.frustumCulling.max[1] ?? 0;
+                renderAbleInfo[i12 + 11] = data.computeShader?.frustumCulling.max[2] ?? 0;
 
-                lodOffset += (data.prim.lodRanges?.length ?? 0) * 3;
+                lodOffset += (data.primitive.lodRanges?.length ?? 0) * 3;
             })
 
             updateBuffer(this.device, MainLayer.lodRenderAbleBuffer, renderAbleInfo)
@@ -244,27 +276,25 @@ export class MainLayer extends BaseLayer {
                 loadOp: "load",
             }]
         })
-        BaseLayer.renderAble.forEach((item) => {
-            item.prims.forEach((prim, i) => {
-                pass.setPipeline(prim.pipeline)
-                prim.bindGroups.forEach((group, i) => {
-                    pass.setBindGroup(i, group)
-                })
-                prim.vertexBuffers.forEach((buffer, i) => {
-                    pass.setVertexBuffer(i, buffer)
-                })
-
-                if (prim.index && item.computeShader) {
-                    pass.setIndexBuffer(prim.index.buffer, prim.index.type)
-                    pass.drawIndexedIndirect(MainLayer.lodRenderAbleResultBuffer, i * 5 * 4)
-                } else if (prim.indirect && prim.index) {
-
-                    pass.setIndexBuffer(prim.index.buffer, prim.index.type)
-                    pass.drawIndexedIndirect(prim.indirect.indirectBuffer, prim.indirect.indirectOffset)
-                } else if (prim.indirect) {
-                    pass.drawIndirect(prim.indirect.indirectBuffer, prim.indirect.indirectOffset)
-                }
+        renderAbleArray.forEach((item) => {
+            pass.setPipeline(item.primitive.pipeline)
+            item.primitive.bindGroups.forEach((group, i) => {
+                pass.setBindGroup(i, group)
             })
+            item.primitive.vertexBuffers.forEach((buffer, i) => {
+                pass.setVertexBuffer(i, buffer)
+            })
+
+            if (item.primitive.index && item.computeShader) {
+                pass.setIndexBuffer(item.primitive.index.buffer, item.primitive.index.type)
+                pass.drawIndexedIndirect(MainLayer.lodRenderAbleResultBuffer, 0)
+            } else if (item.primitive.indirect && item.primitive.index) {
+
+                pass.setIndexBuffer(item.primitive.index.buffer, item.primitive.index.type)
+                pass.drawIndexedIndirect(item.primitive.indirect.indirectBuffer, item.primitive.indirect.indirectOffset)
+            } else if (item.primitive.indirect) {
+                pass.drawIndirect(item.primitive.indirect.indirectBuffer, item.primitive.indirect.indirectOffset)
+            }
         })
 
         pass.end()

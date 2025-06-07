@@ -4,7 +4,7 @@ import {Pane} from "tweakpane";
 import {updateBuffer} from "../helpers/global.helper.ts";
 import {Camera} from "../scene/camera/camera.ts";
 
-import {LODRange} from "../scene/loader/loaderTypes.ts";
+import {LODRange, MeshData} from "../scene/loader/loaderTypes.ts";
 
 export type readyBindGroup = { bindGroup: GPUBindGroup, layout: GPUBindGroupLayout }
 
@@ -49,8 +49,11 @@ export type RenderAble = {
             max: [number, number, number],
         }
     },
-    prims: RenderAblePrim[]
+    primitive: RenderAblePrim,
+    mesh: MeshData,
 }
+
+export type TransparentRenderAble = RenderAble & { side: "back" | "front" }
 
 export class BaseLayer {
     public readonly ctx: GPUCanvasContext;
@@ -68,15 +71,25 @@ export class BaseLayer {
     private static _activeCamera: activeCamera;
     private static _activeCameraIndex: number = 0;
     private static _pane: Pane;
-    private static _renderAble: RenderAble[] = [];
+    private static _renderAble: { opaque: RenderAble[], transparent: TransparentRenderAble[] } = {
+        opaque: [],
+        transparent: []
+    };
     private static _initialized: boolean = false;
 
-    protected static get renderAble(): RenderAble[] {
+    protected static get renderAble() {
         return BaseLayer._renderAble;
     }
 
-    protected static set setRenderAble(renderAble: RenderAble) {
-        BaseLayer._renderAble.push(renderAble)
+    protected static appendRenderAble(T: { where: "transparent", renderAble: TransparentRenderAble } | {
+        where: "opaque",
+        renderAble: RenderAble
+    }) {
+        if (T.where === "transparent") {
+            BaseLayer._renderAble.transparent.push(T.renderAble);
+        } else {
+            BaseLayer._renderAble.opaque.push(T.renderAble);
+        }
     }
 
     protected static get format(): GPUTextureFormat {

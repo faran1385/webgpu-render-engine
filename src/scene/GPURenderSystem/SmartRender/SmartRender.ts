@@ -144,8 +144,9 @@ export class SmartRender {
         }) | undefined = undefined
     ) {
         const usedTextureUvIndices: number[] = []
+
         return {
-            groups: meshes.map(mesh => mesh.geometry.map((prim, i): MaterialBindGroupEntry => {
+            groups: meshes.map((mesh) => mesh.geometry.map((prim, i): MaterialBindGroupEntry => {
                 const entries: BindGroupEntryCreationType[] = []
                 const hashEntries: hashCreationBindGroupEntry = []
 
@@ -167,6 +168,7 @@ export class SmartRender {
                         conversionType: "buffer"
                     },
                 })
+
                 hashEntries.push(factorsTypedArray)
                 const infoKey = callFrom.texture + 'Info' as any
                 if (prim.material[callFrom.texture]()) {
@@ -224,7 +226,6 @@ export class SmartRender {
     private getPipelineDescriptors(meshes: MeshData[], usedTextureUvIndices: number[]): PipelineEntry {
         const output: PipelineEntry = []
         meshes.forEach((mesh) => {
-            const pipelineEntries: any[] = []
 
             mesh.geometry.forEach((prim, i) => {
                 const buffers: (GPUVertexBufferLayout & { name: string; })[] = [{
@@ -248,108 +249,115 @@ export class SmartRender {
                         name: `TEXCOORD_${usedTextureUvIndices[i]}`
                     })
                 }
-                const isDoubleSided=prim.material.getDoubleSided()
-                const isTransparent=prim.material.getAlphaMode() === "BLEND"
+                const isDoubleSided = prim.material.getDoubleSided()
+                const isTransparent = prim.material.getAlphaMode() === "BLEND"
 
-                if(isTransparent && isDoubleSided){
-                    pipelineEntries.push({
+                if (isTransparent && isDoubleSided) {
+                    output.push({
+                        mesh,
                         primitiveId: prim.id,
                         prim,
-                        primitive: {
-                            cullMode: "front",
-                            frontFace: "ccw",
-                        },
-                        depthStencil: {
-                            depthCompare: "less",
-                            depthWriteEnabled: false,
-                            format: "depth24plus"
-                        },
-                        targets: [{
-                            writeMask: GPUColorWrite.ALL,
-                            blend: {
-                                color: {
-                                    srcFactor: "src-alpha",
-                                    dstFactor: "one-minus-src-alpha",
-                                    operation: "add",
-                                },
-                                alpha: {
-                                    srcFactor: "one",
-                                    dstFactor: "zero",
-                                    operation: "add",
-                                },
+                        type: "transparent",
+                        primitivePipelineDescriptor: {
+                            primitive: {
+                                cullMode: "front",
+                                frontFace: "ccw",
                             },
-                            format: SmartRender.ctx.getConfiguration()?.format as GPUTextureFormat
-                        }],
-                        buffers
+                            depthStencil: {
+                                depthCompare: "less",
+                                depthWriteEnabled: false,
+                                format: "depth24plus"
+                            },
+                            targets: [{
+                                writeMask: GPUColorWrite.ALL,
+                                blend: {
+                                    color: {
+                                        srcFactor: "src-alpha",
+                                        dstFactor: "one-minus-src-alpha",
+                                        operation: "add",
+                                    },
+                                    alpha: {
+                                        srcFactor: "one",
+                                        dstFactor: "zero",
+                                        operation: "add",
+                                    },
+                                },
+                                format: SmartRender.ctx.getConfiguration()?.format as GPUTextureFormat
+                            }],
+                            buffers
+                        }
                     })
 
-                    pipelineEntries.push({
+                    output.push({
+                        mesh,
                         primitiveId: prim.id,
                         prim,
-                        primitive: {
-                            cullMode: "back",
-                            frontFace: "ccw",
-                        },
-                        depthStencil: {
-                            depthCompare: "less",
-                            depthWriteEnabled: false,
-                            format: "depth24plus"
-                        },
-                        targets: [{
-                            writeMask: GPUColorWrite.ALL,
-                            blend: {
-                                color: {
-                                    srcFactor: "src-alpha",
-                                    dstFactor: "one-minus-src-alpha",
-                                    operation: "add",
-                                },
-                                alpha: {
-                                    srcFactor: "one",
-                                    dstFactor: "zero",
-                                    operation: "add",
-                                },
+                        type: "transparent",
+                        primitivePipelineDescriptor: {
+                            primitive: {
+                                cullMode: "back",
+                                frontFace: "ccw",
                             },
-                            format: SmartRender.ctx.getConfiguration()?.format as GPUTextureFormat
-                        }],
-                        buffers
+                            depthStencil: {
+                                depthCompare: "less",
+                                depthWriteEnabled: false,
+                                format: "depth24plus"
+                            },
+                            targets: [{
+                                writeMask: GPUColorWrite.ALL,
+                                blend: {
+                                    color: {
+                                        srcFactor: "src-alpha",
+                                        dstFactor: "one-minus-src-alpha",
+                                        operation: "add",
+                                    },
+                                    alpha: {
+                                        srcFactor: "one",
+                                        dstFactor: "zero",
+                                        operation: "add",
+                                    },
+                                },
+                                format: SmartRender.ctx.getConfiguration()?.format as GPUTextureFormat
+                            }],
+                            buffers
+                        }
                     })
-                }else{
-                    pipelineEntries.push({
+
+                } else {
+                    output.push({
+                        mesh,
                         primitiveId: prim.id,
                         prim,
-                        primitive: {
-                            cullMode: isDoubleSided ? "none" : "back",
-                            frontFace: "ccw",
-                        },
-                        depthStencil: {
-                            depthCompare: "less",
-                            depthWriteEnabled: !isTransparent,
-                            format: "depth24plus"
-                        },
-                        targets: [{
-                            writeMask: GPUColorWrite.ALL,
-                            blend: isTransparent ? {
-                                color: {
-                                    srcFactor: "src-alpha",
-                                    dstFactor: "one-minus-src-alpha",
-                                    operation: "add",
-                                },
-                                alpha: {
-                                    srcFactor: "one",
-                                    dstFactor: "zero",
-                                    operation: "add",
-                                },
-                            } : undefined,
-                            format: SmartRender.ctx.getConfiguration()?.format as GPUTextureFormat
-                        }],
-                        buffers
+                        type: "opaque",
+                        primitivePipelineDescriptor: {
+                            primitive: {
+                                cullMode: isDoubleSided ? "none" : "back",
+                            },
+                            depthStencil: {
+                                depthCompare: "less",
+                                depthWriteEnabled: !isTransparent,
+                                format: "depth24plus"
+                            },
+                            targets: [{
+                                writeMask: GPUColorWrite.ALL,
+                                blend: isTransparent ? {
+                                    color: {
+                                        srcFactor: "src-alpha",
+                                        dstFactor: "one-minus-src-alpha",
+                                        operation: "add",
+                                    },
+                                    alpha: {
+                                        srcFactor: "one",
+                                        dstFactor: "zero",
+                                        operation: "add",
+                                    },
+                                } : undefined,
+                                format: SmartRender.ctx.getConfiguration()?.format as GPUTextureFormat
+                            }],
+                            buffers
+                        }
                     })
                 }
-            })
-
-            output.push({
-                mesh,
-                pipelineEntries: pipelineEntries
             })
         })
 
@@ -501,7 +509,6 @@ export class SmartRender {
 
 
         return {
-            meshes,
             materialBindGroupLayout: materialLayoutWithIds,
             materialBindGroup: groups,
             geometryBindGroupLayout: geometryLayoutWithIds,

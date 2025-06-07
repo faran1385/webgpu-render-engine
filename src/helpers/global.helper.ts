@@ -79,7 +79,7 @@ export const initWebGPU = async () => {
 
     ctx.configure({
         device,
-        alphaMode: "premultiplied",
+        alphaMode: "opaque",
         format: navigator.gpu.getPreferredCanvasFormat(),
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     })

@@ -20,7 +20,7 @@ const boundingCompute = new ComputeFrustumCulling();
 const hasher = new HashGenerator()
 await hasher.init()
 const gpuCache = new GPUCache(device, canvas, ctx);
-const {meshes, root} = await loader.load("e.glb")
+const {meshes, root} = await loader.load("/s/scene.gltf")
 const modelRenderer = new ModelRenderer({
     device,
     canvas,
@@ -34,7 +34,6 @@ const modelRenderer = new ModelRenderer({
 await modelRenderer.init({
     ...smartRender.base(meshes)
 })
-modelRenderer.applyTransformationsToRenderData({scale: [0.001, 0.001, 0.001]})
 
 const render = () => {
     const commandEncoder = device.createCommandEncoder()

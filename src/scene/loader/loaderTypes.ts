@@ -1,9 +1,9 @@
-import {Material, vec2, vec4} from "@gltf-transform/core";
+import {Material, TypedArray, vec2, vec4} from "@gltf-transform/core";
 import {vec3} from "gl-matrix";
 
 
 export type LODRange = { start: number; count: number, baseVertex: number };
-export type AttributeData = { array: Float32Array; itemSize: number };
+export type AttributeData = { array: TypedArray; itemSize: number };
 export type LoaderOptions = { useCache?: boolean; onProgress?: (loaded: number, total: number) => void };
 
 /** Type definitions */
@@ -12,7 +12,8 @@ export type MeshData = {
     localMatrix: Float32Array;
     normalMatrix: Float32Array;
     geometry: GeometryData[];
-    meshId: number
+    meshId: number,
+    skinId: null | number
 };
 
 export type GeometryData = {

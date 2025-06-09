@@ -1,14 +1,25 @@
+import {LODRange, MeshData} from "./loader/loaderTypes.ts";
 
-import {mat4} from 'gl-matrix'
-import { MeshData} from "./loader/loaderTypes.ts";
+type taskQueueItem = {
+    task: {
+        lodRanges: LODRange[] | undefined
+        position: Float32Array<ArrayBufferLike>
+    }[],
+    func: (T: {
+        min: [number, number, number],
+        max: [number, number, number],
+    }) => void
+    modelMatrix: Float32Array,
+}
 
 
 export class ComputeFrustumCulling {
     private readonly workers: { worker: Worker, busy: boolean }[] = [];
-    private readonly taskQueue: MeshData[] = [];
+    private readonly onProcessTaskQueue: Map<number, taskQueueItem> = new Map();
+    private readonly idleTaskQueue: Map<number, taskQueueItem> = new Map();
 
     constructor() {
-        const numWorkers = Math.min(navigator.hardwareConcurrency || 4, 8); // Fallback to 4
+        const numWorkers = Math.min(navigator.hardwareConcurrency || 4, 8);
         if (this.constructor === ComputeFrustumCulling) {
             this.initialize(numWorkers)
         }
@@ -101,7 +112,7 @@ export class ComputeFrustumCulling {
             
             const vertices = e.data.geometry.map((prim) => {
                   const array = prim.lodRanges
-                    ? prim.vertex.position?.array.slice(
+                    ? prim.position?.slice(
                         prim.lodRanges[0].start,
                         prim.lodRanges[0].start + prim.lodRanges[0].count
                       )
@@ -110,7 +121,7 @@ export class ComputeFrustumCulling {
                   return array ? Array.from(array) : [];
                 }).flat();
             
-            self.postMessage(computeWorldAABB(vertices,e.data.modelMatrix));
+            self.postMessage({...computeWorldAABB(vertices,e.data.modelMatrix),taskId:e.data.taskId});
         }
         `
 
@@ -126,30 +137,53 @@ export class ComputeFrustumCulling {
 
     }
 
-    public findNonBusyWorker(mesh: MeshData, func: (T: {
+    public appendToQueue(mesh: MeshData, func: (T: {
         min: [number, number, number],
         max: [number, number, number],
-    }) => void, modelMatrix: mat4) {
-        const index = this.workers.findIndex((worker) => !worker.busy)
-        if (index === -1) {
-            this.taskQueue.push(mesh)
-        } else {
-            const geos=mesh.geometry.map(item=>{
-                return {
-                    lodRanges:item.lodRanges,
-                    vertex:item.vertex
-                }
-            })
-            this.workers[index].busy = true;
-            this.workers[index].worker.postMessage({geometry:geos, modelMatrix})
+    }) => void, modelMatrix: Float32Array) {
+        const task = mesh.geometry.map(item => {
+            return {
+                lodRanges: item.lodRanges,
+                position: item.dataList['POSITION'].array
+            }
+        })
 
+        this.idleTaskQueue.set(Math.random(), {
+            task,
+            func,
+            modelMatrix,
+        })
+        this.findNonBusyWorker()
+    }
+
+    private assignWork(index: number) {
+
+        const queueItem = this.idleTaskQueue.entries().next().value;
+        if (queueItem) {
+            this.workers[index].busy = true;
+            this.workers[index].worker.postMessage({
+                geometry: queueItem[1].task,
+                modelMatrix: queueItem[1].modelMatrix,
+                taskId: queueItem[0],
+            })
+            this.onProcessTaskQueue.set(queueItem[0], queueItem[1])
+            this.idleTaskQueue.delete(queueItem[0])
+        } else {
+            this.workers[index].busy = false;
+        }
+    }
+
+    private findNonBusyWorker() {
+        const index = this.workers.findIndex((worker) => !worker.busy)
+        if (index !== -1) {
+            this.assignWork(index)
             this.workers[index].worker.onmessage = (e) => {
-                if (this.taskQueue.length === 0) {
-                    this.workers[index].busy = false;
-                } else {
-                    this.workers[index].worker.postMessage({mesh})
+                this.assignWork(index)
+                const queueItem = this.onProcessTaskQueue.get(e.data.taskId)
+                if (queueItem) {
+                    queueItem.func(e.data)
+                    this.onProcessTaskQueue.delete(e.data.taskId)
                 }
-                func(e.data)
             }
         }
     }

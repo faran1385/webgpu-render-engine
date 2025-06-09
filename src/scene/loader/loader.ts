@@ -1,7 +1,7 @@
-import {Document, Root, WebIO} from '@gltf-transform/core';
+import {Accessor, Document, Root, Skin, TypedArray, WebIO} from '@gltf-transform/core';
 import {ALL_EXTENSIONS} from '@gltf-transform/extensions';
-import {mat3} from 'gl-matrix';
-import {AttributeData, GeometryData, LoaderOptions, LODRange, MeshData,} from "./loaderTypes.ts";
+import {mat3, mat4} from 'gl-matrix';
+import {AttributeData, GeometryData, LODRange, MeshData,} from "./loaderTypes.ts";
 
 const io = new WebIO().registerExtensions(ALL_EXTENSIONS);
 
@@ -13,49 +13,67 @@ export class GLTFLoader {
     public async load(url: string,): Promise<{
         document: Document;
         meshes: MeshData[];
+        skinIdList: number[];
         buffers: any[];
-        animations: any[];
-        root: Root
+        root: Root,
+        skeletonsMatList: Map<number, Float32Array>;
     }> {
-        if (this.options.useCache && this.cache.has(url)) {
-            return this.cache.get(url);
-        }
-        this.options.onProgress?.(0, 1);
         let document = await io.read(url);
 
-
         const root = document.getRoot();
+
+        const skeletonsTypedArray = new Map<number, Float32Array>();
+        const skinIdList: number[] = [];
+        root.listSkins().forEach(skin => {
+            const calculatedBones = this.calculateBones(skin)
+            if (calculatedBones) {
+                const id = Math.random();
+                skinIdList.push(id);
+                skeletonsTypedArray.set(id, new Float32Array(calculatedBones));
+            }
+        })
+
         const buffers = root.listBuffers();
-        const animations = this.extractAnimations();
-        const meshes = await this.extractMeshes(root);
+        const meshes = await this.extractMeshes(root, skinIdList);
         const result = {
             document,
             meshes,
+            skinIdList,
             buffers,
-            animations,
-            root
+            root,
+            skeletonsMatList: skeletonsTypedArray
         };
-        if (this.options.useCache) this.cache.set(url, result);
-        this.options.onProgress?.(1, 1);
 
         return result;
     }
 
-    private cache = new Map<string, any>();
 
-    constructor(private options: LoaderOptions = {}) {
+    private calculateBones(skin: Skin) {
+        const boneList = skin.listJoints();
+        const invBindMatrices = skin.getInverseBindMatrices()?.getArray();
+        if (!invBindMatrices) return undefined;
+
+        const bonesArray: number[] = [];
+
+        for (let i = 0; i < boneList.length; i++) {
+            const jointNode = boneList[i];
+            const jointWorld = jointNode.getWorldMatrix();
+            const invBind = invBindMatrices.slice(i * 16, i * 16 + 16);
+
+            const jointMat = mat4.create();
+            mat4.multiply(jointMat, jointWorld, invBind as any);
+
+            bonesArray.push(...jointMat);
+        }
+        return bonesArray
     }
 
-    private extractAnimations(): any[] {
-        return [];
-    }
-
-    private async extractMeshes(root: any): Promise<MeshData[]> {
+    private async extractMeshes(root: Root, skinIdList: number[]): Promise<MeshData[]> {
         const nodes = root.listNodes();
-        const total = nodes.length;
         const meshes: MeshData[] = [];
         let count = 0;
         for (const node of nodes) {
+
             const mesh = node.getMesh();
             if (mesh) {
                 const localMat = new Float32Array(node.getWorldMatrix());
@@ -69,21 +87,24 @@ export class GLTFLoader {
                     normalMat[3], normalMat[4], normalMat[5], 0,
                     normalMat[6], normalMat[7], normalMat[8], 0,
                 ])
-
                 const geometry = await this.extractGeometry(mesh);
+                const skin = node.getSkin();
+
                 meshes.push({
                     nodeName: node.getName() || 'unnamed',
                     localMatrix: localMat,
                     normalMatrix: normalMatData,
                     geometry,
-                    meshId: Math.random()
+                    meshId: Math.random(),
+                    skinId: skin ? skinIdList[root.listSkins().indexOf(skin)] : null
                 });
             }
+
             count++;
-            this.options.onProgress?.(count, total);
         }
         return meshes;
     }
+
 
     /** Extracts and separates vertex attributes, uniforms, and pipeline layouts. */
     private async extractGeometry(mesh: any): Promise<GeometryData[]> {
@@ -100,8 +121,8 @@ export class GLTFLoader {
             const uniforms: Record<string, AttributeData> = {};
             const semantics = prim.listSemantics();
 
-            prim.listAttributes().forEach((accessor: any, i: number) => {
-                const array = accessor.getArray() as Float32Array;
+            prim.listAttributes().forEach((accessor: Accessor, i: number) => {
+                let array = accessor.getArray() as TypedArray;
                 const type = accessor.getType() as string;
                 const itemSize =
                     type === 'SCALAR' ? 1 :
@@ -109,9 +130,11 @@ export class GLTFLoader {
                             type === 'VEC3' ? 3 :
                                 type === 'VEC4' ? 4 : array.length;
                 const name = semantics[i];
+                if (name === "JOINTS_0" && array instanceof Uint16Array) {
+                    array = new Uint32Array(array)
+                }
                 uniforms[name] = {array, itemSize};
             });
-
             const indexAcc = prim.getIndices();
             let indices: Uint32Array | Uint16Array = indexAcc?.getArray();
             let indexType: "uint16" | "uint32" | "Unknown" =
@@ -138,7 +161,4 @@ export class GLTFLoader {
         return geometryData;
     }
 
-    public dispose(): void {
-        this.cache.clear();
-    }
 }

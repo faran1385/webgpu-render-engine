@@ -2,11 +2,10 @@ import {BaseLayer, RenderAble} from "../layers/baseLayer.ts";
 import {createGPUBuffer} from "../helpers/global.helper.ts";
 import {ComputeFrustumCulling} from "../scene/computeFrustumCulling.ts";
 import {GeometryData, LODRange, MeshData} from "../scene/loader/loaderTypes.ts";
-import {Material, Root} from "@gltf-transform/core";
+import {Material, Root, TypedArray} from "@gltf-transform/core";
 import {hashCreationBindGroupEntry, HashGenerator} from "../scene/GPURenderSystem/Hasher/HashGenerator.ts";
 import {GPUCache} from "../scene/GPURenderSystem/GPUCache/GPUCache.ts";
 import {BindGroupEntryCreationType, RenderState} from "../scene/GPURenderSystem/GPUCache/GPUCacheTypes.ts";
-import {mat4} from "gl-matrix";
 
 export type Lod = {
     defaultLod: number
@@ -38,7 +37,7 @@ export type PipelineEntry = {
     mesh: MeshData
 }[]
 export type GeometryBindGroupEntry = {
-    entries: (GPUBindGroupEntry & { name: "model" | "normal", })[],
+    entries: (GPUBindGroupEntry & { name?: "model" | "normal", })[],
     mesh: MeshData,
     primitivesId: number[],
     indexOnMeshes: number
@@ -51,6 +50,7 @@ export type SmartRenderInitEntryPassType = {
     geometryBindGroups: GeometryBindGroupEntry,
     materialBindGroup: MaterialBindGroupEntry[],
     shaderCodes: ShaderCodeEntry[],
+    skeletonBuffers: Map<number, GPUBuffer>
 }
 
 type initEntry = {
@@ -113,7 +113,6 @@ export class ModelRenderer extends BaseLayer {
                 primitivesId: item.primitivesId
             }
         })
-
         const materialBindGroupHashes: {
             hash: number,
             primitiveId: number
@@ -264,7 +263,7 @@ export class ModelRenderer extends BaseLayer {
 
 
             primitivePipeline.buffers.forEach((item) => {
-                renderAble.primitive.vertexBuffers.push(createGPUBuffer(this.device, primitivePipeline.prim.dataList[item.name]?.array as Float32Array, GPUBufferUsage.VERTEX, `${mesh.nodeName}  ${item.name}`))
+                renderAble.primitive.vertexBuffers.push(createGPUBuffer(this.device, primitivePipeline.prim.dataList[item.name]?.array as TypedArray, GPUBufferUsage.VERTEX, `${mesh.nodeName}  ${item.name}`))
             })
 
             if (primitivePipeline.prim.indexType !== "Unknown" && primitivePipeline.prim.indices) {
@@ -298,9 +297,15 @@ export class ModelRenderer extends BaseLayer {
             }
 
             if (computeShader) {
-                this.ComputeBoundingSphere.findNonBusyWorker(mesh, (T) => {
-                    (renderAble.computeShader as any).frustumCulling = T
-                }, mesh.localMatrix as mat4)
+                this.ComputeBoundingSphere.appendToQueue(mesh, (T) => {
+                    if (renderAble?.computeShader) {
+                        renderAble.computeShader.frustumCulling = {
+                            min: T.min,
+                            max: T.max,
+                        }
+                    }
+                }, mesh.localMatrix)
+
             }
 
             if (primitivePipeline.type === "opaque") {

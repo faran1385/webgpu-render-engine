@@ -4,19 +4,19 @@ import {convertAlphaMode, createGPUBuffer, getTextureFromData} from "../../../he
 import {Material, Texture, TypedArray, vec2} from "@gltf-transform/core";
 import {MeshData} from "../../loader/loaderTypes.ts";
 import {Clearcoat, EmissiveStrength, Specular, Transmission} from "@gltf-transform/extensions";
-import {
-    baseColorCodes, clearcoatCodes,
-    emissiveCodes,
-    metallicCodes,
-    normalCodes,
-    occlusionCodes,
-    opacityCodes, roughnessCodes, specularCodes, transmissionCodes
-} from "./shaderCodes.ts";
+
 import {
     MaterialBindGroupEntry, BindGroupEntryLayout,
     ShaderCodeEntry,
-    SmartRenderInitEntryPassType, PipelineEntry, GeometryBindGroupEntry
+    SmartRenderInitEntryPassType, PipelineEntry
 } from "../../../renderers/modelRenderer.ts";
+import {
+    baseColorFragment, clearcoatFragments,
+    emissiveFragments, metallicFragments,
+    normalFragments,
+    occlusionFragments,
+    opacityFragments, roughnessFragments, specularFragments, transmissionFragments, vertexShaderCodes
+} from "./shaderCodes.ts";
 
 
 type CallableTexture =
@@ -62,6 +62,18 @@ export class SmartRender {
                 binding: 0,
                 buffer: {
                     type: "uniform",
+                },
+                visibility: GPUShaderStage.VERTEX
+            }], [{
+                binding: 0,
+                buffer: {
+                    type: "uniform",
+                },
+                visibility: GPUShaderStage.VERTEX
+            }, {
+                binding: 1,
+                buffer: {
+                    type: "read-only-storage",
                 },
                 visibility: GPUShaderStage.VERTEX
             }])
@@ -112,11 +124,12 @@ export class SmartRender {
         }
     }
 
-    private getGeometryBindGroups(meshes: MeshData[]): GeometryBindGroupEntry {
-        return meshes.map((mesh, i) => {
-            return {
-                indexOnMeshes: i,
-                entries: [
+    private getGeometryBindGroups(meshes: MeshData[], skeletonMatListBuffer: (Map<number, Float32Array<ArrayBufferLike>>) | undefined) {
+        const skeletonBuffers = new Map<number, GPUBuffer>()
+
+        return {
+            geometryBindGroupData: meshes.map((mesh, i) => {
+                const entries: (GPUBindGroupEntry & { name?: "model" | "normal" })[] = [
                     {
                         binding: 0,
                         resource: {
@@ -124,11 +137,31 @@ export class SmartRender {
                         },
                         name: "model"
                     },
-                ] as (GPUBindGroupEntry & { name: "model" | "normal" })[],
-                mesh,
-                primitivesId: mesh.geometry.map(prim => prim.id)
-            }
-        })
+                ]
+                if (skeletonMatListBuffer && mesh.skinId !== null) {
+                    const skinBuffer = skeletonBuffers.get(mesh.skinId)
+                    let newSkinBuffer: null | GPUBuffer = null;
+                    if (!skinBuffer) {
+                        newSkinBuffer = createGPUBuffer(SmartRender.device, skeletonMatListBuffer.get(mesh.skinId) as Float32Array, GPUBufferUsage.STORAGE, `skeleton buffer ${mesh.skinId}`)
+                        skeletonBuffers.set(mesh.skinId, newSkinBuffer)
+                    }
+                    entries.push({
+                        binding: 1,
+                        resource: {
+                            buffer: skinBuffer ?? newSkinBuffer as GPUBuffer
+                        },
+                    })
+                }
+
+                return {
+                    indexOnMeshes: i,
+                    entries,
+                    mesh,
+                    primitivesId: mesh.geometry.map(prim => prim.id)
+                }
+            }),
+            skeletonBuffers
+        }
     }
 
     private getMaterialBindGroups(
@@ -171,6 +204,7 @@ export class SmartRender {
 
                 hashEntries.push(factorsTypedArray)
                 const infoKey = callFrom.texture + 'Info' as any
+
                 if (prim.material[callFrom.texture]()) {
                     usedTextureUvIndices.push((prim.material as any)[infoKey]()?.getTexCoord() as number)
                     const image = (prim.material[callFrom.texture]() as Texture).getImage() as Uint8Array
@@ -249,6 +283,28 @@ export class SmartRender {
                         name: `TEXCOORD_${usedTextureUvIndices[i]}`
                     })
                 }
+                if (mesh.skinId !== null) {
+                    if (!prim.dataList['JOINTS_0'] || !prim.dataList['WEIGHTS_0']) throw new Error("skins need joints and weights")
+                    buffers.push({
+                        arrayStride: 4 * 4,
+                        attributes: [{
+                            offset: 0,
+                            shaderLocation: 3,
+                            format: "uint32x4"
+                        }],
+                        name: 'JOINTS_0'
+                    })
+                    buffers.push({
+                        arrayStride: 4 * 4,
+                        attributes: [{
+                            offset: 0,
+                            shaderLocation: 4,
+                            format: "float32x4"
+                        }],
+                        name: 'WEIGHTS_0'
+                    })
+                }
+
                 const isDoubleSided = prim.material.getDoubleSided()
                 const isTransparent = prim.material.getAlphaMode() === "BLEND"
 
@@ -438,7 +494,8 @@ export class SmartRender {
                 return {
                     entries,
                     material: prim.material,
-                    hashEntries
+                    hashEntries,
+                    primitiveId: prim.id
                 }
             })).flat(),
             usedTextureUvIndices: usedTextureUvIndices
@@ -458,7 +515,8 @@ export class SmartRender {
             } | null,
             factor: number[] | number,
         }) | undefined = undefined,
-        type: 'ExtensionTexture' | "JustTexture" = "JustTexture"
+        type: 'ExtensionTexture' | "JustTexture" = "JustTexture",
+        skeletonMatListBuffer: (Map<number, Float32Array<ArrayBufferLike>>) | undefined
     ): SmartRenderInitEntryPassType {
         let groups: any;
         let usedTextureUvIndices: any;
@@ -480,58 +538,94 @@ export class SmartRender {
             usedTextureUvIndices = materialUsedTextureUvIndices;
         }
         const pipelineDescriptors = this.getPipelineDescriptors(meshes, usedTextureUvIndices)
-        const geometryBindGroup = this.getGeometryBindGroups(meshes)
+        const geometryBindGroup = this.getGeometryBindGroups(meshes, skeletonMatListBuffer)
 
-        const codesWithIdArrays: ShaderCodeEntry[] = codes.map((code) => ({
-            code,
-            primitivesId: []
-        }))
+        const codeMap: Map<"withBone" | "withUv" | "withUvAndBone" | "withoutUvAndBone", ShaderCodeEntry> = new Map()
+        vertexShaderCodes.forEach((value, key) => {
+            if (key === "withUv" || key === "withUvAndBone") {
+                codeMap.set(key, {
+                    code: value + '\n' + codes[0],
+                    primitivesId: []
+                })
+            } else {
+                codeMap.set(key, {
+                    code: value + '\n' + codes[1],
+                    primitivesId: []
+                })
+            }
+        })
+
         const materialLayoutWithIds: BindGroupEntryLayout = SmartRender.defaultMaterialBindGroupLayout.map((layout) => ({
             layoutsEntries: layout,
             primitivesId: []
         }))
+
         const geometryLayoutWithIds: BindGroupEntryLayout = SmartRender.defaultGeometryBindGroupLayout.map((layout) => ({
             layoutsEntries: layout,
             primitivesId: []
         }))
-
         meshes.map((mesh) => mesh.geometry.map((prim) => {
             const extra = getExtra ? getExtra(prim.material) : undefined
             if ((callFrom && prim.material[callFrom.texture]()) || (extra?.texture)) {
-                codesWithIdArrays[0].primitivesId.push(prim.id)
                 materialLayoutWithIds[0].primitivesId.push(prim.id)
             } else {
-                codesWithIdArrays[1].primitivesId.push(prim.id)
                 materialLayoutWithIds[1].primitivesId.push(prim.id)
             }
-            geometryLayoutWithIds[0].primitivesId.push(prim.id)
+            if (skeletonMatListBuffer && mesh.skinId !== null) {
+                geometryLayoutWithIds[1].primitivesId.push(prim.id)
+            } else {
+                geometryLayoutWithIds[0].primitivesId.push(prim.id)
+            }
+            if (((callFrom && prim.material[callFrom.texture]()) || extra?.texture) && (mesh.skinId !== null && skeletonMatListBuffer)) {
+                const data = codeMap.get("withUvAndBone");
+                data?.primitivesId.push(prim.id)
+                codeMap.set("withUvAndBone", data as any)
+            } else if ((callFrom && prim.material[callFrom.texture]()) || extra?.texture) {
+                const data = codeMap.get("withUv");
+                data?.primitivesId.push(prim.id)
+                codeMap.set("withUv", data as any)
+            } else if ((mesh.skinId !== null && skeletonMatListBuffer)) {
+                const data = codeMap.get("withBone");
+                data?.primitivesId.push(prim.id)
+                codeMap.set("withBone", data as any)
+
+            } else {
+                const data = codeMap.get("withoutUvAndBone");
+                data?.primitivesId.push(prim.id)
+                codeMap.set("withoutUvAndBone", data as any)
+            }
         }))
-
-
+        const shaderCodes: ShaderCodeEntry[] = [];
+        codeMap.forEach((value) => {
+            if (value.primitivesId.length > 0) {
+                shaderCodes.push(value)
+            }
+        })
         return {
             materialBindGroupLayout: materialLayoutWithIds,
             materialBindGroup: groups,
             geometryBindGroupLayout: geometryLayoutWithIds,
             pipelineDescriptors,
-            shaderCodes: codesWithIdArrays,
-            geometryBindGroups: geometryBindGroup
+            shaderCodes,
+            geometryBindGroups: geometryBindGroup.geometryBindGroupData,
+            skeletonBuffers: geometryBindGroup.skeletonBuffers
         }
     }
 
-    public base(meshes: MeshData[]): SmartRenderInitEntryPassType {
+    public base(meshes: MeshData[], skeletonMatListBuffer: (Map<number, Float32Array<ArrayBufferLike>>) | undefined = undefined): SmartRenderInitEntryPassType {
 
         return this.entryCreator(meshes, {
             texture: "getBaseColorTexture",
             factor: "getBaseColorFactor"
-        }, baseColorCodes)
+        }, baseColorFragment, undefined, "JustTexture", skeletonMatListBuffer)
     }
 
-    public emissive(meshes: MeshData[]): SmartRenderInitEntryPassType {
+    public emissive(meshes: MeshData[], skeletonMatListBuffer: (Map<number, Float32Array<ArrayBufferLike>>) | undefined = undefined): SmartRenderInitEntryPassType {
 
         return this.entryCreator(meshes, {
             texture: "getEmissiveTexture",
             factor: "getEmissiveFactor"
-        }, emissiveCodes, (material) => {
+        }, emissiveFragments, (material) => {
             const emissiveExtension = material.getExtension<EmissiveStrength>("KHR_materials_emissive_strength")
             if (emissiveExtension) {
                 return {
@@ -543,52 +637,52 @@ export class SmartRender {
                 factor: [1],
                 texture: null,
             }
-        })
+        }, "JustTexture", skeletonMatListBuffer)
     }
 
-    public opacity(meshes: MeshData[]): SmartRenderInitEntryPassType {
+    public opacity(meshes: MeshData[], skeletonMatListBuffer: (Map<number, Float32Array<ArrayBufferLike>>) | undefined = undefined): SmartRenderInitEntryPassType {
 
         return this.entryCreator(meshes, {
             texture: "getBaseColorTexture",
             factor: "getBaseColorFactor"
-        }, opacityCodes)
+        }, opacityFragments, undefined, "JustTexture", skeletonMatListBuffer)
     }
 
-    public occlusion(meshes: MeshData[]): SmartRenderInitEntryPassType {
+    public occlusion(meshes: MeshData[], skeletonMatListBuffer: (Map<number, Float32Array<ArrayBufferLike>>) | undefined = undefined): SmartRenderInitEntryPassType {
 
         return this.entryCreator(meshes, {
             texture: "getOcclusionTexture",
             factor: "getOcclusionStrength"
-        }, occlusionCodes)
+        }, occlusionFragments, undefined, "JustTexture", skeletonMatListBuffer)
     }
 
-    public normal(meshes: MeshData[]): SmartRenderInitEntryPassType {
+    public normal(meshes: MeshData[], skeletonMatListBuffer: (Map<number, Float32Array<ArrayBufferLike>>) | undefined = undefined): SmartRenderInitEntryPassType {
 
         return this.entryCreator(meshes, {
             texture: "getNormalTexture",
             factor: "getNormalScale"
-        }, normalCodes)
+        }, normalFragments, undefined, "JustTexture", skeletonMatListBuffer)
     }
 
-    public metallic(meshes: MeshData[]): SmartRenderInitEntryPassType {
+    public metallic(meshes: MeshData[], skeletonMatListBuffer: (Map<number, Float32Array<ArrayBufferLike>>) | undefined = undefined): SmartRenderInitEntryPassType {
 
         return this.entryCreator(meshes, {
             texture: "getMetallicRoughnessTexture",
             factor: "getMetallicFactor"
-        }, metallicCodes)
+        }, metallicFragments, undefined, "JustTexture", skeletonMatListBuffer)
     }
 
-    public roughness(meshes: MeshData[]): SmartRenderInitEntryPassType {
+    public roughness(meshes: MeshData[], skeletonMatListBuffer: (Map<number, Float32Array<ArrayBufferLike>>) | undefined = undefined): SmartRenderInitEntryPassType {
 
         return this.entryCreator(meshes, {
             texture: "getMetallicRoughnessTexture",
             factor: "getRoughnessFactor"
-        }, roughnessCodes)
+        }, roughnessFragments, undefined, "JustTexture", skeletonMatListBuffer)
     }
 
-    public transmission(meshes: MeshData[]): SmartRenderInitEntryPassType {
+    public transmission(meshes: MeshData[], skeletonMatListBuffer: (Map<number, Float32Array<ArrayBufferLike>>) | undefined = undefined): SmartRenderInitEntryPassType {
 
-        return this.entryCreator(meshes, undefined, transmissionCodes, (material) => {
+        return this.entryCreator(meshes, undefined, transmissionFragments, (material) => {
             const transmission = material.getExtension<Transmission>('KHR_materials_transmission')
             if (transmission) {
                 const texture = transmission.getTransmissionTexture()
@@ -607,12 +701,12 @@ export class SmartRender {
                 texture: null,
                 factor: 0
             }
-        })
+        }, "JustTexture", skeletonMatListBuffer)
     }
 
-    public specular(meshes: MeshData[]): SmartRenderInitEntryPassType {
+    public specular(meshes: MeshData[], skeletonMatListBuffer: (Map<number, Float32Array<ArrayBufferLike>>) | undefined = undefined): SmartRenderInitEntryPassType {
 
-        return this.entryCreator(meshes, undefined, specularCodes, (material) => {
+        return this.entryCreator(meshes, undefined, specularFragments, (material) => {
             const specular = material.getExtension<Specular>("KHR_materials_specular")
             if (specular) {
                 const texture = specular.getSpecularTexture()
@@ -631,12 +725,12 @@ export class SmartRender {
                 texture: null,
                 factor: 0
             }
-        })
+        }, "JustTexture", skeletonMatListBuffer)
     }
 
-    public clearcoat(meshes: MeshData[]): SmartRenderInitEntryPassType {
+    public clearcoat(meshes: MeshData[], skeletonMatListBuffer: (Map<number, Float32Array<ArrayBufferLike>>) | undefined = undefined): SmartRenderInitEntryPassType {
 
-        return this.entryCreator(meshes, undefined, clearcoatCodes, (material) => {
+        return this.entryCreator(meshes, undefined, clearcoatFragments, (material) => {
             const clearcoat = material.getExtension<Clearcoat>("KHR_materials_clearcoat")
             if (clearcoat) {
                 const texture = clearcoat.getClearcoatTexture()
@@ -655,7 +749,7 @@ export class SmartRender {
                 texture: null,
                 factor: 0
             }
-        })
+        }, "JustTexture", skeletonMatListBuffer)
     }
 
 }

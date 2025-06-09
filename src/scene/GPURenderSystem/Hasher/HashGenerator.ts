@@ -1,97 +1,95 @@
-import xxhash, {XXHashAPI} from 'xxhash-wasm';
-import {
-    RenderState,
-} from "../GPUCache/GPUCacheTypes.ts";
-import {TypedArray} from "@gltf-transform/core";
+import xxhash, { XXHashAPI } from 'xxhash-wasm';
+import { RenderState } from "../GPUCache/GPUCacheTypes.ts";
+import { TypedArray } from "@gltf-transform/core";
 
-export type hashCreationBindGroupEntry = (TypedArray | GPUSamplerDescriptor)[]
+export type hashCreationBindGroupEntry = (TypedArray | GPUSamplerDescriptor)[];
 
 export class HashGenerator {
     private static hasher: XXHashAPI;
     private static textEncoder: TextEncoder;
 
+    private shaderHashCache = new Map<string, number>();
+    private bindGroupHashCache = new Map<string, number>(); // uses joined string key
 
     public async init() {
         HashGenerator.hasher = await xxhash();
         HashGenerator.textEncoder = new TextEncoder();
     }
 
-    public async hashBindGroup(entries: hashCreationBindGroupEntry) {
+    public hashShaderModule(shaderCode: string): number {
+        if (this.shaderHashCache.has(shaderCode)) {
+            return this.shaderHashCache.get(shaderCode)!;
+        }
 
-        const stringParts = await Promise.all(entries.map(async (entry) => {
+        const encoded = HashGenerator.textEncoder.encode(shaderCode);
+        const hash = HashGenerator.hasher.h32Raw(encoded);
+        this.shaderHashCache.set(shaderCode, hash);
+        return hash;
+    }
+
+    public hashBindGroup(entries: hashCreationBindGroupEntry): number {
+        const key = entries.map(entry => {
             if ("BYTES_PER_ELEMENT" in entry) {
 
-                const buffer = entry.buffer.slice(
-                    entry.byteOffset,
-                    entry.byteOffset + entry.byteLength
-                );
-                const digest = await crypto.subtle.digest("SHA-1", buffer)
-
-                return Array.from(new Uint8Array(digest))
-                    .map(b => b.toString(16).padStart(2, "0"))
-                    .join("");
+                const view = new Uint8Array(entry.buffer, entry.byteOffset, entry.byteLength);
+                return this.hashBytes(view).toString();
+            } else {
+                return this.encodeSampler(entry);
             }
-            let string = ''
-            string += entry.magFilter === "linear" ? 0 : entry.magFilter === "nearest" ? 1 : 2;
-            string += entry.minFilter === "linear" ? 0 : entry.minFilter === "nearest" ? 1 : 2;
-            string += entry.addressModeU === "repeat" ? 0 : entry.addressModeU === "mirror-repeat" ? 1 : entry.addressModeU === "clamp-to-edge" ? 2 : 3;
-            string += entry.addressModeV === "repeat" ? 0 : entry.addressModeV === "mirror-repeat" ? 1 : entry.addressModeV === "clamp-to-edge" ? 2 : 3;
-            string += entry.addressModeW === "repeat" ? 0 : entry.addressModeW === "mirror-repeat" ? 1 : entry.addressModeW === "clamp-to-edge" ? 2 : 3;
-            string += entry.compare === "less" ? 0 :
-                entry.compare === "greater" ? 1 :
-                    entry.compare === "always" ? 2 :
-                        entry.compare === "equal" ? 3 :
-                            entry.compare === "never" ? 4 :
-                                entry.compare === "greater-equal" ? 5 :
-                                    entry.compare === "less-equal" ? 6 :
-                                        entry.compare === "not-equal" ? 7 : 8
-            string += entry.mipmapFilter === "linear" ? 0 : entry.mipmapFilter === "nearest" ? 1 : 2;
+        }).join("|");
 
-            return string
-        }))
+        if (this.bindGroupHashCache.has(key)) {
+            return this.bindGroupHashCache.get(key)!;
+        }
 
-        return HashGenerator.hasher.h32(stringParts.join());
+        const hash = HashGenerator.hasher.h32(key);
+        this.bindGroupHashCache.set(key, hash);
+        return hash;
     }
 
-    public hashBindGroupLayout(entries: GPUBindGroupLayoutEntry[]) {
-        let string = ''
-        entries.forEach(entry => {
-            string += entry.binding
-            string += entry.visibility
+    private encodeSampler(desc: GPUSamplerDescriptor): string {
+        return [
+            desc.magFilter ?? "none",
+            desc.minFilter ?? "none",
+            desc.mipmapFilter ?? "none",
+            desc.addressModeU ?? "none",
+            desc.addressModeV ?? "none",
+            desc.addressModeW ?? "none",
+            desc.compare ?? "none"
+        ].join("-");
+    }
+
+    public hashBindGroupLayout(entries: GPUBindGroupLayoutEntry[]): number {
+        let str = '';
+        for (const entry of entries) {
+            str += entry.binding;
+            str += entry.visibility;
             if (entry.buffer) {
-                string += entry.buffer.type === "uniform" ? 0 : entry.buffer.type === "storage" ? 1 : 2
+                str += entry.buffer.type === "uniform" ? 0 : entry.buffer.type === "storage" ? 1 : 2;
             } else if (entry.texture) {
-                string += entry.texture.sampleType === "float" ? 0 :
-                    entry.texture.sampleType === "sint" ? 1 :
-                        entry.texture.sampleType === "uint" ? 2 :
-                            entry.texture.sampleType === "depth" ? 3 : 4
+                str += ["float", "sint", "uint", "depth"].indexOf(entry.texture.sampleType ?? "float");
             } else if (entry.sampler) {
-                string += entry.sampler.type === "filtering" ? 0 :
-                    entry.sampler.type === "comparison" ? 1 : 4
+                str += ["filtering", "comparison"].indexOf(entry.sampler.type ?? "filtering");
             }
-        })
-        return HashGenerator.hasher.h32(string);
+        }
+        return HashGenerator.hasher.h32(str);
     }
 
-    public async hashShaderModule(shaderCode: string) {
-        const data = HashGenerator.textEncoder.encode(shaderCode);
-
-        const digest = await crypto.subtle.digest('SHA-1', data);
-
-        return HashGenerator.hasher.h32(Array.from(new Uint8Array(digest))
-            .map(b => b.toString(16).padStart(2, '0'))
-            .join(''));
-    }
-
-    public hashPipelineLayout(materialLayoutHash: number, geometryLayoutHash: number) {
-
+    public hashPipelineLayout(materialLayoutHash: number, geometryLayoutHash: number): number {
         return HashGenerator.hasher.h32(`${materialLayoutHash} ${geometryLayoutHash}`);
+    }
+
+    public hashPipeline(state: RenderState, pipelineLayoutHash: number): number {
+        return HashGenerator.hasher.h32(this.hashRenderState(state) + pipelineLayoutHash);
+    }
+
+    private hashBytes(data: Uint8Array): number {
+        return HashGenerator.hasher.h32Raw(data);
     }
 
     private hashRenderState(state: RenderState): string {
         let str = "";
 
-        // --- Primitive ---
         const primitive = state.primitive ?? {} as GPUPrimitiveState;
         const topoMap: Record<GPUPrimitiveTopology, number> = {
             "point-list": 0,
@@ -100,50 +98,39 @@ export class HashGenerator {
             "triangle-list": 3,
             "triangle-strip": 4
         };
-        const frontFaceMap: Record<GPUFrontFace, number> = {"ccw": 0, "cw": 1};
-        const cullModeMap: Record<GPUCullMode, number> = {"none": 0, "front": 1, "back": 2};
+        const frontFaceMap: Record<GPUFrontFace, number> = { "ccw": 0, "cw": 1 };
+        const cullModeMap: Record<GPUCullMode, number> = { "none": 0, "front": 1, "back": 2 };
 
         str += topoMap[primitive.topology ?? "triangle-list"] ?? -1;
         str += primitive.stripIndexFormat ? 1 : 0;
         str += frontFaceMap[primitive.frontFace ?? "ccw"] ?? -1;
         str += primitive.cullMode ? (cullModeMap[primitive.cullMode] ?? -1) : -1;
 
-        // --- Buffers ---
         for (const buffer of state.buffers ?? []) {
             str += buffer.stepMode === "instance" ? 1 : 0;
             str += buffer.arrayStride;
             for (const attr of buffer.attributes ?? []) {
                 str += attr.shaderLocation;
                 str += attr.offset;
-                str += attr.format?.length ?? -1; // crude encoding
+                str += attr.format?.length ?? -1;
             }
         }
 
-        // --- Targets ---
         for (const target of state.targets ?? []) {
             str += target.format?.length ?? -1;
 
             if (target.blend) {
-                const color = target.blend.color;
-                const alpha = target.blend.alpha;
-
-                str += this.blendFactor(color?.srcFactor);
-                str += this.blendFactor(color?.dstFactor);
-                str += this.blendOp(color?.operation);
-
-                str += this.blendFactor(alpha?.srcFactor);
-                str += this.blendFactor(alpha?.dstFactor);
-                str += this.blendOp(alpha?.operation);
+                const c = target.blend.color, a = target.blend.alpha;
+                str += this.blendFactor(c?.srcFactor) + this.blendFactor(c?.dstFactor) + this.blendOp(c?.operation);
+                str += this.blendFactor(a?.srcFactor) + this.blendFactor(a?.dstFactor) + this.blendOp(a?.operation);
             } else {
-                str += "-1".repeat(6); // 6 digits for blend values
+                str += "-1".repeat(6);
             }
 
             str += target.writeMask ?? 0xF;
         }
 
-        // --- Depth-Stencil ---
         const ds = state.depthStencil ?? {} as GPUDepthStencilState;
-
         str += ds.depthWriteEnabled ? 1 : 0;
         str += this.compareFunc(ds.depthCompare ?? "always");
 
@@ -169,8 +156,6 @@ export class HashGenerator {
 
         return str;
     }
-
-// --- Helpers ---
 
     private compareFunc(func: GPUCompareFunction | undefined): number {
         return [
@@ -199,10 +184,4 @@ export class HashGenerator {
     private blendOp(op: GPUBlendOperation | undefined): number {
         return ["add", "subtract", "reverse-subtract", "min", "max"].indexOf(op ?? "add");
     }
-
-
-    public hashPipeline(state: RenderState, pipelineLayoutHash: number) {
-        return HashGenerator.hasher.h32(this.hashRenderState(state) + pipelineLayoutHash);
-    }
-
 }

@@ -216,11 +216,10 @@ export class MainLayer extends BaseLayer {
         const renderAbleArray: RenderAble[] = this.buildRenderQueue(BaseLayer.renderAble)
 
         let computes = renderAbleArray.filter((item) => item.computeShader)
-
         if (computes.length !== 0) {
             this.updateViewProjection()
-
             const renderAbleInfo = new Float32Array(computes.length * 12);
+
 
             const lodNumbers: number[] = computes.flatMap(renderAble =>
                 renderAble.primitive.lodRanges?.flatMap(lod => [lod.count, lod.start, renderAble.computeShader?.lod.applyBaseVertex ? lod.baseVertex : 0]) ?? []
@@ -276,6 +275,7 @@ export class MainLayer extends BaseLayer {
                 loadOp: "load",
             }]
         })
+        let globalComputeCounter = 0;
         renderAbleArray.forEach((item) => {
             pass.setPipeline(item.primitive.pipeline)
             item.primitive.bindGroups.forEach((group, i) => {
@@ -287,7 +287,8 @@ export class MainLayer extends BaseLayer {
 
             if (item.primitive.index && item.computeShader) {
                 pass.setIndexBuffer(item.primitive.index.buffer, item.primitive.index.type)
-                pass.drawIndexedIndirect(MainLayer.lodRenderAbleResultBuffer, 0)
+                pass.drawIndexedIndirect(MainLayer.lodRenderAbleResultBuffer, globalComputeCounter * 5 * 4)
+                globalComputeCounter++
             } else if (item.primitive.indirect && item.primitive.index) {
 
                 pass.setIndexBuffer(item.primitive.index.buffer, item.primitive.index.type)

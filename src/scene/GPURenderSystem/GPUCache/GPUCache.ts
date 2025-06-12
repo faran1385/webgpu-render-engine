@@ -32,7 +32,6 @@ export class GPUCache extends BaseLayer {
         if (!alreadyExists) {
             const pipelineLayout = GPUCache.pipelineLayoutList.find((item) => item.hash === pipelineLayoutHash) as PipelineLayoutListItem;
             const shaderModule = GPUCache.shaderModuleList.find((item) => item.hash === shaderModuleHash) as ShaderModuleListItem;
-
             GPUCache.pipelineList.push({
                 hash: pipelineHash,
                 pipeline: this.device.createRenderPipeline({
@@ -81,6 +80,7 @@ export class GPUCache extends BaseLayer {
                     code
                 })
             })
+
         }
     }
 
@@ -94,6 +94,7 @@ export class GPUCache extends BaseLayer {
                 }),
                 hash: layoutHash
             })
+
         }
     }
 

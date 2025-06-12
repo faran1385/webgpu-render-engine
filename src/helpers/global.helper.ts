@@ -113,3 +113,8 @@ export const getTextureFromData = async (device: GPUDevice, size: vec2 | vec3, d
 export const convertAlphaMode = (mode: "BLEND" | "MASK" | "OPAQUE") => {
     return mode === "OPAQUE" ? 0 : mode === "BLEND" ? 1 : 2
 }
+
+let nextID = 0;
+export function generateID() {
+    return nextID++;
+}

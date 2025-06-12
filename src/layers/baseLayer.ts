@@ -4,7 +4,8 @@ import {Pane} from "tweakpane";
 import {updateBuffer} from "../helpers/global.helper.ts";
 import {Camera} from "../scene/camera/camera.ts";
 
-import {LODRange, MeshData} from "../scene/loader/loaderTypes.ts";
+import {LODRange} from "../scene/loader/loaderTypes.ts";
+import {SceneObject} from "../scene/SceneObject/sceneObject.ts";
 
 export type readyBindGroup = { bindGroup: GPUBindGroup, layout: GPUBindGroupLayout }
 
@@ -23,6 +24,7 @@ export type MeshRenderData = {
 }
 
 export type RenderAblePrim = {
+    id: number,
     pipeline: GPURenderPipeline,
     bindGroups: GPUBindGroup[],
     vertexBuffers: GPUBuffer[],
@@ -34,23 +36,22 @@ export type RenderAblePrim = {
         buffer: GPUBuffer,
         type: "uint16" | "uint32",
     },
-    lodRanges?: LODRange[]
+    lodRanges: LODRange[],
+    side?: "back" | "front"
+}
+export type ComputeShader = {
+    lod: { threshold: number },
+    frustumCulling: {
+        min: [number, number, number],
+        max: [number, number, number],
+    }
 }
 
 export type RenderAble = {
     renderData: MeshRenderData,
-    computeShader?: {
-        lod: {
-            threshold: number,
-            applyBaseVertex: boolean
-        },
-        frustumCulling: {
-            min: [number, number, number],
-            max: [number, number, number],
-        }
-    },
+    computeShader?: ComputeShader,
     primitive: RenderAblePrim,
-    mesh: MeshData,
+    sceneObject: SceneObject
 }
 
 export type TransparentRenderAble = RenderAble & { side: "back" | "front" }
@@ -69,28 +70,86 @@ export class BaseLayer {
     private static _depthTexture: GPUTexture;
     private static _cameras: Camera[] = [];
     private static _activeCamera: activeCamera;
+    public static _updateQueue: Map<number, SceneObject> = new Map();
     private static _activeCameraIndex: number = 0;
     private static _pane: Pane;
-    private static _renderAble: { opaque: RenderAble[], transparent: TransparentRenderAble[] } = {
+    private static _renderAbleSceneObjects: Set<SceneObject> = new Set<SceneObject>();
+    private static _drawCalls: { opaque: RenderAble[], transparent: TransparentRenderAble[] } = {
         opaque: [],
         transparent: []
     };
     private static _initialized: boolean = false;
 
-    protected static get renderAble() {
-        return BaseLayer._renderAble;
+    protected static get drawCalls() {
+        return BaseLayer._drawCalls;
     }
 
-    protected static appendRenderAble(T: { where: "transparent", renderAble: TransparentRenderAble } | {
-        where: "opaque",
-        renderAble: RenderAble
-    }) {
-        if (T.where === "transparent") {
-            BaseLayer._renderAble.transparent.push(T.renderAble);
-        } else {
-            BaseLayer._renderAble.opaque.push(T.renderAble);
-        }
+    protected static get renderAbleSceneObjects() {
+        return BaseLayer._renderAbleSceneObjects;
     }
+
+    protected static set appendDrawCall(SceneObject: SceneObject) {
+        BaseLayer._renderAbleSceneObjects.add(SceneObject);
+        SceneObject.primitives?.forEach((primitive, localIndex) => {
+            let renderAble = {
+                side: primitive.side,
+                sceneObject: SceneObject,
+                primitive,
+                computeShader: SceneObject.computeShader,
+                renderData: {
+                    name: SceneObject.name ?? 'draw call',
+                    model: {
+                        buffer: SceneObject.modelBuffer as GPUBuffer,
+                        data: SceneObject.worldMatrix as Float32Array
+                    },
+                    normal: SceneObject.normalBuffer ? {
+                        buffer: SceneObject.normalBuffer,
+                        data: SceneObject.normalMatrix as Float32Array
+                    } : undefined
+                }
+            }
+
+            if (primitive.side) {
+                SceneObject.drawCallIndices?.push({
+                    drawCallIndex: BaseLayer._drawCalls["transparent"].length,
+                    localPrimitiveIndex: localIndex,
+                    key: "transparent"
+                })
+                BaseLayer._drawCalls["transparent"].push(renderAble as TransparentRenderAble)
+            } else {
+                SceneObject.drawCallIndices?.push({
+                    drawCallIndex: BaseLayer._drawCalls["opaque"].length,
+                    localPrimitiveIndex: localIndex,
+                    key: "opaque"
+                })
+                BaseLayer._drawCalls["opaque"].push(renderAble as RenderAble)
+            }
+        })
+    }
+
+    protected static editDrawCall(localPrimitivesIndex: number, drawCallIndex: number, where: "transparent" | "opaque", SceneObject: SceneObject) {
+        const primitive = (SceneObject.primitives as RenderAblePrim[])[localPrimitivesIndex]
+        let renderAble = {
+            side: primitive.side,
+            sceneObject: SceneObject,
+            primitive,
+            computeShader: SceneObject.computeShader,
+            renderData: {
+                name: SceneObject.name ?? 'draw call',
+                model: {
+                    buffer: SceneObject.modelBuffer as GPUBuffer,
+                    data: SceneObject.worldMatrix as Float32Array
+                },
+                normal: SceneObject.normalBuffer ? {
+                    buffer: SceneObject.normalBuffer,
+                    data: SceneObject.normalMatrix as Float32Array
+                } : undefined
+            }
+        }
+
+        BaseLayer._drawCalls[where][drawCallIndex] = renderAble as any
+    }
+
 
     protected static get format(): GPUTextureFormat {
         return BaseLayer._format
@@ -195,7 +254,7 @@ export class BaseLayer {
 
         BaseLayer._controls = new OrbitControls({
             canvas: this.canvas,
-            initialPosition: [0, 0, 5],
+            initialPosition: [0, 0, 30],
             rotateSpeed: 0.5,
             zoomSpeed: 0.5,
             panSpeed: 0.3,

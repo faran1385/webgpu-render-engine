@@ -1,14 +1,17 @@
-import {LODRange, MeshData} from "./loader/loaderTypes.ts";
+import {GeometryData, LODRange} from "./loader/loaderTypes.ts";
+import {SceneObject} from "./SceneObject/sceneObject.ts";
+
+type callBackFunction = (T: {
+    min: [number, number, number],
+    max: [number, number, number],
+}) => void
 
 type taskQueueItem = {
     task: {
         lodRanges: LODRange[] | undefined
         position: Float32Array<ArrayBufferLike>
     }[],
-    func: (T: {
-        min: [number, number, number],
-        max: [number, number, number],
-    }) => void
+    func: callBackFunction
     modelMatrix: Float32Array,
 }
 
@@ -137,21 +140,18 @@ export class ComputeFrustumCulling {
 
     }
 
-    public appendToQueue(mesh: MeshData, func: (T: {
-        min: [number, number, number],
-        max: [number, number, number],
-    }) => void, modelMatrix: Float32Array) {
-        const task = mesh.geometry.map(item => {
+    public appendToQueue(sceneObject: SceneObject, func: callBackFunction) {
+        const task = (sceneObject.primitivesData as GeometryData[]).map(item => {
             return {
                 lodRanges: item.lodRanges,
-                position: item.dataList['POSITION'].array
+                position: (item.dataList.get("POSITION") as any).array
             }
         })
 
         this.idleTaskQueue.set(Math.random(), {
             task,
             func,
-            modelMatrix,
+            modelMatrix: sceneObject.worldMatrix as Float32Array,
         })
         this.findNonBusyWorker()
     }

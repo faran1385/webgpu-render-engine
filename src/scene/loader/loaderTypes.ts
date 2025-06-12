@@ -2,7 +2,7 @@ import {Material, TypedArray, vec2, vec4} from "@gltf-transform/core";
 import {vec3} from "gl-matrix";
 
 
-export type LODRange = { start: number; count: number, baseVertex: number };
+export type LODRange = { start: number; count: number, };
 export type AttributeData = { array: TypedArray; itemSize: number };
 export type LoaderOptions = { useCache?: boolean; onProgress?: (loaded: number, total: number) => void };
 
@@ -18,11 +18,11 @@ export type MeshData = {
 
 export type GeometryData = {
     id: number,
-    dataList: Record<string, AttributeData>;
-    indices?: Uint16Array | Uint32Array;
+    dataList: Map<string, AttributeData>;
+    indices?: TypedArray ;
     indexType: 'uint16' | 'uint32' | 'Unknown';
     indexCount: number;
-    lodRanges?: LODRange[]
+    lodRanges: LODRange[]
     material: Material
 };
 

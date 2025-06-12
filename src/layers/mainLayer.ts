@@ -1,4 +1,4 @@
-import {BaseLayer, RenderAble, TransparentRenderAble} from "./baseLayer.ts";
+import {BaseLayer, RenderAble} from "./baseLayer.ts";
 // @ts-ignore
 import lodShader from "../shaders/builtin/lod.wgsl?raw"
 import {mat4, vec3} from "gl-matrix";
@@ -179,15 +179,10 @@ export class MainLayer extends BaseLayer {
     }
 
 
-    private buildRenderQueue(
-        queues: {
-            opaque: RenderAble[];
-            transparent: TransparentRenderAble[];
-        },
-    ): RenderAble[] {
+    private buildRenderQueue(): RenderAble[] {
         const {viewMatrix} = this.getCameraVP();
         const out: RenderAble[] = [];
-
+        const queues = BaseLayer.drawCalls;
         // 1) OPAQUE: no sorting needed
         out.push(...queues.opaque);
 
@@ -212,17 +207,28 @@ export class MainLayer extends BaseLayer {
         return out;
     }
 
+    private checkForUpdate() {
+        BaseLayer._updateQueue.forEach(sceneObject => {
+            if (sceneObject.needsUpdate) {
+                sceneObject.updateWorldMatrix(this.device)
+            }
+        })
+        BaseLayer._updateQueue.clear()
+    }
+
     public render(commandEncoder: GPUCommandEncoder) {
-        const renderAbleArray: RenderAble[] = this.buildRenderQueue(BaseLayer.renderAble)
+        this.checkForUpdate()
+        const renderAbleArray: RenderAble[] = this.buildRenderQueue()
 
         let computes = renderAbleArray.filter((item) => item.computeShader)
+
         if (computes.length !== 0) {
             this.updateViewProjection()
             const renderAbleInfo = new Float32Array(computes.length * 12);
 
 
             const lodNumbers: number[] = computes.flatMap(renderAble =>
-                renderAble.primitive.lodRanges?.flatMap(lod => [lod.count, lod.start, renderAble.computeShader?.lod.applyBaseVertex ? lod.baseVertex : 0]) ?? []
+                renderAble.primitive.lodRanges?.flatMap(lod => [lod.count, lod.start, 0]) ?? []
             );
 
             const renderAbleLodRanges = new Float32Array(lodNumbers);
@@ -231,7 +237,6 @@ export class MainLayer extends BaseLayer {
             computes.forEach((data, i) => {
                 const i12 = i * 12;
                 const worldPos = this.getModelWorldPosition(data.renderData.model.data as mat4);
-
                 renderAbleInfo[i12] = worldPos[0];
                 renderAbleInfo[i12 + 1] = worldPos[1];
                 renderAbleInfo[i12 + 2] = worldPos[2];

@@ -49,18 +49,21 @@ export class ModelAnimator {
     }
 
 
-    public update(device: GPUDevice, animation: Animation, time: number, skin: Skin, buffer: GPUBuffer, mode: "loop" | "backAndForth" | undefined = undefined) {
+    public update(animation: Animation, time: number, mode: "loop" | "backAndForth" | undefined = undefined) {
+
         const channels = animation.listChannels()
-        const times = animation.listChannels()[0].getSampler()?.getInput()?.getArray();
-        if (!times) throw new Error("we dont have times")
-        const duration = times[times?.length - 1]
-        let t = time;
-        if (mode === "loop") {
-            t = time % duration;
-        } else if (mode === "backAndForth") {
-            t = this.pingPong(time, duration);
-        }
+
         for (const channel of channels) {
+            const times = channel.getSampler()?.getInput()?.getArray();
+
+            if (!times) throw new Error("we dont have times")
+            const duration = times[times?.length - 1]
+            let t = time;
+            if (mode === "loop") {
+                t = time % duration;
+            } else if (mode === "backAndForth") {
+                t = this.pingPong(time, duration);
+            }
             const targetNode = channel.getTargetNode();
             const path = channel.getTargetPath()
             const inputs = channel.getSampler()?.getInput()?.getArray()
@@ -75,14 +78,11 @@ export class ModelAnimator {
             if (path === 'translation') targetNode.setTranslation(value as any);
             else if (path === 'rotation') targetNode.setRotation(value as any);
             else if (path === 'scale') targetNode.setScale(value as any);
-        }
-        const calculatedBones = this.calculateBones(skin);
-        if (calculatedBones) {
-            updateBuffer(device, buffer, new Float32Array(calculatedBones))
+
         }
     }
 
-    private calculateBones(skin: Skin) {
+    private calculateBones(device: GPUDevice, skin: Skin, buffer: GPUBuffer) {
         const boneList = skin.listJoints();
         const invBindMatrices = skin.getInverseBindMatrices()?.getArray();
         if (!invBindMatrices) return undefined;
@@ -99,6 +99,6 @@ export class ModelAnimator {
 
             bonesArray.push(...jointMat);
         }
-        return bonesArray
+        updateBuffer(device, buffer, new Float32Array(bonesArray))
     }
 }

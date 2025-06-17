@@ -1,8 +1,8 @@
-import {Accessor, Document, Material, Mesh, Root, Node, TypedArray, WebIO} from '@gltf-transform/core';
+import {Accessor, Material, Mesh, Node, Root, TypedArray, WebIO} from '@gltf-transform/core';
 import {ALL_EXTENSIONS} from '@gltf-transform/extensions';
 import {quat, vec3} from 'gl-matrix';
 import {AttributeData, GeometryData, LODRange} from "./loaderTypes.ts";
-import {SceneObject} from "../SceneObject/sceneObject.ts";
+import {SceneObject} from "../sceneObject/sceneObject.ts";
 import {generateID} from "../../helpers/global.helper.ts";
 
 const io = new WebIO().registerExtensions(ALL_EXTENSIONS);
@@ -13,8 +13,6 @@ export class GLTFLoader {
      * Loads a model from URL and returns document, meshes, buffers, and animations.
      */
     public async load(url: string): Promise<{
-        document: Document;
-        buffers: any[];
         root: Root,
         sceneObjects: Set<SceneObject>
     }> {
@@ -59,15 +57,16 @@ export class GLTFLoader {
             }
         }
 
-        const buffers = root.listBuffers();
-        const result = {
-            document,
+        for (const sceneObject of sceneObjects) {
+            if (!sceneObject.parent) {
+                sceneObject.updateWorldMatrix();
+            }
+        }
+
+        return {
             sceneObjects,
-            buffers,
             root,
         };
-
-        return result;
     }
 
 
@@ -77,12 +76,8 @@ export class GLTFLoader {
 
         const geometryData: GeometryData[] = [];
         for (const prim of primitives) {
-
             const semantics = prim.listSemantics();
-            let lodRanges: LODRange[] = [{
-                start: 0,
-                count: prim.listAttributes()[semantics.indexOf('POSITION')].getArray()?.length ?? 0,
-            }];
+            let lodRanges = undefined;
             if (prim.getExtras().lodRanges) {
                 lodRanges = prim.getExtras().lodRanges as LODRange[];
             }

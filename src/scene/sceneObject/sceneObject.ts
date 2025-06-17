@@ -1,6 +1,6 @@
 import {mat3, mat4, quat, vec3} from "gl-matrix";
 import {Mesh} from "@gltf-transform/core";
-import {BaseLayer, ComputeShader, RenderAblePrim} from "../../layers/baseLayer.ts";
+import {BaseLayer, RenderAblePrim} from "../../layers/baseLayer.ts";
 import {GeometryData} from "../loader/loaderTypes.ts";
 import {createGPUBuffer, updateBuffer} from "../../helpers/global.helper.ts";
 
@@ -37,13 +37,16 @@ export class SceneObject {
     parent?: SceneObject;
     children: SceneObject[] = [];
 
+    // draw
     mesh?: Mesh;
-    primitives?: RenderAblePrim[];
-    primitivesData?: GeometryData[];
-    computeShader?: ComputeShader;
+    primitives?: Map<string, RenderAblePrim> = new Map();
+    primitivesData: Map<number, GeometryData> = new Map();
     needsUpdate: boolean = false;
+    indexBufferStartIndex: Map<number, number> = new Map();
+    indirectBufferStartIndex: Map<number, number> = new Map();
 
-    drawCallIndices?: { localPrimitiveIndex: number, drawCallIndex: number, key: "opaque" | "transparent" }[]
+    // compute shader
+    lodSelectionThreshold: number | undefined = undefined;
 
     constructor(config: SceneObjectConfig) {
         this.id = config.id;
@@ -59,20 +62,18 @@ export class SceneObject {
 
         this.parent = config.parent;
         this.mesh = config.mesh;
-        this.primitivesData = config.primitivesData;
+        config.primitivesData?.forEach((geo) => {
+            this.primitivesData.set(geo.id, geo)
+        })
+    }
 
-        if (this.primitivesData && this.primitivesData.length > 0) {
-            this.primitives = []
-        }
-
-        if (this.parent) {
-            this.parent.children.push(this);
-        }
+    setLodSelectionThreshold(threshold: number): void {
+        this.lodSelectionThreshold = threshold;
     }
 
     appendPrimitive(primitive: RenderAblePrim) {
         if (this.primitives) {
-            this.primitives.push(primitive);
+            this.primitives.set(`${primitive.id}_${primitive.side ?? "none"}`, primitive);
         } else {
             throw new Error("This is not a RenderAble Node");
         }
@@ -101,6 +102,14 @@ export class SceneObject {
         this.normalBuffer = createGPUBuffer(device, new Float32Array(matrix), GPUBufferUsage.UNIFORM, `${this.name} normal buffer`);
     }
 
+    public getPosition() {
+
+        const pos = vec3.create();
+        mat4.getTranslation(pos, this.worldMatrix);
+        return [...pos];
+    }
+
+
     private markTransformDirty() {
         this.needsUpdate = true;
         BaseLayer._updateQueue.set(this.id, this)
@@ -109,7 +118,7 @@ export class SceneObject {
         }
     }
 
-    updateWorldMatrix(device: GPUDevice) {
+    updateWorldMatrix(device: GPUDevice | undefined = undefined) {
         const parentMatrix = this.parent?.worldMatrix;
         if (!this.needsUpdate && !parentMatrix) return;
 
@@ -120,14 +129,13 @@ export class SceneObject {
             mat4.multiply(this.worldMatrix, parentMatrix, localMatrix);
         } else {
             mat4.copy(this.worldMatrix, localMatrix);
-
         }
         mat3.normalFromMat4(this.normalMatrix, this.worldMatrix);
         this.needsUpdate = false;
-        if (this.normalBuffer) {
+        if (this.normalBuffer && device) {
             updateBuffer(device, this.normalBuffer, new Float32Array(this.normalMatrix))
         }
-        if (this.modelBuffer) {
+        if (this.modelBuffer && device) {
             updateBuffer(device, this.modelBuffer, new Float32Array(this.worldMatrix))
         }
         for (const child of this.children) {

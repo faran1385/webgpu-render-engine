@@ -1,15 +1,14 @@
 import {BaseLayer, RenderAblePrim} from "../layers/baseLayer.ts";
-import {ComputeFrustumCulling} from "../scene/computeFrustumCulling.ts";
-import {GeometryData, LODRange} from "../scene/loader/loaderTypes.ts";
+import {GeometryData} from "../scene/loader/loaderTypes.ts";
 import {Material, Root, TypedArray} from "@gltf-transform/core";
 import {hashCreationBindGroupEntry, HashGenerator} from "../scene/GPURenderSystem/Hasher/HashGenerator.ts";
 import {GPUCache} from "../scene/GPURenderSystem/GPUCache/GPUCache.ts";
 import {BindGroupEntryCreationType, RenderState} from "../scene/GPURenderSystem/GPUCache/GPUCacheTypes.ts";
-import {SceneObject} from "../scene/SceneObject/sceneObject.ts";
+import {SceneObject} from "../scene/sceneObject/sceneObject.ts";
 import {createGPUBuffer} from "../helpers/global.helper.ts";
+import {SmartRender} from "../scene/GPURenderSystem/SmartRender/SmartRender.ts";
+import {ComputeManager} from "../scene/computation/computeManager.ts";
 
-export type Lod = { defaultLod: number }
-export type ComputeShader = { lod: { threshold: number } }
 
 export type ShaderCodeEntry = { code: string, primitivesId: number[] }
 export type MaterialBindGroupEntry = {
@@ -42,240 +41,242 @@ export type SmartRenderInitEntryPassType = {
     shaderCodes: ShaderCodeEntry[],
 }
 
-type initEntry = { lod?: Lod, computeShader?: ComputeShader } & SmartRenderInitEntryPassType
-
+type initEntry = SmartRenderInitEntryPassType
+type PipelineLayoutHashItem = {
+    primitivePipelineDescriptor: RenderState
+    primitiveId: number
+    prim: GeometryData
+    sceneObject: SceneObject
+    side?: "front" | "back",
+    hash: number
+}
 type modelRendererEntry = {
     device: GPUDevice,
     canvas: HTMLCanvasElement,
     ctx: GPUCanvasContext,
-    root: Root,
-    boundingComputer: ComputeFrustumCulling,
     hasher: HashGenerator,
     gpuCache: GPUCache,
+    smartRenderer: SmartRender
+    computeManager: ComputeManager
 }
 
-export class ModelRenderer extends BaseLayer {
-    private root: Root;
-    private hasher: HashGenerator;
-    private gpuCache: GPUCache;
-    private boundingComputer: ComputeFrustumCulling;
+type RenderMethod = "base" | "opacity";
 
-    constructor({device, canvas, ctx, root, hasher, gpuCache, boundingComputer}: modelRendererEntry) {
+export class ModelRenderer extends BaseLayer {
+    private root!: Root;
+    private smartRenderer!: SmartRender;
+    private hasher: HashGenerator;
+    private computeManager!: ComputeManager;
+    private gpuCache: GPUCache;
+    private initEntry!: initEntry;
+    private sceneObjects: Set<SceneObject> = new Set();
+
+    constructor({device, canvas, ctx, smartRenderer, hasher, gpuCache, computeManager}: modelRendererEntry) {
         super(device, canvas, ctx);
-        this.root = root;
         this.hasher = hasher;
+        this.smartRenderer = smartRenderer;
         this.gpuCache = gpuCache;
-        this.boundingComputer = boundingComputer;
+        this.computeManager = computeManager;
+    }
+
+    public fillInitEntry(T: initEntry | RenderMethod) {
+        if (typeof T === "string") {
+            if (!this.smartRenderer) throw new Error("SmartRenderer is not set");
+            if (!this.sceneObjects) throw new Error("sceneObjects is not set");
+            this.initEntry = this.smartRenderer[T](this.sceneObjects)
+        } else {
+            this.initEntry = T
+        }
+    }
+
+    public setSceneObjects(sceneObjects: Set<SceneObject>) {
+        this.sceneObjects = sceneObjects;
+    }
+
+    public setRoot(root: Root) {
+        this.root = root;
+    }
+
+    public setLodThreshold(threshold: number) {
+        if (!this.sceneObjects) throw new Error("sceneObjects is not set");
+        this.sceneObjects.forEach(sceneObject => {
+            sceneObject.setLodSelectionThreshold(threshold);
+            this.computeManager.setLodSelection(sceneObject)
+        })
     }
 
 
-    public async init(
-        {
-            lod,
-            computeShader,
-            geometryBindGroups,
-            materialBindGroup,
-            geometryBindGroupLayout,
-            pipelineDescriptors,
-            materialBindGroupLayout,
-            shaderCodes,
-        }: initEntry
-    ) {
-        const materialLayoutHashes = materialBindGroupLayout.map((item) => {
-            const hash = this.hasher.hashBindGroupLayout(item.layoutsEntries);
+    private createLayoutHashes(layouts: BindGroupEntryLayout) {
+        const layoutHashes = new Map<number, number>();
+        layouts.forEach((item) => {
+            const hash = this.hasher.hashBindGroupLayout(item.layoutsEntries)
             this.gpuCache.appendBindGroupLayout(item.layoutsEntries, hash)
 
-            return {
-                hash,
-                primitivesId: item.primitivesId
-            }
+            item.primitivesId.forEach((primitiveId) => {
+                layoutHashes.set(primitiveId, hash)
+            })
         })
-        const geometryLayoutHashes = geometryBindGroupLayout.map((item) => {
-            const hash = this.hasher.hashBindGroupLayout(item.layoutsEntries);
-            this.gpuCache.appendBindGroupLayout(item.layoutsEntries, hash)
-            return {
-                hash,
-                primitivesId: item.primitivesId
-            }
-        })
-        const materialBindGroupHashes: {
-            hash: number,
-            primitiveId: number
-        }[] = [];
+
+        return layoutHashes
+    }
+
+    private async createMaterialBindGroupHashes(materialBindGroup: MaterialBindGroupEntry[], materialLayoutHashes: Map<number, number>) {
+        const materialBindGroupHashes = new Map<number, number>();
+
         for (let i = 0; i < materialBindGroup.length; i++) {
 
             const materialItem = materialBindGroup[i];
-
             const hash = await this.hasher.hashBindGroup(materialItem.hashEntries);
-            let materialLayout = materialLayoutHashes.find((layout) => layout.primitivesId.find(id => materialItem.primitiveId === id));
-            materialBindGroupHashes[i] = {
-                hash,
-                primitiveId: materialItem.primitiveId
-            };
+            let materialLayout = materialLayoutHashes.get(materialItem.primitiveId)
+            materialBindGroupHashes.set(materialItem.primitiveId, hash)
+            if (!this.root) throw new Error("root is not set")
             await this.gpuCache.appendMaterialBindGroup(
                 materialItem.entries,
                 hash,
-                materialLayout?.hash as number,
+                materialLayout as number,
                 materialItem.material,
                 this.root.listExtensionsUsed()
             );
 
         }
 
-        const shaderCodesHashes: { hash: number, primitivesId: number[] }[] = [];
+        return materialBindGroupHashes
+    }
+
+    private createShaderCodeHashes(shaderCodes: ShaderCodeEntry[],) {
+        const shaderCodesHashes = new Map<number, number>();
         for (let i = 0; i < shaderCodes.length; i++) {
             const item = shaderCodes[i];
-            const hash = await this.hasher.hashShaderModule(item.code)
-            shaderCodesHashes[i] = {
-                hash,
-                primitivesId: item.primitivesId
-            };
+            const hash = this.hasher.hashShaderModule(item.code)
+
+            item.primitivesId.forEach((primitiveId) => {
+                shaderCodesHashes.set(primitiveId, hash)
+            })
             this.gpuCache.appendShaderModule(item.code, hash)
         }
 
-        const pipelineLayoutsHashes: {
-            pipelineLayout: ({
-                hash: number,
-                materialLayoutHash: number,
-                geometryLayoutHash: number,
-                buffers: (GPUVertexBufferLayout & {
-                    name: string
-                })[]
-            } & RenderState),
-            prim: GeometryData,
-            primitiveId: number,
-            sceneObject: SceneObject,
-            side?: "front" | "back"
+        return shaderCodesHashes
+    }
 
-        }[] = [];
+    private createPipelineLayoutHashes(pipelineDescriptors: PipelineEntry, materialLayoutHashes: Map<number, number>, geometryLayoutHashes: Map<number, number>) {
+        const pipelineLayoutsHashes = new Map<string, PipelineLayoutHashItem>();
+
         for (let i = 0; i < pipelineDescriptors.length; i++) {
             const item = pipelineDescriptors[i];
 
-            let materialLayout = materialLayoutHashes.find((layout) => layout.primitivesId.find(id => item.primitiveId === id));
-            let geometryLayout = geometryLayoutHashes.find((layout) => layout.primitivesId.find(id => item.primitiveId === id));
+            let materialLayout = materialLayoutHashes.get(item.primitiveId)
+            let geometryLayout = geometryLayoutHashes.get(item.primitiveId)
 
             const hash = this.hasher.hashPipelineLayout(
-                materialLayout?.hash as number,
-                geometryLayout?.hash as number
+                materialLayout as number,
+                geometryLayout as number
             )
             this.gpuCache.appendPipelineLayout(
                 hash,
-                materialLayout?.hash as number,
-                geometryLayout?.hash as number
+                materialLayout as number,
+                geometryLayout as number
             )
-            pipelineLayoutsHashes.push({
-                pipelineLayout: {
-                    ...item.primitivePipelineDescriptor,
-                    hash,
-                    materialLayoutHash: materialLayout?.hash as number,
-                    geometryLayoutHash: geometryLayout?.hash as number,
-                },
-                prim: item.prim,
-                primitiveId: item.primitiveId,
-                sceneObject: item.sceneObject,
-                side: item.side
-            })
+            pipelineLayoutsHashes.set(`${item.primitiveId}_${item.side ?? "none"}`, {
+                ...item,
+                hash
+            });
         }
-        const pipelineHashes = pipelineLayoutsHashes.map((item) => {
-            const shaderCodeHash = shaderCodesHashes.find((code) => code.primitivesId.find(id => item.primitiveId === id));
-            const hash = this.hasher.hashPipeline(item.pipelineLayout, item.pipelineLayout.hash)
-            this.gpuCache.appendPipeline(item.pipelineLayout, hash, item.pipelineLayout.hash, shaderCodeHash?.hash as number)
-            return {
-                hash: hash,
-                primitiveId: item.primitiveId,
-                layoutHash: item.pipelineLayout.hash,
-                materialLayoutHash: item.pipelineLayout.materialLayoutHash,
-                geometryLayoutHash: item.pipelineLayout.geometryLayoutHash,
-                shaderCodeHash: shaderCodeHash?.hash as number,
-                prim: item.prim,
-                buffers: item.pipelineLayout.buffers,
-                primitiveRenderState: item.pipelineLayout.primitive,
-                sceneObject: item.sceneObject,
-                side: item.side
-            }
+
+        return pipelineLayoutsHashes
+    }
+
+    private createPipelineHashes(shaderCodesHashes: Map<number, number>, pipelineLayoutsHashes: Map<string, PipelineLayoutHashItem>) {
+        const pipelineHashes = new Map<string, number>();
+        pipelineLayoutsHashes.forEach((item) => {
+            const shaderCodeHash = shaderCodesHashes.get(item.primitiveId) as number
+            const hash = this.hasher.hashPipeline(item.primitivePipelineDescriptor, item.hash)
+            this.gpuCache.appendPipeline(item.primitivePipelineDescriptor, hash, item.hash, shaderCodeHash as number)
+            pipelineHashes.set(`${item.primitiveId}_${item.side ?? "none"}`, hash)
+        })
+        return pipelineHashes
+    }
+
+    private createGeometryBindGroupMaps(geometryBindGroups: GeometryBindGroupEntry) {
+        const geometryBindGroupMaps = new Map<number, (GPUBindGroupEntry & {
+            name?: "model" | "normal"
+        })[]>();
+        geometryBindGroups.forEach((item) => {
+
+            item.primitivesId.forEach((primitiveId) => {
+                geometryBindGroupMaps.set(primitiveId, item.entries)
+            })
         })
 
+        return geometryBindGroupMaps
+    }
+
+    public async init() {
+        if (!this.initEntry) throw new Error("init entry is not filled")
+        const {
+            materialBindGroupLayout,
+            geometryBindGroupLayout,
+            geometryBindGroups,
+            materialBindGroup,
+            pipelineDescriptors,
+            shaderCodes,
+        } = this.initEntry
+
+        const materialLayoutHashes = this.createLayoutHashes(materialBindGroupLayout)
+        const geometryLayoutHashes = this.createLayoutHashes(geometryBindGroupLayout)
+        const materialBindGroupHashes = await this.createMaterialBindGroupHashes(materialBindGroup, materialLayoutHashes)
+        const shaderCodesHashes = this.createShaderCodeHashes(shaderCodes)
+        const pipelineLayoutsHashes = this.createPipelineLayoutHashes(pipelineDescriptors, materialLayoutHashes, geometryLayoutHashes)
+        const pipelineHashes = this.createPipelineHashes(shaderCodesHashes, pipelineLayoutsHashes)
+        const geometryBindGroupMaps = this.createGeometryBindGroupMaps(geometryBindGroups)
         const sceneObjects: Map<number, SceneObject> = new Map();
-        pipelineHashes.forEach((primitivePipeline) => {
-            const geometryEntries = geometryBindGroups.find(item => item.primitivesId.includes(primitivePipeline.primitiveId))
 
-            const geometryBindGroup = this.device.createBindGroup({
-                entries: geometryEntries?.entries as any,
-                layout: this.gpuCache.getGeometryLayout(primitivePipeline.geometryLayoutHash)
+        pipelineHashes.forEach((pipelineHash, key) => {
+            const primitiveId = +(key.split("_")[0]);
+            const geometryEntries = geometryBindGroupMaps.get(primitiveId)
+            const geometryLayoutHash = geometryLayoutHashes.get(primitiveId) as number
+            const materialLayoutHash = materialLayoutHashes.get(primitiveId) as number
+
+            const shaderCodeHash = shaderCodesHashes.get(primitiveId) as number
+
+            const pipelineLayout = pipelineLayoutsHashes.get(key)
+            const prim = pipelineLayout?.prim as GeometryData
+            const side = pipelineLayout?.side as "back" | "front"
+            const geometryBindGroup = BaseLayer.device.createBindGroup({
+                entries: geometryEntries as any,
+                layout: this.gpuCache.getGeometryLayout(geometryLayoutHash)
             })
+            let materialBindGroupHash = materialBindGroupHashes.get(primitiveId) as number
 
-            let materialBindGroupHash = materialBindGroupHashes.find((bindGroup) => primitivePipeline.primitiveId === bindGroup.primitiveId);
+
             const renderSetup = this.gpuCache.getRenderSetup(
-                primitivePipeline.hash,
-                primitivePipeline.layoutHash,
-                materialBindGroupHash?.hash as number,
-                primitivePipeline.materialLayoutHash,
-                primitivePipeline.geometryLayoutHash,
-                primitivePipeline.shaderCodeHash
+                pipelineHash,
+                pipelineLayout?.hash as number,
+                materialBindGroupHash,
+                materialLayoutHash,
+                geometryLayoutHash,
+                shaderCodeHash
             )
             let primitive: RenderAblePrim = {
                 pipeline: renderSetup.pipeline,
                 bindGroups: [ModelRenderer.globalBindGroup.bindGroup, renderSetup.materialBindGroup, geometryBindGroup],
                 vertexBuffers: [],
-                index: null,
-                lodRanges: primitivePipeline.prim.lodRanges,
-                id: primitivePipeline.prim.id,
-                side: primitivePipeline.side
+                lodRanges: prim.lodRanges,
+                id: prim.id,
+                side: side,
+                indexData: prim.indices
             }
 
-            primitivePipeline.buffers.forEach((item) => {
-                primitive.vertexBuffers.push(createGPUBuffer(this.device, primitivePipeline.prim.dataList.get(item.name)?.array as TypedArray, GPUBufferUsage.VERTEX, `${primitivePipeline.sceneObject.name}  ${item.name}`))
+            pipelineLayout?.primitivePipelineDescriptor.buffers.forEach((item) => {
+                primitive.vertexBuffers.push(createGPUBuffer(BaseLayer.device, pipelineLayout.prim.dataList.get(item.name)?.array as TypedArray, GPUBufferUsage.VERTEX, `${pipelineLayout.sceneObject.name}  ${item.name}`))
             })
-
-            if (primitivePipeline.prim.indexType !== "Unknown" && primitivePipeline.prim.indices) {
-
-                primitive.index = {
-                    buffer: createGPUBuffer(this.device, primitivePipeline.prim.indices, GPUBufferUsage.INDEX, "index buffer"),
-                    type: primitivePipeline.prim.indexType as "uint16" | "uint32"
-                }
-                primitive.indirect = {
-                    indirectBuffer: createGPUBuffer(this.device, new Uint32Array([
-                        lod ? (primitivePipeline.prim.lodRanges as LODRange[])[lod.defaultLod].count : primitivePipeline.prim.indexCount,
-                        1,
-                        lod ? (primitivePipeline.prim.lodRanges as LODRange[])[lod.defaultLod].start : 0,
-                        0,
-                        0
-                    ]), GPUBufferUsage.INDIRECT, `${primitivePipeline.sceneObject.name}  indirect buffer`),
-                    indirectOffset: 0
-                }
-            } else {
-
-                primitive.indirect = {
-                    indirectBuffer: createGPUBuffer(this.device, new Uint32Array([
-                        primitivePipeline.prim.indexCount,
-                        1,
-                        0,
-                        0,
-                        0
-                    ]), GPUBufferUsage.INDIRECT, `${primitivePipeline.sceneObject.name} indirect buffer`),
-                    indirectOffset: 0
-                }
+            pipelineLayout?.sceneObject.appendPrimitive(primitive)
+            sceneObjects.set((pipelineLayout as any).sceneObject.id, (pipelineLayout as any).sceneObject)
+            if (prim.indices) {
+                this.computeManager.setIndex(pipelineLayout?.sceneObject as SceneObject)
             }
-
-            if (computeShader) {
-                this.boundingComputer.appendToQueue(primitivePipeline.sceneObject, (T) => {
-                    primitivePipeline.sceneObject.computeShader = {
-                        frustumCulling: T,
-                        lod: computeShader.lod
-                    }
-
-                    primitivePipeline.sceneObject.drawCallIndices?.forEach((item) => {
-                        ModelRenderer.editDrawCall(item.localPrimitiveIndex, item.drawCallIndex, item.key, primitivePipeline.sceneObject)
-                    })
-
-
-                })
-            }
-            primitivePipeline.sceneObject.appendPrimitive(primitive)
-            sceneObjects.set(primitivePipeline.sceneObject.id, primitivePipeline.sceneObject)
+            this.computeManager.setIndirect(pipelineLayout?.sceneObject as SceneObject)
         })
         sceneObjects.forEach(sceneObject => {
-            sceneObject.drawCallIndices = []
             ModelRenderer.appendDrawCall = sceneObject
         })
     }

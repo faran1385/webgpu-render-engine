@@ -34,7 +34,7 @@ export class GPUCache extends BaseLayer {
             const shaderModule = GPUCache.shaderModuleList.find((item) => item.hash === shaderModuleHash) as ShaderModuleListItem;
             GPUCache.pipelineList.push({
                 hash: pipelineHash,
-                pipeline: this.device.createRenderPipeline({
+                pipeline: BaseLayer.device.createRenderPipeline({
                     primitive: renderState.primitive,
                     vertex: {
                         entryPoint: 'vs',
@@ -62,7 +62,7 @@ export class GPUCache extends BaseLayer {
             const geometryLayout = GPUCache.bindGroupLayoutList.find((item) => item.hash === geometryLayoutHash) as BindGroupLayoutListItem;
             GPUCache.pipelineLayoutList.push({
                 hash: pipelineLayoutHash,
-                layout: this.device.createPipelineLayout({
+                layout: BaseLayer.device.createPipelineLayout({
                     label: `pipeline layout ${pipelineLayoutHash}`,
                     bindGroupLayouts: [GPUCache.globalBindGroup.layout, materialLayout.layout, geometryLayout.layout]
                 })
@@ -75,7 +75,7 @@ export class GPUCache extends BaseLayer {
         if (!alreadyExists) {
             GPUCache.shaderModuleList.push({
                 hash: shaderHash,
-                module: this.device.createShaderModule({
+                module: BaseLayer.device.createShaderModule({
                     label: `module ${shaderHash}`,
                     code
                 })
@@ -88,7 +88,7 @@ export class GPUCache extends BaseLayer {
         const alreadyExists = GPUCache.bindGroupLayoutList.some((layout) => layout.hash === layoutHash);
         if (!alreadyExists) {
             GPUCache.bindGroupLayoutList.push({
-                layout: this.device.createBindGroupLayout({
+                layout: BaseLayer.device.createBindGroupLayout({
                     label: `layout ${layoutHash}`,
                     entries
                 }),
@@ -128,11 +128,11 @@ export class GPUCache extends BaseLayer {
 
 
                 if ("usage" in entry.typedArray) {
-                    convertedData = (conversion as bufferConvertFunc)(this.device, resolvedData, entry.typedArray.usage, entry.typedArray.label);
+                    convertedData = (conversion as bufferConvertFunc)(BaseLayer.device, resolvedData, entry.typedArray.usage, entry.typedArray.label);
                 } else if ("size" in entry.typedArray) {
                     if (!entry.typedArray.size) throw new Error("Size is required for texture creation");
                     if (!entry.typedArray.size) throw new Error("Size is required for texture creation");
-                    convertedData = await (conversion as textureConvertFunc)(this.device, entry.typedArray.size, resolvedData);
+                    convertedData = await (conversion as textureConvertFunc)(BaseLayer.device, entry.typedArray.size, resolvedData);
                 } else {
                     throw new Error(`Unknown conversionType`);
                 }
@@ -169,7 +169,7 @@ export class GPUCache extends BaseLayer {
         const layout = layoutList.find(item => item.hash === layoutHash)?.layout as GPUBindGroupLayout;
         const entries = await this.getEntries(creationEntries, material, extensions);
 
-        return this.device.createBindGroup({
+        return BaseLayer.device.createBindGroup({
             label: `bindgroup ${bindGroupHash}`,
             entries,
             layout

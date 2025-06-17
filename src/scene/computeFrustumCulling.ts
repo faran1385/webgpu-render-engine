@@ -1,5 +1,5 @@
 import {GeometryData, LODRange} from "./loader/loaderTypes.ts";
-import {SceneObject} from "./SceneObject/sceneObject.ts";
+import {SceneObject} from "./sceneObject/sceneObject.ts";
 
 type callBackFunction = (T: {
     min: [number, number, number],

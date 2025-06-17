@@ -16,7 +16,7 @@ import {
     occlusionFragments,
     opacityFragments, roughnessFragments, specularFragments, transmissionFragments, vertexShaderCodes
 } from "./shaderCodes.ts";
-import {SceneObject} from "../../SceneObject/sceneObject.ts";
+import {SceneObject} from "../../sceneObject/sceneObject.ts";
 
 
 type CallableTexture =
@@ -141,7 +141,7 @@ export class SmartRender {
 
                 return {
                     entries,
-                    primitivesId: (sceneObject.primitivesData as any).map((prim: any) => prim.id)
+                    primitivesId: Array.from(sceneObject.primitivesData).map((value) => value[0])
                 }
             })
         }
@@ -159,12 +159,11 @@ export class SmartRender {
             factor: number[] | number,
         }) | undefined = undefined
     ) {
-        const usedTextureUvIndices: number[] = []
         return {
             groups: sceneObjects.map(sceneObject => {
-                if (sceneObject.mesh && sceneObject.primitivesData && sceneObject.primitivesData.length > 0) {
-
-                    return sceneObject.primitivesData.map((prim, i): MaterialBindGroupEntry => {
+                if (sceneObject.mesh && sceneObject.primitivesData && sceneObject.primitivesData.size > 0) {
+                    const primitivesDataArray = Array.from(sceneObject.primitivesData)
+                    return primitivesDataArray.map(([_, prim], i): MaterialBindGroupEntry => {
                         const entries: BindGroupEntryCreationType[] = []
                         const hashEntries: hashCreationBindGroupEntry = []
 
@@ -174,7 +173,6 @@ export class SmartRender {
                         if (getExtra) {
                             factors.push(...[getExtra(prim.material).factor].flat())
                         }
-
                         const factorsTypedArray = new Float32Array(factors);
                         entries.push({
                             bindingPoint: 0,
@@ -188,10 +186,8 @@ export class SmartRender {
                         })
 
                         hashEntries.push(factorsTypedArray)
-                        const infoKey = callFrom.texture + 'Info' as any
 
                         if (prim.material[callFrom.texture]()) {
-                            usedTextureUvIndices.push((prim.material as any)[infoKey]()?.getTexCoord() as number)
                             const image = (prim.material[callFrom.texture]() as Texture).getImage() as Uint8Array
                             entries.push({
                                 bindingPoint: 1,
@@ -240,15 +236,14 @@ export class SmartRender {
                     })
                 }
             }).flat(),
-            usedTextureUvIndices: usedTextureUvIndices
         }
     }
 
-    private getPipelineDescriptors(sceneObjects: SceneObject[], usedTextureUvIndices: number[]): PipelineEntry {
+    private getPipelineDescriptors(sceneObjects: SceneObject[]): PipelineEntry {
         const output: PipelineEntry = []
         sceneObjects.forEach(sceneObject => {
-            if (sceneObject.mesh && sceneObject.primitivesData && sceneObject.primitivesData.length > 0) {
-                sceneObject.primitivesData.forEach((prim, i) => {
+            if (sceneObject.mesh && sceneObject.primitivesData.size > 0) {
+                sceneObject.primitivesData.forEach((prim) => {
                     const buffers: (GPUVertexBufferLayout & { name: string; })[] = [{
                         arrayStride: 3 * 4,
                         attributes: [{
@@ -258,8 +253,9 @@ export class SmartRender {
                         }],
                         name: 'POSITION'
                     }]
+                    if (prim.dataList.get(`TEXCOORD_0`)) {
 
-                    if (prim.dataList.get(`TEXCOORD_${usedTextureUvIndices[i]}`)) {
+
                         buffers.push({
                             arrayStride: 2 * 4,
                             attributes: [{
@@ -267,11 +263,11 @@ export class SmartRender {
                                 shaderLocation: 1,
                                 format: "float32x2"
                             }],
-                            name: `TEXCOORD_${usedTextureUvIndices[i]}`
+                            name: `TEXCOORD_0`
                         })
                     }
-
                     const isDoubleSided = prim.material.getDoubleSided()
+
                     const isTransparent = prim.material.getAlphaMode() === "BLEND"
 
                     if (isTransparent && isDoubleSided) {
@@ -397,11 +393,11 @@ export class SmartRender {
             factor: number[] | number,
         })
     ) {
-        const usedTextureUvIndices: number[] = []
         return {
             groups: sceneObjects.map(sceneObject => {
-                if (sceneObject.mesh && sceneObject.primitivesData && sceneObject.primitivesData.length > 0) {
-                    sceneObject.primitivesData.map((prim, i) => {
+                if (sceneObject.mesh  && sceneObject.primitivesData.size > 0) {
+                    const primitivesDataArray = Array.from(sceneObject.primitivesData)
+                    primitivesDataArray.map(([, prim], i) => {
                         const entries: BindGroupEntryCreationType[] = []
                         const hashEntries: hashCreationBindGroupEntry = []
                         const extra = getExtra(prim.material);
@@ -419,7 +415,6 @@ export class SmartRender {
                         })
                         hashEntries.push(factorsTypedArray)
                         if (extra.texture) {
-                            usedTextureUvIndices.push(extra.texture.usedUv)
 
                             entries.push({
                                 bindingPoint: 1,
@@ -468,7 +463,6 @@ export class SmartRender {
                     })
                 }
             }).flat(),
-            usedTextureUvIndices: usedTextureUvIndices
         }
     }
 
@@ -488,25 +482,20 @@ export class SmartRender {
         type: 'ExtensionTexture' | "JustTexture" = "JustTexture",
     ): SmartRenderInitEntryPassType {
         let groups: any;
-        let usedTextureUvIndices: any;
         if (type === "JustTexture" && callFrom) {
 
             const {
                 groups: materialGroups,
-                usedTextureUvIndices: materialUsedTextureUvIndices
             } = this.getMaterialBindGroups(sceneObjects, callFrom, getExtra)
             groups = materialGroups;
-            usedTextureUvIndices = materialUsedTextureUvIndices;
         } else if (getExtra) {
 
             const {
                 groups: materialGroups,
-                usedTextureUvIndices: materialUsedTextureUvIndices
             } = this.getExtensionMaterialBindGroups(sceneObjects, getExtra)
             groups = materialGroups;
-            usedTextureUvIndices = materialUsedTextureUvIndices;
         }
-        const pipelineDescriptors = this.getPipelineDescriptors(sceneObjects, usedTextureUvIndices)
+        const pipelineDescriptors = this.getPipelineDescriptors(sceneObjects)
         const geometryBindGroup = this.getGeometryBindGroups(sceneObjects)
 
         const codeMap: Map<"withBone" | "withUv" | "withUvAndBone" | "withoutUvAndBone", ShaderCodeEntry> = new Map()
@@ -534,17 +523,18 @@ export class SmartRender {
             primitivesId: []
         }))
         sceneObjects.forEach((sceneObject) => {
-            if (sceneObject.mesh && sceneObject.primitivesData && sceneObject.primitivesData.length > 0) {
+            if (sceneObject.mesh && sceneObject.primitivesData.size > 0) {
                 sceneObject.primitivesData.forEach((prim) => {
                     const extra = getExtra ? getExtra(prim.material) : undefined
-                    if ((callFrom && prim.material[callFrom.texture]()) || (extra?.texture)) {
+                    const hasTexture=(callFrom && prim.material[callFrom.texture]()) || (extra?.texture);
+                    if (hasTexture) {
                         materialLayoutWithIds[0].primitivesId.push(prim.id)
                     } else {
                         materialLayoutWithIds[1].primitivesId.push(prim.id)
                     }
                     geometryLayoutWithIds[0].primitivesId.push(prim.id)
 
-                    if ((callFrom && prim.material[callFrom.texture]()) || extra?.texture) {
+                    if (hasTexture) {
                         const data = codeMap.get("withUv");
                         data?.primitivesId.push(prim.id)
                         codeMap.set("withUv", data as any)
@@ -575,7 +565,7 @@ export class SmartRender {
     private getRenderAbleNodes(sceneObjects: Set<SceneObject>) {
         const renderAbleNodes: SceneObject[] = []
         sceneObjects.forEach(sceneObject => {
-            if (sceneObject.mesh && sceneObject.primitivesData && sceneObject.primitivesData?.length > 0) {
+            if (sceneObject.mesh && sceneObject.primitivesData && sceneObject.primitivesData?.size > 0) {
                 renderAbleNodes.push(sceneObject)
             }
         })

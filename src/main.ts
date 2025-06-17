@@ -5,43 +5,38 @@ import {getStats, initWebGPU,} from "./helpers/global.helper.ts";
 import {HashGenerator} from "./scene/GPURenderSystem/Hasher/HashGenerator.ts";
 import {GPUCache} from "./scene/GPURenderSystem/GPUCache/GPUCache.ts";
 import {ModelRenderer} from "./renderers/modelRenderer.ts";
-import {ComputeFrustumCulling} from "./scene/computeFrustumCulling.ts";
 import {SmartRender} from "./scene/GPURenderSystem/SmartRender/SmartRender.ts";
-import {vec3} from "gl-matrix";
+import {ComputeManager} from "./scene/computation/computeManager.ts";
 
 
 const {device, canvas, ctx} = await initWebGPU()
 const stats = getStats()
 const baseLayer = new BaseLayer(device, canvas, ctx);
 
-const mainLayer = new MainLayer(device, canvas, ctx, 10000, 10000)
+const mainLayer = new MainLayer(device, canvas, ctx)
 const loader = new GLTFLoader()
-const smartRender = new SmartRender(device, ctx)
-const boundingCompute = new ComputeFrustumCulling();
+const smartRenderer = new SmartRender(device, ctx)
 const hasher = new HashGenerator()
 await hasher.init()
 const gpuCache = new GPUCache(device, canvas, ctx);
 const {sceneObjects, root} = await loader.load("/merged.glb")
+const computeManager = new ComputeManager(device, canvas, ctx);
 const modelRenderer = new ModelRenderer({
     device,
     canvas,
     ctx,
-    root,
-    boundingComputer: boundingCompute,
     hasher,
-    gpuCache
+    gpuCache,
+    smartRenderer,
+    computeManager: computeManager
 });
-await modelRenderer.init({
-    ...smartRender.base(sceneObjects),
-    computeShader: {
-        lod: {
-            threshold: 0
-        }
-    }
-})
-sceneObjects.forEach((sceneObject) => {
-    sceneObject.setScale(vec3.fromValues(.5, .5, .5))
-})
+
+modelRenderer.setSceneObjects(sceneObjects)
+modelRenderer.setRoot(root)
+modelRenderer.fillInitEntry("base")
+await modelRenderer.init()
+modelRenderer.setLodThreshold(7)
+
 const render = () => {
     const commandEncoder = device.createCommandEncoder()
     mainLayer.render(commandEncoder);

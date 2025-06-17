@@ -1,11 +1,12 @@
-import {mat4} from "gl-matrix";
+import {mat4, vec3} from "gl-matrix";
 import {OrbitControls} from "../scene/camera/controls.ts";
 import {Pane} from "tweakpane";
 import {updateBuffer} from "../helpers/global.helper.ts";
-import {Camera} from "../scene/camera/camera.ts";
 
 import {LODRange} from "../scene/loader/loaderTypes.ts";
-import {SceneObject} from "../scene/SceneObject/sceneObject.ts";
+import {SceneObject} from "../scene/sceneObject/sceneObject.ts";
+import {TypedArray} from "@gltf-transform/core";
+import {LargeBuffer} from "../scene/computation/IndirectDraw/IndirectDraw.ts";
 
 export type readyBindGroup = { bindGroup: GPUBindGroup, layout: GPUBindGroupLayout }
 
@@ -28,128 +29,92 @@ export type RenderAblePrim = {
     pipeline: GPURenderPipeline,
     bindGroups: GPUBindGroup[],
     vertexBuffers: GPUBuffer[],
-    indirect?: {
-        indirectBuffer: GPUBuffer,
-        indirectOffset: GPUSize64,
-    },
-    index: null | {
-        buffer: GPUBuffer,
-        type: "uint16" | "uint32",
-    },
-    lodRanges: LODRange[],
+    lodRanges?: LODRange[],
+    indexData?: TypedArray
     side?: "back" | "front"
 }
-export type ComputeShader = {
-    lod: { threshold: number },
-    frustumCulling: {
-        min: [number, number, number],
-        max: [number, number, number],
-    }
-}
+
 
 export type RenderAble = {
     renderData: MeshRenderData,
-    computeShader?: ComputeShader,
     primitive: RenderAblePrim,
-    sceneObject: SceneObject
+    sceneObject: SceneObject,
 }
 
-export type TransparentRenderAble = RenderAble & { side: "back" | "front" }
 
 export class BaseLayer {
+    // base
     public readonly ctx: GPUCanvasContext;
     public static _format: GPUTextureFormat;
-    public readonly device: GPUDevice;
+    public readonly canvas: HTMLCanvasElement;
+    public static device: GPUDevice;
+    // large buffers
+    public static largeBufferMap: Map<string, LargeBuffer> = new Map<string, LargeBuffer>()
+
+    // renderLoop functions
+    public static readonly renderLoopRunAble: Map<string, (...args: any[]) => void> = new Map()
+
+    // global data
     private static _globalBindGroup: readyBindGroup;
     private static _timeBuffer: GPUBuffer;
     private static _resolutionBuffer: GPUBuffer;
     private static _deltaBuffer: GPUBuffer;
-    public readonly canvas: HTMLCanvasElement;
     private static _lastFrameTime: number;
-    private static _controls: OrbitControls;
     private static _depthTexture: GPUTexture;
-    private static _cameras: Camera[] = [];
     private static _activeCamera: activeCamera;
-    public static _updateQueue: Map<number, SceneObject> = new Map();
-    private static _activeCameraIndex: number = 0;
+
     private static _pane: Pane;
-    private static _renderAbleSceneObjects: Set<SceneObject> = new Set<SceneObject>();
-    private static _drawCalls: { opaque: RenderAble[], transparent: TransparentRenderAble[] } = {
+    private static _controls: OrbitControls;
+    public static _updateQueue: Map<number, SceneObject> = new Map();
+    private static _drawCalls: { opaque: RenderAble[], transparent: RenderAble[] } = {
         opaque: [],
         transparent: []
     };
-    private static _initialized: boolean = false;
+    private static _baseLayerInitialized: boolean = false;
+    protected static renderQueue: { queue: RenderAble[], needsUpdate: boolean } = {queue: [], needsUpdate: false}
 
     protected static get drawCalls() {
         return BaseLayer._drawCalls;
     }
 
-    protected static get renderAbleSceneObjects() {
-        return BaseLayer._renderAbleSceneObjects;
+    protected getCameraVP() {
+        const updatedData = BaseLayer.controls.update();
+        return {projectionMatrix: updatedData.projectionMatrix, viewMatrix: updatedData.viewMatrix}
     }
 
-    protected static set appendDrawCall(SceneObject: SceneObject) {
-        BaseLayer._renderAbleSceneObjects.add(SceneObject);
-        SceneObject.primitives?.forEach((primitive, localIndex) => {
+    public static getCameraPosition() {
+        const {viewMatrix} = BaseLayer.controls.update();
+        const cameraWorldMatrix = mat4.invert(mat4.create(), viewMatrix);
+
+        return mat4.getTranslation(vec3.create(), cameraWorldMatrix)
+    }
+
+    protected static set appendDrawCall(sceneObject: SceneObject) {
+        this.renderQueue.needsUpdate = true
+        sceneObject.primitives?.forEach((primitive) => {
             let renderAble = {
-                side: primitive.side,
-                sceneObject: SceneObject,
+                sceneObject: sceneObject,
                 primitive,
-                computeShader: SceneObject.computeShader,
                 renderData: {
-                    name: SceneObject.name ?? 'draw call',
+                    name: sceneObject.name ?? 'draw call',
                     model: {
-                        buffer: SceneObject.modelBuffer as GPUBuffer,
-                        data: SceneObject.worldMatrix as Float32Array
+                        buffer: sceneObject.modelBuffer as GPUBuffer,
+                        data: sceneObject.worldMatrix as Float32Array
                     },
-                    normal: SceneObject.normalBuffer ? {
-                        buffer: SceneObject.normalBuffer,
-                        data: SceneObject.normalMatrix as Float32Array
+                    normal: sceneObject.normalBuffer ? {
+                        buffer: sceneObject.normalBuffer,
+                        data: sceneObject.normalMatrix as Float32Array
                     } : undefined
                 }
             }
 
             if (primitive.side) {
-                SceneObject.drawCallIndices?.push({
-                    drawCallIndex: BaseLayer._drawCalls["transparent"].length,
-                    localPrimitiveIndex: localIndex,
-                    key: "transparent"
-                })
-                BaseLayer._drawCalls["transparent"].push(renderAble as TransparentRenderAble)
+                BaseLayer._drawCalls["transparent"].push(renderAble)
             } else {
-                SceneObject.drawCallIndices?.push({
-                    drawCallIndex: BaseLayer._drawCalls["opaque"].length,
-                    localPrimitiveIndex: localIndex,
-                    key: "opaque"
-                })
-                BaseLayer._drawCalls["opaque"].push(renderAble as RenderAble)
+                BaseLayer._drawCalls["opaque"].push(renderAble)
             }
         })
     }
-
-    protected static editDrawCall(localPrimitivesIndex: number, drawCallIndex: number, where: "transparent" | "opaque", SceneObject: SceneObject) {
-        const primitive = (SceneObject.primitives as RenderAblePrim[])[localPrimitivesIndex]
-        let renderAble = {
-            side: primitive.side,
-            sceneObject: SceneObject,
-            primitive,
-            computeShader: SceneObject.computeShader,
-            renderData: {
-                name: SceneObject.name ?? 'draw call',
-                model: {
-                    buffer: SceneObject.modelBuffer as GPUBuffer,
-                    data: SceneObject.worldMatrix as Float32Array
-                },
-                normal: SceneObject.normalBuffer ? {
-                    buffer: SceneObject.normalBuffer,
-                    data: SceneObject.normalMatrix as Float32Array
-                } : undefined
-            }
-        }
-
-        BaseLayer._drawCalls[where][drawCallIndex] = renderAble as any
-    }
-
 
     protected static get format(): GPUTextureFormat {
         return BaseLayer._format
@@ -179,27 +144,9 @@ export class BaseLayer {
         return BaseLayer._timeBuffer
     }
 
-    protected static get cameras(): Camera[] {
-        return BaseLayer._cameras
-    }
 
     protected static set setActiveCamera(camera: activeCamera) {
         BaseLayer._activeCamera = camera
-    }
-
-    public static set setActiveCameraIndex(index: number) {
-        if (index === 0) {
-            BaseLayer.controls.enable()
-            this.controls.update()
-        } else {
-            BaseLayer.controls.disable()
-        }
-        BaseLayer._activeCameraIndex = index
-    }
-
-    public static get getActiveCameraIndex() {
-
-        return BaseLayer._activeCameraIndex
     }
 
     public static get activeCamera(): activeCamera {
@@ -207,36 +154,25 @@ export class BaseLayer {
     }
 
 
-    public static set addCamera(camera: Camera) {
-        BaseLayer._cameras.push(camera);
-    }
-
     protected static get pane(): Pane {
         return BaseLayer._pane
     }
 
     constructor(device: GPUDevice, canvas: HTMLCanvasElement, ctx: GPUCanvasContext) {
-        this.device = device;
+        BaseLayer.device = device;
         this.canvas = canvas;
         this.ctx = ctx;
-        if (this.constructor === BaseLayer && !BaseLayer._initialized) {
+        if (this.constructor === BaseLayer && !BaseLayer._baseLayerInitialized) {
             this.initialize()
             this.windowResizeHandler()
-            BaseLayer._initialized = true;
+            BaseLayer._baseLayerInitialized = true;
         }
     }
 
 
     public update() {
-        if (BaseLayer._activeCameraIndex === 0) {
-            const {viewMatrix, projectionMatrix, position} = BaseLayer._controls.update()
-            this.updateGlobalBuffers(position as Float32Array, projectionMatrix as Float32Array, viewMatrix as Float32Array)
-        } else {
-            const projectionMatrix = BaseLayer.cameras[BaseLayer._activeCameraIndex - 1].getProjectionMatrix()
-            const viewMatrix = BaseLayer.cameras[BaseLayer._activeCameraIndex - 1].getViewMatrix()
-            const position = BaseLayer.cameras[BaseLayer._activeCameraIndex - 1].getPosition()
-            this.updateGlobalBuffers(position as Float32Array, projectionMatrix as Float32Array, viewMatrix as Float32Array)
-        }
+        const {viewMatrix, projectionMatrix, position} = BaseLayer._controls.update()
+        this.updateGlobalBuffers(position as Float32Array, projectionMatrix as Float32Array, viewMatrix as Float32Array)
     }
 
 
@@ -244,7 +180,7 @@ export class BaseLayer {
         BaseLayer._format = navigator.gpu.getPreferredCanvasFormat()
         BaseLayer._pane = new Pane();
 
-        BaseLayer._depthTexture = this.device.createTexture({
+        BaseLayer._depthTexture = BaseLayer.device.createTexture({
             size: {width: window.innerWidth, height: window.innerHeight, depthOrArrayLayers: 1},
             usage: GPUTextureUsage.RENDER_ATTACHMENT,
             label: "depthTexture",
@@ -266,15 +202,15 @@ export class BaseLayer {
 
         const {viewMatrix, projectionMatrix, position} = BaseLayer._controls.update()
         BaseLayer.setActiveCamera = {
-            projection: this.device.createBuffer({
+            projection: BaseLayer.device.createBuffer({
                 size: (projectionMatrix as Float32Array).byteLength,
                 usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
             }),
-            view: this.device.createBuffer({
+            view: BaseLayer.device.createBuffer({
                 size: (viewMatrix as Float32Array).byteLength,
                 usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
             }),
-            position: this.device.createBuffer({
+            position: BaseLayer.device.createBuffer({
                 size: 12,
                 usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
             }),
@@ -282,15 +218,15 @@ export class BaseLayer {
 
 
         BaseLayer._lastFrameTime = performance.now();
-        BaseLayer._timeBuffer = this.device.createBuffer({
+        BaseLayer._timeBuffer = BaseLayer.device.createBuffer({
             size: 4,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         })
-        BaseLayer._resolutionBuffer = this.device.createBuffer({
+        BaseLayer._resolutionBuffer = BaseLayer.device.createBuffer({
             size: 8,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         })
-        BaseLayer._deltaBuffer = this.device.createBuffer({
+        BaseLayer._deltaBuffer = BaseLayer.device.createBuffer({
             size: 4,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         })
@@ -320,17 +256,17 @@ export class BaseLayer {
         const deltaTime = (currentTime - BaseLayer._lastFrameTime) / 1000;
 
         BaseLayer._lastFrameTime = currentTime;
-        updateBuffer(this.device, BaseLayer._resolutionBuffer, new Float32Array([window.innerWidth, window.innerHeight]))
-        updateBuffer(this.device, BaseLayer._timeBuffer, new Float32Array([performance.now() / 1000]))
-        updateBuffer(this.device, BaseLayer._deltaBuffer, new Float32Array([deltaTime]))
-        updateBuffer(this.device, BaseLayer.activeCamera.projection, projectionMatrix)
-        updateBuffer(this.device, BaseLayer.activeCamera.view, viewMatrix)
-        updateBuffer(this.device, BaseLayer.activeCamera.position, position)
+        updateBuffer(BaseLayer.device, BaseLayer._resolutionBuffer, new Float32Array([window.innerWidth, window.innerHeight]))
+        updateBuffer(BaseLayer.device, BaseLayer._timeBuffer, new Float32Array([performance.now() / 1000]))
+        updateBuffer(BaseLayer.device, BaseLayer._deltaBuffer, new Float32Array([deltaTime]))
+        updateBuffer(BaseLayer.device, BaseLayer.activeCamera.projection, projectionMatrix)
+        updateBuffer(BaseLayer.device, BaseLayer.activeCamera.view, viewMatrix)
+        updateBuffer(BaseLayer.device, BaseLayer.activeCamera.position, position)
     }
 
 
     private setGlobalBindGroup = (): readyBindGroup => {
-        const bindGroupLayout = this.device.createBindGroupLayout({
+        const bindGroupLayout = BaseLayer.device.createBindGroupLayout({
             label: "globalBindGroupLayout",
             entries: [
                 {
@@ -377,7 +313,7 @@ export class BaseLayer {
         })
 
 
-        const bindGroup = this.device.createBindGroup({
+        const bindGroup = BaseLayer.device.createBindGroup({
             label: "globalBindGroup",
             entries: [{
                 resource: {
@@ -423,12 +359,12 @@ export class BaseLayer {
     private windowResizeHandler() {
         this.canvas.width = window.innerWidth;
         this.canvas.height = window.innerHeight;
-        if (BaseLayer._activeCameraIndex === 0) {
-            const {projectionMatrix} = BaseLayer._controls.update()
-            mat4.perspective(projectionMatrix, Math.PI / 4, window.innerWidth / window.innerHeight, 0.1, 100)
-        }
+
+        const {projectionMatrix} = BaseLayer._controls.update()
+        mat4.perspective(projectionMatrix, Math.PI / 4, window.innerWidth / window.innerHeight, 0.1, 100)
+
         BaseLayer._depthTexture.destroy();
-        BaseLayer._depthTexture = this.device.createTexture({
+        BaseLayer._depthTexture = BaseLayer.device.createTexture({
             size: {width: window.innerWidth, height: window.innerHeight, depthOrArrayLayers: 1},
             usage: GPUTextureUsage.RENDER_ATTACHMENT,
             label: "depthTexture",

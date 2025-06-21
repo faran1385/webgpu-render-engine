@@ -164,7 +164,6 @@ export class BaseLayer {
         this.ctx = ctx;
         if (this.constructor === BaseLayer && !BaseLayer._baseLayerInitialized) {
             this.initialize()
-            this.windowResizeHandler()
             BaseLayer._baseLayerInitialized = true;
         }
     }
@@ -215,7 +214,8 @@ export class BaseLayer {
                 usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
             }),
         }
-
+        console.log("a")
+        this.windowResizeHandler()
 
         BaseLayer._lastFrameTime = performance.now();
         BaseLayer._timeBuffer = BaseLayer.device.createBuffer({
@@ -362,7 +362,7 @@ export class BaseLayer {
 
         const {projectionMatrix} = BaseLayer._controls.update()
         mat4.perspective(projectionMatrix, Math.PI / 4, window.innerWidth / window.innerHeight, 0.1, 100)
-
+        updateBuffer(BaseLayer.device, BaseLayer.activeCamera.projection, projectionMatrix);
         BaseLayer._depthTexture.destroy();
         BaseLayer._depthTexture = BaseLayer.device.createTexture({
             size: {width: window.innerWidth, height: window.innerHeight, depthOrArrayLayers: 1},

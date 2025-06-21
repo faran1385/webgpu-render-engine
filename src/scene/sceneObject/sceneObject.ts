@@ -2,7 +2,7 @@ import {mat3, mat4, quat, vec3} from "gl-matrix";
 import {Mesh} from "@gltf-transform/core";
 import {BaseLayer, RenderAblePrim} from "../../layers/baseLayer.ts";
 import {GeometryData} from "../loader/loaderTypes.ts";
-import {createGPUBuffer, updateBuffer} from "../../helpers/global.helper.ts";
+import {createGPUBuffer, makePrimitiveKey, updateBuffer} from "../../helpers/global.helper.ts";
 
 
 type SceneObjectConfig = {
@@ -43,10 +43,11 @@ export class SceneObject {
     primitivesData: Map<number, GeometryData> = new Map();
     needsUpdate: boolean = false;
     indexBufferStartIndex: Map<number, number> = new Map();
-    indirectBufferStartIndex: Map<number, number> = new Map();
+    indirectBufferStartIndex: Map<string, number> = new Map();
 
     // compute shader
     lodSelectionThreshold: number | undefined = undefined;
+    frustumCullingMinMax: { min: [number, number, number], max: [number, number, number] } | undefined = undefined;
 
     constructor(config: SceneObjectConfig) {
         this.id = config.id;
@@ -73,7 +74,7 @@ export class SceneObject {
 
     appendPrimitive(primitive: RenderAblePrim) {
         if (this.primitives) {
-            this.primitives.set(`${primitive.id}_${primitive.side ?? "none"}`, primitive);
+            this.primitives.set(makePrimitiveKey(primitive.id, primitive.side), primitive);
         } else {
             throw new Error("This is not a RenderAble Node");
         }

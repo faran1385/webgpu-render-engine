@@ -53,11 +53,13 @@ export class MainLayer extends BaseLayer {
 
     public render(commandEncoder: GPUCommandEncoder) {
         this.checkForUpdate()
-        const {viewMatrix} = this.getCameraVP()
+        const {viewMatrix, projectionMatrix} = this.getCameraVP()
         const renderAbleArray: RenderAble[] = BaseLayer.renderQueue.needsUpdate ? this.buildRenderQueue(viewMatrix) : BaseLayer.renderQueue.queue
 
         const lodRunAble = MainLayer.renderLoopRunAble.get("LOD")
+        const frustumCullingRunAble = MainLayer.renderLoopRunAble.get("FrustumCulling")
         if (lodRunAble) lodRunAble(commandEncoder);
+        if (frustumCullingRunAble) frustumCullingRunAble(commandEncoder, viewMatrix, projectionMatrix);
         const pass = commandEncoder.beginRenderPass({
             label: "main pass",
             depthStencilAttachment: {

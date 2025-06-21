@@ -28,14 +28,33 @@ export class LodSelection extends BaseLayer {
             array: [],
             version: 0
         })
-        LodSelection.localLargeBufferVersions.set("LODSelectionData", 0)
-        LodSelection.localLargeBufferVersions.set("LODSelectionOffsets", 0)
         LodSelection.localLargeBufferVersions.set("Indirect", 0)
+        this.inspector()
+
+    }
+
+    private inspector() {
+        window.addEventListener("keypress", async (e) => {
+            if (e.key === "s") {
+                const indirect = BaseLayer.largeBufferMap.get("Indirect")?.buffer as GPUBuffer
+                const resultBuffer = BaseLayer.device.createBuffer({
+                    size: indirect.size,
+                    usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
+                })
+                const encoder = LodSelection.device.createCommandEncoder()
+                encoder.copyBufferToBuffer(indirect, resultBuffer, resultBuffer.size)
+                LodSelection.device.queue.submit([encoder.finish()])
+                await LodSelection.device.queue.onSubmittedWorkDone()
+                await resultBuffer.mapAsync(GPUMapMode.READ)
+                const data = new Uint32Array(resultBuffer.getMappedRange())
+                console.log(data)
+            }
+        })
     }
 
     private static initStaticSetup() {
         const layout = LodSelection.device.createBindGroupLayout({
-            label: "main compute layout",
+            label: "lod compute layout",
             entries: [{
                 buffer: {
                     type: "uniform",
@@ -91,9 +110,6 @@ export class LodSelection extends BaseLayer {
         const offsets = BaseLayer.largeBufferMap.get("LODSelectionOffsets")!
         const lodesData = BaseLayer.largeBufferMap.get("LODSelectionData")!
         LodSelection.localLargeBufferVersions.set("Indirect", indirect.version)
-        LodSelection.localLargeBufferVersions.set("LODSelectionOffsets", offsets.version)
-
-        LodSelection.localLargeBufferVersions.set("LODSelectionData", lodesData.version)
 
         const bindGroup = LodSelection.device.createBindGroup({
             layout: fixedSetup?.layout ?? LodSelection.computeSetup?.layout as GPUBindGroupLayout,
@@ -136,9 +152,8 @@ export class LodSelection extends BaseLayer {
 
     private static resizeBuffer(bufferType: "lodesData" | "offsets") {
         const largeBuffer = bufferType === "offsets" ? BaseLayer.largeBufferMap.get("LODSelectionOffsets")! : BaseLayer.largeBufferMap.get("LODSelectionData")!
-
         largeBuffer.buffer?.destroy();
-        largeBuffer.buffer = createGPUBuffer(BaseLayer.device, new Uint32Array(largeBuffer?.array as number[]), GPUBufferUsage.STORAGE, `global ${bufferType} buffer`)
+        largeBuffer.buffer = createGPUBuffer(BaseLayer.device, bufferType === "lodesData" ? new Float32Array(largeBuffer?.array as number[]) : new Uint32Array(largeBuffer?.array as number[]), GPUBufferUsage.STORAGE, `global ${bufferType} buffer`)
         largeBuffer.needsUpdate = false
         largeBuffer.version += 1
     }
@@ -150,11 +165,13 @@ export class LodSelection extends BaseLayer {
         lodesData.array = [];
 
         LodSelection.lodSelectionSceneObjects.forEach(sceneObject => {
-            sceneObject.primitives?.forEach(primitive => {
+            sceneObject.primitives?.forEach((primitive, key) => {
                 if (!primitive.lodRanges || primitive.lodRanges.length === 0) throw new Error("sceneObject does not have lodRanges")
                 const flattedPrimitiveLod = primitive.lodRanges.map(lod => [lod.start, lod.count]).flat();
-                const dataArray = [sceneObject.getPosition(), flattedPrimitiveLod].flat();
-                offsets.array.push(offsets.array.length);
+                const offsetInIndirectBuffer = sceneObject.indirectBufferStartIndex.get(key) as number
+                if (!sceneObject.lodSelectionThreshold) throw new Error("lodRange threshold is not set")
+                const dataArray = [sceneObject.getPosition(), sceneObject.lodSelectionThreshold, primitive.lodRanges.length, flattedPrimitiveLod].flat();
+                offsets.array.push(lodesData.array.length, offsetInIndirectBuffer);
                 lodesData.array.push(...dataArray)
             })
         })
@@ -168,14 +185,11 @@ export class LodSelection extends BaseLayer {
         const offsets = BaseLayer.largeBufferMap.get("LODSelectionOffsets")!
         const lodesData = BaseLayer.largeBufferMap.get("LODSelectionData")!
         const indirect = BaseLayer.largeBufferMap.get("Indirect")!
-        if (LodSelection.lodSelectionSceneObjects.size > 0 && (offsets.needsUpdate || lodesData.needsUpdate)) LodSelection.applyUpdate()
+        if (LodSelection.lodSelectionSceneObjects.size > 0 && indirect.buffer && indirect.buffer?.size > 0 && (offsets.needsUpdate || lodesData.needsUpdate)) LodSelection.applyUpdate()
 
         if (indirect.buffer && LodSelection.lodSelectionSceneObjects.size > 0 && (!LodSelection.computeSetup ||
-            lodesData.version !== LodSelection.localLargeBufferVersions.get("LODSelectionData") ||
-            offsets.version !== LodSelection.localLargeBufferVersions.get("LODSelectionOffsets") ||
             indirect.version !== LodSelection.localLargeBufferVersions.get("Indirect")
         )) LodSelection.initComputeSetup();
-
         if (LodSelection.lodSelectionSceneObjects.size > 0 && LodSelection.computeSetup) {
             const computePass = commandEncoder.beginComputePass({
                 label: "lod selection compute pass"

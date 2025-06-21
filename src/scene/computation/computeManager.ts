@@ -1,19 +1,19 @@
 import {SceneObject} from "../sceneObject/sceneObject.ts";
 import {BaseLayer} from "../../layers/baseLayer.ts";
 import {LodSelection} from "./LODSelection/lodSelection.ts";
-import {IndirectDraw, LargeBuffer} from "./IndirectDraw/IndirectDraw.ts";
+import {IndirectDraw} from "./IndirectDraw/IndirectDraw.ts";
 import {createGPUBuffer, updateBuffer} from "../../helpers/global.helper.ts";
+import {FrustumCulling} from "./FrustumCulling/frustumCulling.ts";
 
 
-export class ComputeManager extends BaseLayer{
+export class ComputeManager extends BaseLayer {
     static _isComputeManagerInitialized: boolean = false;
     // buffers
-    private static _indexBuffer: LargeBuffer
-    private static _indirectBuffer: LargeBuffer
     static cameraPositionBuffer: GPUBuffer;
 
     static lodSelection: LodSelection;
     static indirectDraw: IndirectDraw;
+    static frustumCulling: FrustumCulling;
 
     constructor(device: GPUDevice, canvas: HTMLCanvasElement, ctx: GPUCanvasContext) {
         super(device, canvas, ctx);
@@ -23,31 +23,18 @@ export class ComputeManager extends BaseLayer{
         }
     }
 
-    public set setIndexBuffer(indexBuffer: LargeBuffer) {
-        ComputeManager._indexBuffer = indexBuffer;
-    }
-
-    public set setIndirectBuffer(indirectBuffer: LargeBuffer) {
-        ComputeManager._indirectBuffer = indirectBuffer;
-    }
-
-    public get indexBuffer() {
-        return ComputeManager._indexBuffer
-    }
-
-    public get indirectBuffer() {
-        return ComputeManager._indirectBuffer
-    }
 
     private initComputeManager(device: GPUDevice, canvas: HTMLCanvasElement, ctx: GPUCanvasContext): void {
         ComputeManager.indirectDraw = new IndirectDraw(device, canvas, ctx);
         ComputeManager.lodSelection = new LodSelection(device, canvas, ctx);
+        ComputeManager.frustumCulling = new FrustumCulling(device, canvas, ctx);
         ComputeManager.renderLoopRunAble.set("IndirectDraw", ComputeManager.indirectDraw.renderLoop);
         ComputeManager.renderLoopRunAble.set("LOD", ComputeManager.lodSelection.renderLoop);
+        ComputeManager.renderLoopRunAble.set("FrustumCulling", ComputeManager.frustumCulling.renderLoop);
         ComputeManager.renderLoopRunAble.set("ComputeManager", this.renderLoop);
         const cameraPosition = BaseLayer.getCameraPosition();
 
-        ComputeManager.cameraPositionBuffer = createGPUBuffer(device, new Float32Array(cameraPosition), GPUBufferUsage.UNIFORM, "global camera psotion buffer");
+        ComputeManager.cameraPositionBuffer = createGPUBuffer(device, new Float32Array(cameraPosition), GPUBufferUsage.UNIFORM, "global camera position buffer");
 
         ComputeManager._isComputeManagerInitialized = true;
     }
@@ -67,5 +54,9 @@ export class ComputeManager extends BaseLayer{
 
     public setLodSelection(sceneObject: SceneObject) {
         ComputeManager.lodSelection.appendLodSelection(sceneObject);
+    }
+
+    public setFrustumCulling(sceneObject: SceneObject) {
+        ComputeManager.frustumCulling.appendFrustumCulling(sceneObject);
     }
 }

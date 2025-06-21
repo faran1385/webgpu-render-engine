@@ -5,7 +5,7 @@ import {hashCreationBindGroupEntry, HashGenerator} from "../scene/GPURenderSyste
 import {GPUCache} from "../scene/GPURenderSystem/GPUCache/GPUCache.ts";
 import {BindGroupEntryCreationType, RenderState} from "../scene/GPURenderSystem/GPUCache/GPUCacheTypes.ts";
 import {SceneObject} from "../scene/sceneObject/sceneObject.ts";
-import {createGPUBuffer} from "../helpers/global.helper.ts";
+import {createGPUBuffer, makePrimitiveKey} from "../helpers/global.helper.ts";
 import {SmartRender} from "../scene/GPURenderSystem/SmartRender/SmartRender.ts";
 import {ComputeManager} from "../scene/computation/computeManager.ts";
 
@@ -100,8 +100,19 @@ export class ModelRenderer extends BaseLayer {
     public setLodThreshold(threshold: number) {
         if (!this.sceneObjects) throw new Error("sceneObjects is not set");
         this.sceneObjects.forEach(sceneObject => {
-            sceneObject.setLodSelectionThreshold(threshold);
-            this.computeManager.setLodSelection(sceneObject)
+            if(sceneObject.mesh && sceneObject.primitivesData.size > 0){
+                sceneObject.setLodSelectionThreshold(threshold);
+                this.computeManager.setLodSelection(sceneObject)
+            }
+        })
+    }
+
+    public enableFrustumCulling() {
+        if (!this.sceneObjects) throw new Error("sceneObjects is not set");
+        this.sceneObjects.forEach(sceneObject => {
+            if(sceneObject.mesh && sceneObject.primitivesData.size > 0){
+                this.computeManager.setFrustumCulling(sceneObject)
+            }
         })
     }
 
@@ -176,7 +187,7 @@ export class ModelRenderer extends BaseLayer {
                 materialLayout as number,
                 geometryLayout as number
             )
-            pipelineLayoutsHashes.set(`${item.primitiveId}_${item.side ?? "none"}`, {
+            pipelineLayoutsHashes.set(makePrimitiveKey(item.primitiveId, item.side), {
                 ...item,
                 hash
             });
@@ -191,7 +202,7 @@ export class ModelRenderer extends BaseLayer {
             const shaderCodeHash = shaderCodesHashes.get(item.primitiveId) as number
             const hash = this.hasher.hashPipeline(item.primitivePipelineDescriptor, item.hash)
             this.gpuCache.appendPipeline(item.primitivePipelineDescriptor, hash, item.hash, shaderCodeHash as number)
-            pipelineHashes.set(`${item.primitiveId}_${item.side ?? "none"}`, hash)
+            pipelineHashes.set(makePrimitiveKey(item.primitiveId, item.side), hash)
         })
         return pipelineHashes
     }
@@ -265,7 +276,6 @@ export class ModelRenderer extends BaseLayer {
                 side: side,
                 indexData: prim.indices
             }
-
             pipelineLayout?.primitivePipelineDescriptor.buffers.forEach((item) => {
                 primitive.vertexBuffers.push(createGPUBuffer(BaseLayer.device, pipelineLayout.prim.dataList.get(item.name)?.array as TypedArray, GPUBufferUsage.VERTEX, `${pipelineLayout.sceneObject.name}  ${item.name}`))
             })

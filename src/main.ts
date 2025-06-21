@@ -31,11 +31,12 @@ const modelRenderer = new ModelRenderer({
     computeManager: computeManager
 });
 
-modelRenderer.setSceneObjects(sceneObjects)
+modelRenderer.setSceneObjects(sceneObjects  )
 modelRenderer.setRoot(root)
 modelRenderer.fillInitEntry("base")
 await modelRenderer.init()
-modelRenderer.setLodThreshold(7)
+modelRenderer.setLodThreshold(25)
+modelRenderer.enableFrustumCulling()
 
 const render = () => {
     const commandEncoder = device.createCommandEncoder()

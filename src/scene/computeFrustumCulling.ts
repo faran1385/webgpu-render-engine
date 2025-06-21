@@ -1,4 +1,3 @@
-import {GeometryData, LODRange} from "./loader/loaderTypes.ts";
 import {SceneObject} from "./sceneObject/sceneObject.ts";
 
 type callBackFunction = (T: {
@@ -7,10 +6,7 @@ type callBackFunction = (T: {
 }) => void
 
 type taskQueueItem = {
-    task: {
-        lodRanges: LODRange[] | undefined
-        position: Float32Array<ArrayBufferLike>
-    }[],
+    position: Float32Array[],
     func: callBackFunction
     modelMatrix: Float32Array,
 }
@@ -111,17 +107,10 @@ export class ComputeFrustumCulling {
         }
 
 
-        self.onmessage=(e)=>{
-            
-            const vertices = e.data.geometry.map((prim) => {
-                  const array = prim.lodRanges
-                    ? prim.position?.slice(
-                        prim.lodRanges[0].start,
-                        prim.lodRanges[0].start + prim.lodRanges[0].count
-                      )
-                    : prim.vertex.position?.array;
-            
-                  return array ? Array.from(array) : [];
+        self.onmessage=(e)=>{            
+            const vertices = e.data.positions.map((positionArray) => {
+                  
+                  return positionArray ? Array.from(positionArray) : [];
                 }).flat();
             
             self.postMessage({...computeWorldAABB(vertices,e.data.modelMatrix),taskId:e.data.taskId});
@@ -141,15 +130,15 @@ export class ComputeFrustumCulling {
     }
 
     public appendToQueue(sceneObject: SceneObject, func: callBackFunction) {
-        const task = (sceneObject.primitivesData as GeometryData[]).map(item => {
-            return {
-                lodRanges: item.lodRanges,
-                position: (item.dataList.get("POSITION") as any).array
+        const geoDataArray = Array.from(sceneObject.primitivesData).flatMap((T) => [T[1]]);
+        const position: Float32Array[] = geoDataArray.map(item => {
+            if (item.lodRanges) {
+                return (item.dataList.get("POSITION") as any).array.slice(item.lodRanges[0].start, item.lodRanges[0].count)
             }
+            return (item.dataList.get("POSITION") as any).array
         })
-
         this.idleTaskQueue.set(Math.random(), {
-            task,
+            position,
             func,
             modelMatrix: sceneObject.worldMatrix as Float32Array,
         })
@@ -162,7 +151,7 @@ export class ComputeFrustumCulling {
         if (queueItem) {
             this.workers[index].busy = true;
             this.workers[index].worker.postMessage({
-                geometry: queueItem[1].task,
+                positions: queueItem[1].position,
                 modelMatrix: queueItem[1].modelMatrix,
                 taskId: queueItem[0],
             })

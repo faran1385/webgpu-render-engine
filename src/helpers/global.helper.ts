@@ -21,6 +21,9 @@ export function createGPUBuffer(
 
 
 /////////////////////
+export function makePrimitiveKey(id: number, side: "back" | "front" | undefined) {
+    return `${id}_${side ?? "none"}`
+}
 
 ///////////////////////
 
@@ -115,6 +118,7 @@ export const convertAlphaMode = (mode: "BLEND" | "MASK" | "OPAQUE") => {
 }
 
 let nextID = 0;
+
 export function generateID() {
     return nextID++;
 }

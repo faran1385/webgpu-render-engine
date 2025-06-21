@@ -1,5 +1,5 @@
 import {SceneObject} from "../../sceneObject/sceneObject.ts";
-import {createGPUBuffer} from "../../../helpers/global.helper.ts";
+import {createGPUBuffer, makePrimitiveKey} from "../../../helpers/global.helper.ts";
 import {BaseLayer, RenderAble} from "../../../layers/baseLayer.ts";
 
 export type LargeBuffer = {
@@ -34,7 +34,7 @@ export class IndirectDraw extends BaseLayer {
         const largeBuffer = bufferType === "index" ? BaseLayer.largeBufferMap.get("Index") as LargeBuffer : BaseLayer.largeBufferMap.get("Indirect") as LargeBuffer
         largeBuffer.buffer?.destroy();
         if (bufferType === "indirect") {
-            largeBuffer.buffer = createGPUBuffer(BaseLayer.device, new Uint32Array(largeBuffer?.array as number[]), GPUBufferUsage.INDIRECT | GPUBufferUsage.STORAGE, `global indirect buffer`)
+            largeBuffer.buffer = createGPUBuffer(BaseLayer.device, new Uint32Array(largeBuffer?.array as number[]), GPUBufferUsage.INDIRECT | GPUBufferUsage.COPY_SRC | GPUBufferUsage.STORAGE, `global indirect buffer`)
         } else {
             largeBuffer.buffer = createGPUBuffer(BaseLayer.device, new Uint32Array(largeBuffer?.array as number[]), GPUBufferUsage.INDEX, `global index buffer`)
         }
@@ -46,15 +46,17 @@ export class IndirectDraw extends BaseLayer {
         const indirect = BaseLayer.largeBufferMap.get("Indirect") as LargeBuffer
         indirect.array = []
 
-        IndirectDraw.indirectSceneObjects.forEach(sceneObject => {
-            sceneObject.primitives?.forEach((primitive) => {
+        IndirectDraw.indirectSceneObjects.forEach((sceneObject: SceneObject) => {
+
+            sceneObject.primitives?.forEach((primitive, key) => {
                 const positionCount = (sceneObject.primitivesData.get(primitive.id)?.dataList.get('POSITION')?.array.length as number) / 3;
                 const dataArray = [primitive?.indexData?.length ?? positionCount, 1, 0, 0, 0];
                 const startIndex = indirect.array.length;
-                sceneObject.indirectBufferStartIndex.set(primitive.id, startIndex);
+                sceneObject.indirectBufferStartIndex.set(key, startIndex);
                 indirect.array.push(...dataArray);
             });
         })
+
         indirect.needsUpdate = false
         IndirectDraw.resizeBuffer("indirect")
     }
@@ -63,7 +65,7 @@ export class IndirectDraw extends BaseLayer {
         const indexLargeBuffer = BaseLayer.largeBufferMap.get("Index") as LargeBuffer
         indexLargeBuffer.array = []
 
-        IndirectDraw.indexSceneObjects.forEach(sceneObject => {
+        IndirectDraw.indexSceneObjects.forEach((sceneObject: SceneObject) => {
             sceneObject.primitives?.forEach((primitive) => {
                 if (!primitive.indexData) throw new Error("indexData not found");
 
@@ -73,7 +75,6 @@ export class IndirectDraw extends BaseLayer {
                 indexLargeBuffer.array.push(...primitive.indexData);
             });
         })
-
         indexLargeBuffer.needsUpdate = false
         IndirectDraw.resizeBuffer("index")
     }
@@ -99,7 +100,7 @@ export class IndirectDraw extends BaseLayer {
             const id = item.primitive.id;
             const sceneObj = item.sceneObject;
 
-            const indirectOffset = sceneObj.indirectBufferStartIndex.get(id)! * 4;
+            const indirectOffset = sceneObj.indirectBufferStartIndex.get(makePrimitiveKey(item.primitive.id, item.primitive.side))! * 4;
 
             if (sceneObj.indexBufferStartIndex.has(id)) {
                 const indexBufferStartIndex = sceneObj.indexBufferStartIndex.get(id);
@@ -121,7 +122,7 @@ export class IndirectDraw extends BaseLayer {
 
     public appendIndex(sceneObject: SceneObject) {
         const index = BaseLayer.largeBufferMap.get("Index") as LargeBuffer
-        IndirectDraw.indexSceneObjects.add(sceneObject);
+        IndirectDraw.indexSceneObjects.add(sceneObject)
         index.needsUpdate = true
     }
 }

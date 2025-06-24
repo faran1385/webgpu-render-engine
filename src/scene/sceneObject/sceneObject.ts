@@ -1,5 +1,5 @@
 import {mat3, mat4, quat, vec3} from "gl-matrix";
-import {Mesh} from "@gltf-transform/core";
+import {Mesh, Node, Skin} from "@gltf-transform/core";
 import {BaseLayer, RenderAblePrim} from "../../layers/baseLayer.ts";
 import {GeometryData} from "../loader/loaderTypes.ts";
 import {createGPUBuffer, makePrimitiveKey, updateBuffer} from "../../helpers/global.helper.ts";
@@ -9,6 +9,7 @@ type SceneObjectConfig = {
     id: number;
     name?: string;
     nodeIndex: number;
+    nodeReference: Node
 
     translation?: vec3;
     rotation?: quat;
@@ -25,14 +26,15 @@ export class SceneObject {
     id: number;
     name?: string;
     nodeIndex: number;
+    nodeReference: Node
 
-    translation: vec3;
-    rotation: quat;
-    scale: vec3;
-    worldMatrix: mat4;
-    normalMatrix: mat3;
     modelBuffer?: GPUBuffer;
     normalBuffer?: GPUBuffer;
+    animationMatrix: mat4;
+    transformMatrix: mat4;
+    localMatrix: mat4;
+    worldMatrix: mat4;
+    normalMatrix: mat3;
 
     parent?: SceneObject;
     children: SceneObject[] = [];
@@ -49,23 +51,34 @@ export class SceneObject {
     lodSelectionThreshold: number | undefined = undefined;
     frustumCullingMinMax: { min: [number, number, number], max: [number, number, number] } | undefined = undefined;
 
+    // animations
+    skin?: Skin
+    skinBuffer?: GPUBuffer
+
+
     constructor(config: SceneObjectConfig) {
         this.id = config.id;
         this.name = config.name;
         this.nodeIndex = config.nodeIndex;
+        this.nodeReference = config.nodeReference;
 
-        this.translation = config.translation ?? vec3.create();
-        this.rotation = config.rotation ?? quat.create();
-        this.scale = config.scale ?? vec3.fromValues(1, 1, 1);
-
-        this.worldMatrix = config.worldPosition ?? mat4.create();
+        const scale = config.nodeReference.getScale()
+        const rotation = config.nodeReference.getRotation();
+        const translation = config.nodeReference.getTranslation()
+        this.animationMatrix = mat4.fromRotationTranslationScale(mat4.create(), quat.fromValues(...rotation), translation, scale);
+        this.transformMatrix = mat4.create()
+        this.localMatrix = mat4.create()
+        this.worldMatrix = mat4.create()
         this.normalMatrix = mat3.normalFromMat4(mat3.create(), this.worldMatrix);
+
+
+        this.skin = config.nodeReference.getSkin() ?? undefined;
 
         this.parent = config.parent;
         this.mesh = config.mesh;
         config.primitivesData?.forEach((geo) => {
-            this.primitivesData.set(geo.id, geo)
-        })
+            this.primitivesData.set(geo.id, geo);
+        });
     }
 
     setLodSelectionThreshold(threshold: number): void {
@@ -80,20 +93,6 @@ export class SceneObject {
         }
     }
 
-    setTranslation(t: vec3) {
-        vec3.copy(this.translation, t);
-        this.markTransformDirty();
-    }
-
-    setRotation(r: quat) {
-        quat.copy(this.rotation, r);
-        this.markTransformDirty();
-    }
-
-    setScale(s: vec3) {
-        vec3.copy(this.scale, s);
-        this.markTransformDirty();
-    }
 
     createModelBuffer(device: GPUDevice, matrix: mat4) {
         this.modelBuffer = createGPUBuffer(device, new Float32Array(matrix), GPUBufferUsage.UNIFORM, `${this.name} model buffer`);
@@ -103,15 +102,42 @@ export class SceneObject {
         this.normalBuffer = createGPUBuffer(device, new Float32Array(matrix), GPUBufferUsage.UNIFORM, `${this.name} normal buffer`);
     }
 
-    public getPosition() {
+    setTranslation(pos: vec3, matrix: mat4) {
+        mat4.fromRotationTranslationScale(matrix, this.getRotation(matrix), pos, this.getScale(matrix));
+        this.markTransformDirty()
 
+    }
+
+    setRotation(rot: quat, matrix: mat4) {
+        mat4.fromRotationTranslationScale(matrix, rot, this.getTranslation(matrix), this.getScale(matrix));
+        this.markTransformDirty()
+    }
+
+    setScale(scale: vec3, matrix: mat4) {
+        mat4.fromRotationTranslationScale(matrix, this.getRotation(matrix), this.getTranslation(matrix), scale);
+        this.markTransformDirty()
+    }
+
+    private getTranslation(matrix: mat4): vec3 {
         const pos = vec3.create();
-        mat4.getTranslation(pos, this.worldMatrix);
-        return [...pos];
+        mat4.getTranslation(pos, matrix);
+        return pos;
+    }
+
+    private getRotation(matrix: mat4): quat {
+        const rot = quat.create();
+        mat4.getRotation(rot, matrix);
+        return rot;
+    }
+
+    private getScale(matrix: mat4): vec3 {
+        const scale = vec3.create();
+        mat4.getScaling(scale, matrix);
+        return scale;
     }
 
 
-    private markTransformDirty() {
+    markTransformDirty() {
         this.needsUpdate = true;
         BaseLayer._updateQueue.set(this.id, this)
         for (const child of this.children) {
@@ -121,27 +147,28 @@ export class SceneObject {
 
     updateWorldMatrix(device: GPUDevice | undefined = undefined) {
         const parentMatrix = this.parent?.worldMatrix;
-        if (!this.needsUpdate && !parentMatrix) return;
+        if (!this.needsUpdate && parentMatrix) return;
 
-        const localMatrix = mat4.create();
-
-        mat4.fromRotationTranslationScale(localMatrix, this.rotation, this.translation, this.scale);
+        mat4.multiply(this.localMatrix, this.animationMatrix, this.transformMatrix);
         if (parentMatrix) {
-            mat4.multiply(this.worldMatrix, parentMatrix, localMatrix);
+            mat4.multiply(this.worldMatrix, parentMatrix, this.localMatrix)
         } else {
-            mat4.copy(this.worldMatrix, localMatrix);
+            mat4.copy(this.worldMatrix, this.localMatrix);
         }
-        mat3.normalFromMat4(this.normalMatrix, this.worldMatrix);
         this.needsUpdate = false;
+        device ? this.updateBuffers(device) : "";
+        for (const child of this.children) {
+            child.updateWorldMatrix(device);
+        }
+    }
+
+    updateBuffers(device: GPUDevice) {
+        mat3.normalFromMat4(this.normalMatrix, this.worldMatrix);
         if (this.normalBuffer && device) {
             updateBuffer(device, this.normalBuffer, new Float32Array(this.normalMatrix))
         }
         if (this.modelBuffer && device) {
             updateBuffer(device, this.modelBuffer, new Float32Array(this.worldMatrix))
         }
-        for (const child of this.children) {
-            child.updateWorldMatrix(device);
-        }
     }
-
 }

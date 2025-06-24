@@ -17,7 +17,6 @@ export class ComputeManager extends BaseLayer {
 
     constructor(device: GPUDevice, canvas: HTMLCanvasElement, ctx: GPUCanvasContext) {
         super(device, canvas, ctx);
-
         if (!ComputeManager._isComputeManagerInitialized) {
             this.initComputeManager(device, canvas, ctx)
         }

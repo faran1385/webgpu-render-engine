@@ -1,7 +1,7 @@
 import {BindGroupEntryCreationType} from "../GPUCache/GPUCacheTypes.ts";
 import {hashCreationBindGroupEntry} from "../Hasher/HashGenerator.ts";
 import {convertAlphaMode, createGPUBuffer, getTextureFromData} from "../../../helpers/global.helper.ts";
-import {Material, Texture, TypedArray, vec2} from "@gltf-transform/core";
+import {Material, Node, Texture, TypedArray, vec2} from "@gltf-transform/core";
 import {Clearcoat, EmissiveStrength, Specular, Transmission} from "@gltf-transform/extensions";
 
 import {
@@ -17,7 +17,7 @@ import {
     opacityFragments, roughnessFragments, specularFragments, transmissionFragments, vertexShaderCodes
 } from "./shaderCodes.ts";
 import {SceneObject} from "../../sceneObject/sceneObject.ts";
-
+import {SkinManager} from "../../skinManager/skinManager.ts";
 
 type CallableTexture =
     "getBaseColorTexture"
@@ -43,12 +43,14 @@ export class SmartRender {
     static initialized: boolean = false;
     static defaultMaterialBindGroupLayout: GPUBindGroupLayoutEntry[][] = []
     static defaultGeometryBindGroupLayout: GPUBindGroupLayoutEntry[][] = []
+    static skinManager: SkinManager;
 
-    constructor(device: GPUDevice, ctx: GPUCanvasContext) {
+    constructor(device: GPUDevice, ctx: GPUCanvasContext, skinManager: SkinManager) {
         if (this.constructor === SmartRender && !SmartRender.initialized) {
             SmartRender.initialized = true;
             SmartRender.device = device;
             SmartRender.ctx = ctx;
+            SmartRender.skinManager = skinManager
             SmartRender.defaultSampler = device.createSampler({
                 label: "default sampler",
                 addressModeW: "repeat",
@@ -65,18 +67,13 @@ export class SmartRender {
                 },
                 visibility: GPUShaderStage.VERTEX
             }], [{
-                binding: 0,
-                buffer: {
-                    type: "uniform",
-                },
-                visibility: GPUShaderStage.VERTEX
-            }, {
                 binding: 1,
                 buffer: {
                     type: "read-only-storage",
                 },
                 visibility: GPUShaderStage.VERTEX
             }])
+
             SmartRender.defaultMaterialBindGroupLayout.push([
                 {
                     binding: 0,
@@ -124,20 +121,33 @@ export class SmartRender {
         }
     }
 
-    private getGeometryBindGroups(sceneObjects: SceneObject[]) {
+    private getGeometryBindGroups(sceneObjects: SceneObject[], nodeMap: Map<Node, SceneObject>) {
 
         return {
             geometryBindGroupData: sceneObjects.map(sceneObject => {
-                sceneObject.createModelBuffer(SmartRender.device, sceneObject.worldMatrix)
-                const entries: (GPUBindGroupEntry & { name?: "model" | "normal" })[] = [
-                    {
+                const entries: (GPUBindGroupEntry & { name?: "model" | "normal" })[] = []
+
+                if (sceneObject.skin) {
+                    const skinBuffer = SmartRender.skinManager.getSkin(sceneObject.skin) ?? SmartRender.skinManager.addSkin(sceneObject.skin, nodeMap)
+
+                    entries.push({
+                        binding: 1,
+                        resource: {
+                            buffer: skinBuffer?.buffer
+                        }
+                    })
+                    sceneObject.skinBuffer = skinBuffer?.buffer;
+                } else {
+                    sceneObject.createModelBuffer(SmartRender.device, sceneObject.worldMatrix)
+                    entries.push({
                         binding: 0,
                         resource: {
                             buffer: sceneObject.modelBuffer as GPUBuffer
                         },
                         name: "model"
-                    },
-                ]
+                    })
+                }
+
 
                 return {
                     entries,
@@ -213,6 +223,7 @@ export class SmartRender {
                                 magFilter: "linear"
                             })
                         }
+
                         const alpha = new Float32Array([convertAlphaMode(prim.material.getAlphaMode()), prim.material.getAlphaCutoff()]);
                         entries.push({
                             bindingPoint: prim.material[callFrom.texture]() ? 3 : 1,
@@ -224,7 +235,6 @@ export class SmartRender {
                                 usage: GPUBufferUsage.UNIFORM
                             },
                         })
-
                         hashEntries.push(alpha)
 
                         return {
@@ -253,9 +263,27 @@ export class SmartRender {
                         }],
                         name: 'POSITION'
                     }]
+                    if (prim.dataList.get("JOINTS_0") && prim.dataList.get("WEIGHTS_0")) {
+                        buffers.push({
+                            arrayStride: 4 * 4,
+                            attributes: [{
+                                offset: 0,
+                                shaderLocation: 3,
+                                format: "uint32x4"
+                            }],
+                            name: `JOINTS_0`
+                        })
+                        buffers.push({
+                            arrayStride: 4 * 4,
+                            attributes: [{
+                                offset: 0,
+                                shaderLocation: 4,
+                                format: "float32x4"
+                            }],
+                            name: `WEIGHTS_0`
+                        })
+                    }
                     if (prim.dataList.get(`TEXCOORD_0`)) {
-
-
                         buffers.push({
                             arrayStride: 2 * 4,
                             attributes: [{
@@ -267,7 +295,6 @@ export class SmartRender {
                         })
                     }
                     const isDoubleSided = prim.material.getDoubleSided()
-
                     const isTransparent = prim.material.getAlphaMode() === "BLEND"
 
                     if (isTransparent && isDoubleSided) {
@@ -395,7 +422,7 @@ export class SmartRender {
     ) {
         return {
             groups: sceneObjects.map(sceneObject => {
-                if (sceneObject.mesh  && sceneObject.primitivesData.size > 0) {
+                if (sceneObject.mesh && sceneObject.primitivesData.size > 0) {
                     const primitivesDataArray = Array.from(sceneObject.primitivesData)
                     primitivesDataArray.map(([, prim], i) => {
                         const entries: BindGroupEntryCreationType[] = []
@@ -468,7 +495,7 @@ export class SmartRender {
 
 
     private entryCreator(
-        sceneObjects: SceneObject[],
+        sceneObjectsSet: Set<SceneObject>,
         callFrom: callFrom | undefined = undefined,
         codes: string[],
         getExtra: ((material: Material) => {
@@ -481,6 +508,11 @@ export class SmartRender {
         }) | undefined = undefined,
         type: 'ExtensionTexture' | "JustTexture" = "JustTexture",
     ): SmartRenderInitEntryPassType {
+        const sceneObjects = this.getRenderAbleNodes(sceneObjectsSet)
+        const nodeMap = new Map<Node, SceneObject>();
+        sceneObjectsSet.forEach(sceneObject => {
+            nodeMap.set(sceneObject.nodeReference, sceneObject)
+        })
         let groups: any;
         if (type === "JustTexture" && callFrom) {
 
@@ -496,7 +528,7 @@ export class SmartRender {
             groups = materialGroups;
         }
         const pipelineDescriptors = this.getPipelineDescriptors(sceneObjects)
-        const geometryBindGroup = this.getGeometryBindGroups(sceneObjects)
+        const geometryBindGroup = this.getGeometryBindGroups(sceneObjects, nodeMap)
 
         const codeMap: Map<"withBone" | "withUv" | "withUvAndBone" | "withoutUvAndBone", ShaderCodeEntry> = new Map()
         vertexShaderCodes.forEach((value, key) => {
@@ -526,18 +558,32 @@ export class SmartRender {
             if (sceneObject.mesh && sceneObject.primitivesData.size > 0) {
                 sceneObject.primitivesData.forEach((prim) => {
                     const extra = getExtra ? getExtra(prim.material) : undefined
-                    const hasTexture=(callFrom && prim.material[callFrom.texture]()) || (extra?.texture);
+                    const hasTexture = (callFrom && prim.material[callFrom.texture]()) || (extra?.texture);
+                    const hasBoneData = Boolean(prim.dataList.get('JOINTS_0') && prim.dataList.get("WEIGHTS_0"))
                     if (hasTexture) {
                         materialLayoutWithIds[0].primitivesId.push(prim.id)
                     } else {
                         materialLayoutWithIds[1].primitivesId.push(prim.id)
                     }
-                    geometryLayoutWithIds[0].primitivesId.push(prim.id)
 
-                    if (hasTexture) {
+                    if (hasBoneData) {
+                        geometryLayoutWithIds[1].primitivesId.push(prim.id)
+                    } else {
+                        geometryLayoutWithIds[0].primitivesId.push(prim.id)
+                    }
+
+                    if (hasTexture && hasBoneData) {
+                        const data = codeMap.get("withUvAndBone");
+                        data?.primitivesId.push(prim.id)
+                        codeMap.set("withUvAndBone", data as any)
+                    } else if (hasTexture) {
                         const data = codeMap.get("withUv");
                         data?.primitivesId.push(prim.id)
                         codeMap.set("withUv", data as any)
+                    } else if (hasBoneData) {
+                        const data = codeMap.get("withBone");
+                        data?.primitivesId.push(prim.id)
+                        codeMap.set("withBone", data as any)
                     } else {
                         const data = codeMap.get("withoutUvAndBone");
                         data?.primitivesId.push(prim.id)
@@ -574,16 +620,14 @@ export class SmartRender {
     }
 
     public base(sceneObjects: Set<SceneObject>): SmartRenderInitEntryPassType {
-        const renderAbleNodes = this.getRenderAbleNodes(sceneObjects)
-        return this.entryCreator(renderAbleNodes, {
+        return this.entryCreator(sceneObjects, {
             texture: "getBaseColorTexture",
             factor: "getBaseColorFactor"
         }, baseColorFragment, undefined, "JustTexture")
     }
 
     public emissive(sceneObjects: Set<SceneObject>): SmartRenderInitEntryPassType {
-        const renderAbleNodes = this.getRenderAbleNodes(sceneObjects)
-        return this.entryCreator(renderAbleNodes, {
+        return this.entryCreator(sceneObjects, {
             texture: "getEmissiveTexture",
             factor: "getEmissiveFactor"
         }, emissiveFragments, (material) => {
@@ -602,48 +646,42 @@ export class SmartRender {
     }
 
     public opacity(sceneObjects: Set<SceneObject>): SmartRenderInitEntryPassType {
-        const renderAbleNodes = this.getRenderAbleNodes(sceneObjects)
-        return this.entryCreator(renderAbleNodes, {
+        return this.entryCreator(sceneObjects, {
             texture: "getBaseColorTexture",
             factor: "getBaseColorFactor"
         }, opacityFragments, undefined, "JustTexture")
     }
 
     public occlusion(sceneObjects: Set<SceneObject>): SmartRenderInitEntryPassType {
-        const renderAbleNodes = this.getRenderAbleNodes(sceneObjects)
-        return this.entryCreator(renderAbleNodes, {
+        return this.entryCreator(sceneObjects, {
             texture: "getOcclusionTexture",
             factor: "getOcclusionStrength"
         }, occlusionFragments, undefined, "JustTexture")
     }
 
     public normal(sceneObjects: Set<SceneObject>): SmartRenderInitEntryPassType {
-        const renderAbleNodes = this.getRenderAbleNodes(sceneObjects)
-        return this.entryCreator(renderAbleNodes, {
+        return this.entryCreator(sceneObjects, {
             texture: "getNormalTexture",
             factor: "getNormalScale"
         }, normalFragments, undefined, "JustTexture")
     }
 
     public metallic(sceneObjects: Set<SceneObject>): SmartRenderInitEntryPassType {
-        const renderAbleNodes = this.getRenderAbleNodes(sceneObjects)
-        return this.entryCreator(renderAbleNodes, {
+        return this.entryCreator(sceneObjects, {
             texture: "getMetallicRoughnessTexture",
             factor: "getMetallicFactor"
         }, metallicFragments, undefined, "JustTexture")
     }
 
     public roughness(sceneObjects: Set<SceneObject>): SmartRenderInitEntryPassType {
-        const renderAbleNodes = this.getRenderAbleNodes(sceneObjects)
-        return this.entryCreator(renderAbleNodes, {
+        return this.entryCreator(sceneObjects, {
             texture: "getMetallicRoughnessTexture",
             factor: "getRoughnessFactor"
         }, roughnessFragments, undefined, "JustTexture")
     }
 
     public transmission(sceneObjects: Set<SceneObject>): SmartRenderInitEntryPassType {
-        const renderAbleNodes = this.getRenderAbleNodes(sceneObjects)
-        return this.entryCreator(renderAbleNodes, undefined, transmissionFragments, (material) => {
+        return this.entryCreator(sceneObjects, undefined, transmissionFragments, (material) => {
             const transmission = material.getExtension<Transmission>('KHR_materials_transmission')
             if (transmission) {
                 const texture = transmission.getTransmissionTexture()
@@ -666,8 +704,7 @@ export class SmartRender {
     }
 
     public specular(sceneObjects: Set<SceneObject>): SmartRenderInitEntryPassType {
-        const renderAbleNodes = this.getRenderAbleNodes(sceneObjects)
-        return this.entryCreator(renderAbleNodes, undefined, specularFragments, (material) => {
+        return this.entryCreator(sceneObjects, undefined, specularFragments, (material) => {
             const specular = material.getExtension<Specular>("KHR_materials_specular")
             if (specular) {
                 const texture = specular.getSpecularTexture()
@@ -690,8 +727,7 @@ export class SmartRender {
     }
 
     public clearcoat(sceneObjects: Set<SceneObject>): SmartRenderInitEntryPassType {
-        const renderAbleNodes = this.getRenderAbleNodes(sceneObjects)
-        return this.entryCreator(renderAbleNodes, undefined, clearcoatFragments, (material) => {
+        return this.entryCreator(sceneObjects, undefined, clearcoatFragments, (material) => {
             const clearcoat = material.getExtension<Clearcoat>("KHR_materials_clearcoat")
             if (clearcoat) {
                 const texture = clearcoat.getClearcoatTexture()

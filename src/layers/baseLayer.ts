@@ -53,6 +53,7 @@ export class BaseLayer {
 
     // renderLoop functions
     public static readonly renderLoopRunAble: Map<string, (...args: any[]) => void> = new Map()
+    public static readonly renderLoopAnimations: ((t: number) => void)[] = []
 
     // global data
     private static _globalBindGroup: readyBindGroup;
@@ -214,7 +215,7 @@ export class BaseLayer {
                 usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
             }),
         }
-        console.log("a")
+
         this.windowResizeHandler()
 
         BaseLayer._lastFrameTime = performance.now();

@@ -1,6 +1,6 @@
 import {BaseLayer, RenderAblePrim} from "../layers/baseLayer.ts";
 import {GeometryData} from "../scene/loader/loaderTypes.ts";
-import {Material, Root, TypedArray} from "@gltf-transform/core";
+import {Animation, Material, Node, Root, TypedArray} from "@gltf-transform/core";
 import {hashCreationBindGroupEntry, HashGenerator} from "../scene/GPURenderSystem/Hasher/HashGenerator.ts";
 import {GPUCache} from "../scene/GPURenderSystem/GPUCache/GPUCache.ts";
 import {BindGroupEntryCreationType, RenderState} from "../scene/GPURenderSystem/GPUCache/GPUCacheTypes.ts";
@@ -8,6 +8,8 @@ import {SceneObject} from "../scene/sceneObject/sceneObject.ts";
 import {createGPUBuffer, makePrimitiveKey} from "../helpers/global.helper.ts";
 import {SmartRender} from "../scene/GPURenderSystem/SmartRender/SmartRender.ts";
 import {ComputeManager} from "../scene/computation/computeManager.ts";
+import {quat, vec3} from "gl-matrix";
+import {ModelAnimator} from "../scene/modelAnimator/modelAnimator.ts";
 
 
 export type ShaderCodeEntry = { code: string, primitivesId: number[] }
@@ -57,10 +59,11 @@ type modelRendererEntry = {
     hasher: HashGenerator,
     gpuCache: GPUCache,
     smartRenderer: SmartRender
-    computeManager: ComputeManager
+    computeManager: ComputeManager,
+    modelAnimator: ModelAnimator
 }
 
-type RenderMethod = "base" | "opacity";
+type RenderMethod = "base" | "opacity" | "metallic" | "roughness" | "occlusion";
 
 export class ModelRenderer extends BaseLayer {
     private root!: Root;
@@ -70,13 +73,25 @@ export class ModelRenderer extends BaseLayer {
     private gpuCache: GPUCache;
     private initEntry!: initEntry;
     private sceneObjects: Set<SceneObject> = new Set();
+    private modelAnimator: ModelAnimator;
+    private nodeMap: Map<Node, SceneObject> = new Map();
 
-    constructor({device, canvas, ctx, smartRenderer, hasher, gpuCache, computeManager}: modelRendererEntry) {
+    constructor({
+                    device,
+                    canvas,
+                    ctx,
+                    smartRenderer,
+                    hasher,
+                    gpuCache,
+                    computeManager,
+                    modelAnimator
+                }: modelRendererEntry) {
         super(device, canvas, ctx);
         this.hasher = hasher;
         this.smartRenderer = smartRenderer;
         this.gpuCache = gpuCache;
         this.computeManager = computeManager;
+        this.modelAnimator = modelAnimator
     }
 
     public fillInitEntry(T: initEntry | RenderMethod) {
@@ -95,12 +110,40 @@ export class ModelRenderer extends BaseLayer {
 
     public setRoot(root: Root) {
         this.root = root;
+
+    }
+
+    public setTranslation(t: vec3) {
+        if (!this.sceneObjects) throw new Error("sceneObjects is not set");
+        for (const sceneObject of this.sceneObjects) {
+            if (!sceneObject.parent) {
+                sceneObject.setTranslation(t, sceneObject.transformMatrix);
+            }
+        }
+    }
+
+    public setRotation(r: quat) {
+        if (!this.sceneObjects) throw new Error("sceneObjects is not set");
+        for (const sceneObject of this.sceneObjects) {
+            if (!sceneObject.parent) {
+                sceneObject.setRotation(r, sceneObject.transformMatrix);
+            }
+        }
+    }
+
+    public setScale(s: vec3) {
+        if (!this.sceneObjects) throw new Error("sceneObjects is not set");
+        for (const sceneObject of this.sceneObjects) {
+            if (!sceneObject.parent) {
+                sceneObject.setScale(s, sceneObject.transformMatrix);
+            }
+        }
     }
 
     public setLodThreshold(threshold: number) {
         if (!this.sceneObjects) throw new Error("sceneObjects is not set");
         this.sceneObjects.forEach(sceneObject => {
-            if(sceneObject.mesh && sceneObject.primitivesData.size > 0){
+            if (sceneObject.mesh && sceneObject.primitivesData.size > 0) {
                 sceneObject.setLodSelectionThreshold(threshold);
                 this.computeManager.setLodSelection(sceneObject)
             }
@@ -110,9 +153,17 @@ export class ModelRenderer extends BaseLayer {
     public enableFrustumCulling() {
         if (!this.sceneObjects) throw new Error("sceneObjects is not set");
         this.sceneObjects.forEach(sceneObject => {
-            if(sceneObject.mesh && sceneObject.primitivesData.size > 0){
+            if (sceneObject.mesh && sceneObject.primitivesData.size > 0) {
                 this.computeManager.setFrustumCulling(sceneObject)
             }
+        })
+    }
+
+    public animate(animation: Animation, mode: "loop" | "backAndForth" | undefined = undefined) {
+        if (!this.sceneObjects) throw new Error("sceneObjects is not set");
+        ModelRenderer.renderLoopAnimations.push(() => {
+            const time = performance.now() / 1000
+            this.modelAnimator.update(animation, time, mode, this.nodeMap)
         })
     }
 
@@ -240,7 +291,6 @@ export class ModelRenderer extends BaseLayer {
         const pipelineHashes = this.createPipelineHashes(shaderCodesHashes, pipelineLayoutsHashes)
         const geometryBindGroupMaps = this.createGeometryBindGroupMaps(geometryBindGroups)
         const sceneObjects: Map<number, SceneObject> = new Map();
-
         pipelineHashes.forEach((pipelineHash, key) => {
             const primitiveId = +(key.split("_")[0]);
             const geometryEntries = geometryBindGroupMaps.get(primitiveId)
@@ -289,5 +339,9 @@ export class ModelRenderer extends BaseLayer {
         sceneObjects.forEach(sceneObject => {
             ModelRenderer.appendDrawCall = sceneObject
         })
+
+        const nodeMap = new Map<Node, SceneObject>()
+        this.sceneObjects.forEach(sceneObject => nodeMap.set(sceneObject.nodeReference, sceneObject))
+        this.nodeMap = nodeMap;
     }
 }

@@ -23,7 +23,7 @@ export type GeometryData = {
     indexType: 'uint16' | 'uint32' | 'Unknown';
     indexCount: number;
     lodRanges?: LODRange[]
-    material: Material
+    material: Material,
 };
 
 

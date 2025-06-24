@@ -44,7 +44,7 @@ export class MainLayer extends BaseLayer {
     private checkForUpdate() {
         BaseLayer._updateQueue.forEach(sceneObject => {
             if (sceneObject.needsUpdate) {
-                sceneObject.updateWorldMatrix(MainLayer.device)
+                sceneObject.updateWorldMatrix(BaseLayer.device)
             }
         })
         BaseLayer._updateQueue.clear()
@@ -52,14 +52,22 @@ export class MainLayer extends BaseLayer {
 
 
     public render(commandEncoder: GPUCommandEncoder) {
+        // animations
+        const time = performance.now() / 1000;
+        MainLayer.renderLoopAnimations.forEach((func) => func(time))
         this.checkForUpdate()
+        const skinUpdate = MainLayer.renderLoopRunAble.get("SkinUpdate");
+        if (skinUpdate) skinUpdate();
+
         const {viewMatrix, projectionMatrix} = this.getCameraVP()
         const renderAbleArray: RenderAble[] = BaseLayer.renderQueue.needsUpdate ? this.buildRenderQueue(viewMatrix) : BaseLayer.renderQueue.queue
-
+        // compute shaders
         const lodRunAble = MainLayer.renderLoopRunAble.get("LOD")
         const frustumCullingRunAble = MainLayer.renderLoopRunAble.get("FrustumCulling")
         if (lodRunAble) lodRunAble(commandEncoder);
         if (frustumCullingRunAble) frustumCullingRunAble(commandEncoder, viewMatrix, projectionMatrix);
+
+        // render
         const pass = commandEncoder.beginRenderPass({
             label: "main pass",
             depthStencilAttachment: {

@@ -39,10 +39,11 @@ export class GLTFLoader {
                 mesh: mesh ?? undefined,
                 worldPosition: node.getWorldMatrix() ?? undefined,
                 primitivesData: mesh ? await this.extractGeometry(mesh) : undefined,
+                nodeReference: node
             });
-
             nodeToSceneObject.set(node, sceneObject);
             sceneObjects.add(sceneObject);
+
         }
 
         for (const node of root.listNodes()) {
@@ -59,7 +60,7 @@ export class GLTFLoader {
 
         for (const sceneObject of sceneObjects) {
             if (!sceneObject.parent) {
-                sceneObject.updateWorldMatrix();
+                sceneObject.markTransformDirty();
             }
         }
 
@@ -116,7 +117,7 @@ export class GLTFLoader {
                 lodRanges: lodRanges,
                 indexCount: indices?.length ?? 0,
                 material: prim.getMaterial() as Material,
-                id: generateID()
+                id: generateID(),
             });
         }
         return geometryData;

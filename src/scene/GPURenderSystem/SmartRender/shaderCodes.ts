@@ -10,7 +10,6 @@ struct vsOut{
 }
 @group(0) @binding(0) var<uniform> projectionMatrix:mat4x4<f32>;
 @group(0) @binding(1) var<uniform> viewMatrix:mat4x4<f32>;
-@group(2) @binding(0) var<uniform> modelMatrix:mat4x4<f32>;
 @group(2) @binding(1) var<storage,read> jointsMatrices:array<mat4x4<f32>>;
 @vertex fn vs(in:vsIn)->vsOut{
     var output:vsOut;
@@ -27,7 +26,7 @@ struct vsOut{
         (joint2 * pos) * in.weights.z +
         (joint3 * pos) * in.weights.w;
 
-    output.clipPos = projectionMatrix * viewMatrix * modelMatrix * skinned;
+    output.clipPos = projectionMatrix * viewMatrix * skinned;
     return output;
 }`],
         ["withoutUvAndBone", `struct vsIn{
@@ -82,7 +81,6 @@ struct vsOut {
 @group(0) @binding(0) var<uniform> projectionMatrix: mat4x4<f32>;
 @group(0) @binding(1) var<uniform> viewMatrix: mat4x4<f32>;
 
-@group(2) @binding(0) var<uniform> modelMatrix: mat4x4<f32>;
 @group(2) @binding(1) var<storage, read> jointsMatrices: array<mat4x4<f32>>;
 
 @vertex
@@ -102,7 +100,7 @@ fn vs(in: vsIn) -> vsOut {
         (joint2 * pos) * in.weights.z +
         (joint3 * pos) * in.weights.w;
 
-    output.clipPos = projectionMatrix * viewMatrix * modelMatrix * skinned;
+    output.clipPos = projectionMatrix * viewMatrix * skinned;
     output.uv = in.uv;
     return output;
 }

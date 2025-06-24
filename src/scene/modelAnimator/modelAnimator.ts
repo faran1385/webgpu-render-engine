@@ -1,6 +1,6 @@
-import {Animation, GLTF, Skin, TypedArray} from "@gltf-transform/core";
-import {mat4, quat, vec3} from "gl-matrix";
-import {updateBuffer} from "../../helpers/global.helper.ts";
+import {Animation, GLTF, Node, TypedArray} from "@gltf-transform/core";
+import {quat, vec3} from "gl-matrix";
+import {SceneObject} from "../sceneObject/sceneObject.ts";
 
 export class ModelAnimator {
     private findIndex(t: number, times: TypedArray) {
@@ -49,14 +49,14 @@ export class ModelAnimator {
     }
 
 
-    public update(animation: Animation, time: number, mode: "loop" | "backAndForth" | undefined = undefined) {
+    public update(animation: Animation, time: number, mode: "loop" | "backAndForth" | undefined = undefined, nodeMap: Map<Node, SceneObject>) {
 
         const channels = animation.listChannels()
 
         for (const channel of channels) {
             const times = channel.getSampler()?.getInput()?.getArray();
 
-            if (!times) throw new Error("we dont have times")
+            if (!times) throw new Error("channel does not  have times")
             const duration = times[times?.length - 1]
             let t = time;
             if (mode === "loop") {
@@ -75,30 +75,12 @@ export class ModelAnimator {
             const t1 = inputs[correspondingIndex + 1];
             const alpha = (t - t0) / (t1 - t0);
             const value = this.interpolateValue(path, output, correspondingIndex, alpha);
-            if (path === 'translation') targetNode.setTranslation(value as any);
-            else if (path === 'rotation') targetNode.setRotation(value as any);
-            else if (path === 'scale') targetNode.setScale(value as any);
+            const targetSceneObject = nodeMap.get(targetNode)!;
+            if (path === 'translation') targetSceneObject.setTranslation(value as any, targetSceneObject.animationMatrix);
+            else if (path === 'rotation') targetSceneObject.setRotation(value as any, targetSceneObject.animationMatrix);
+            else if (path === 'scale') targetSceneObject.setScale(value as any, targetSceneObject.animationMatrix);
 
         }
     }
 
-    private calculateBones(device: GPUDevice, skin: Skin, buffer: GPUBuffer) {
-        const boneList = skin.listJoints();
-        const invBindMatrices = skin.getInverseBindMatrices()?.getArray();
-        if (!invBindMatrices) return undefined;
-
-        const bonesArray: number[] = [];
-
-        for (let i = 0; i < boneList.length; i++) {
-            const jointNode = boneList[i];
-            const jointWorld = jointNode.getWorldMatrix();
-            const invBind = invBindMatrices.slice(i * 16, i * 16 + 16);
-
-            const jointMat = mat4.create();
-            mat4.multiply(jointMat, jointWorld, invBind as any);
-
-            bonesArray.push(...jointMat);
-        }
-        updateBuffer(device, buffer, new Float32Array(bonesArray))
-    }
 }

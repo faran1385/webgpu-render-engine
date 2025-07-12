@@ -1,19 +1,51 @@
-import xxhash, { XXHashAPI } from 'xxhash-wasm';
-import { RenderState } from "../GPUCache/GPUCacheTypes.ts";
-import { TypedArray } from "@gltf-transform/core";
+import xxhash, {XXHashAPI} from 'xxhash-wasm';
+import {RenderState} from "../GPUCache/GPUCacheTypes.ts";
+import {TypedArray} from "@gltf-transform/core";
 
-export type hashCreationBindGroupEntry = (TypedArray | GPUSamplerDescriptor)[];
+export type HashCreationBindGroupEntry = TypedArray[];
 
 export class HashGenerator {
     private static hasher: XXHashAPI;
     private static textEncoder: TextEncoder;
 
     private shaderHashCache = new Map<string, number>();
-    private bindGroupHashCache = new Map<string, number>(); // uses joined string key
+    private bindGroupHashCache = new Map<string, number>();
+    private bindGroupLayoutHashCache = new Map<string, number>();
+    private samplerHashCache = new Map<string, number>();
+    private pipelineLayoutHashCache = new Map<string, number>();
+    private pipelineHashCache = new Map<string, number>();
 
     public async init() {
         HashGenerator.hasher = await xxhash();
         HashGenerator.textEncoder = new TextEncoder();
+    }
+
+    private encodeSampler(desc: GPUSamplerDescriptor): string {
+        return [
+            desc.addressModeU ?? "none",
+            desc.addressModeV ?? "none",
+            desc.addressModeW ?? "none",
+            desc.magFilter ?? "none",
+            desc.minFilter ?? "none",
+            desc.mipmapFilter ?? "none",
+            desc.lodMinClamp?.toFixed(4) ?? "0.0000",
+            desc.lodMaxClamp?.toFixed(4) ?? "32.0000",
+            desc.compare ?? "none",
+            desc.maxAnisotropy ?? 1
+        ].join("-");
+    }
+
+
+    public hashSampler(desc: GPUSamplerDescriptor) {
+        const key = this.encodeSampler(desc);
+
+        if (this.samplerHashCache.has(key)) {
+            return this.samplerHashCache.get(key)!;
+        }
+
+        const hash = HashGenerator.hasher.h32(key);
+        this.samplerHashCache.set(key, hash);
+        return hash;
     }
 
     public hashShaderModule(shaderCode: string): number {
@@ -27,39 +59,23 @@ export class HashGenerator {
         return hash;
     }
 
-    public hashBindGroup(entries: hashCreationBindGroupEntry): number {
+    public hashBindGroup(entries: HashCreationBindGroupEntry): number {
         const key = entries.map(entry => {
             if ("BYTES_PER_ELEMENT" in entry) {
-
                 const view = new Uint8Array(entry.buffer, entry.byteOffset, entry.byteLength);
                 return this.hashBytes(view).toString();
-            } else {
-                return this.encodeSampler(entry);
             }
         }).join("|");
-
         if (this.bindGroupHashCache.has(key)) {
             return this.bindGroupHashCache.get(key)!;
         }
-
         const hash = HashGenerator.hasher.h32(key);
         this.bindGroupHashCache.set(key, hash);
         return hash;
     }
 
-    private encodeSampler(desc: GPUSamplerDescriptor): string {
-        return [
-            desc.magFilter ?? "none",
-            desc.minFilter ?? "none",
-            desc.mipmapFilter ?? "none",
-            desc.addressModeU ?? "none",
-            desc.addressModeV ?? "none",
-            desc.addressModeW ?? "none",
-            desc.compare ?? "none"
-        ].join("-");
-    }
-
     public hashBindGroupLayout(entries: GPUBindGroupLayoutEntry[]): number {
+
         let str = '';
         for (const entry of entries) {
             str += entry.binding;
@@ -72,22 +88,46 @@ export class HashGenerator {
                 str += ["filtering", "comparison"].indexOf(entry.sampler.type ?? "filtering");
             }
         }
-        return HashGenerator.hasher.h32(str);
+        const hashInCache=this.bindGroupLayoutHashCache.get(str);
+        if(hashInCache){
+            return hashInCache;
+        }
+        const hash=HashGenerator.hasher.h32(str);
+        this.bindGroupLayoutHashCache.set(str,hash)
+        return hash;
     }
 
     public hashPipelineLayout(materialLayoutHash: number, geometryLayoutHash: number): number {
-        return HashGenerator.hasher.h32(`${materialLayoutHash} ${geometryLayoutHash}`);
+        let str = `${materialLayoutHash} ${geometryLayoutHash}`;
+
+        const hashInCache=this.pipelineLayoutHashCache.get(str);
+        if(hashInCache){
+            return hashInCache;
+        }
+
+        const hash=HashGenerator.hasher.h32(`${materialLayoutHash} ${geometryLayoutHash}`);
+        this.pipelineLayoutHashCache.set(str,hash)
+        return hash;
     }
 
-    public hashPipeline(state: RenderState, pipelineLayoutHash: number): number {
-        return HashGenerator.hasher.h32(this.hashRenderState(state) + pipelineLayoutHash);
+    public hashPipeline(state: RenderState, pipelineLayoutHash: number, buffers: GPUVertexBufferLayout[]): number {
+        let str =this.hashRenderState(state,buffers) + pipelineLayoutHash;
+
+        const hashInCache=this.pipelineHashCache.get(str);
+        if(hashInCache){
+            return hashInCache;
+        }
+
+        const hash=HashGenerator.hasher.h32(str);
+        this.pipelineHashCache.set(str,hash)
+        return hash;
     }
 
     private hashBytes(data: Uint8Array): number {
         return HashGenerator.hasher.h32Raw(data);
     }
 
-    private hashRenderState(state: RenderState): string {
+    private hashRenderState(state: RenderState,buffers: GPUVertexBufferLayout[]): string {
         let str = "";
 
         const primitive = state.primitive ?? {} as GPUPrimitiveState;
@@ -98,15 +138,15 @@ export class HashGenerator {
             "triangle-list": 3,
             "triangle-strip": 4
         };
-        const frontFaceMap: Record<GPUFrontFace, number> = { "ccw": 0, "cw": 1 };
-        const cullModeMap: Record<GPUCullMode, number> = { "none": 0, "front": 1, "back": 2 };
+        const frontFaceMap: Record<GPUFrontFace, number> = {"ccw": 0, "cw": 1};
+        const cullModeMap: Record<GPUCullMode, number> = {"none": 0, "front": 1, "back": 2};
 
         str += topoMap[primitive.topology ?? "triangle-list"] ?? -1;
         str += primitive.stripIndexFormat ? 1 : 0;
         str += frontFaceMap[primitive.frontFace ?? "ccw"] ?? -1;
         str += primitive.cullMode ? (cullModeMap[primitive.cullMode] ?? -1) : -1;
 
-        for (const buffer of state.buffers ?? []) {
+        for (const buffer of buffers ?? []) {
             str += buffer.stepMode === "instance" ? 1 : 0;
             str += buffer.arrayStride;
             for (const attr of buffer.attributes ?? []) {

@@ -1,4 +1,4 @@
-import {SceneObject} from "./sceneObject/sceneObject.ts";
+import {SceneObject} from "../../sceneObject/sceneObject.ts";
 
 type callBackFunction = (T: {
     min: [number, number, number],
@@ -130,7 +130,7 @@ export class ComputeFrustumCulling {
     }
 
     public appendToQueue(sceneObject: SceneObject, func: callBackFunction) {
-        const geoDataArray = Array.from(sceneObject.primitivesData).flatMap((T) => [T[1]]);
+        const geoDataArray = Array.from(sceneObject.primitives!).map(([_, primitive]) => primitive.geometry)
         const position: Float32Array[] = geoDataArray.map(item => {
             if (item.lodRanges) {
                 return (item.dataList.get("POSITION") as any).array.slice(item.lodRanges[0].start, item.lodRanges[0].count)

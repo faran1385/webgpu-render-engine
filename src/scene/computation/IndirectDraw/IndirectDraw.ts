@@ -1,6 +1,7 @@
 import {SceneObject} from "../../sceneObject/sceneObject.ts";
-import {createGPUBuffer, makePrimitiveKey} from "../../../helpers/global.helper.ts";
-import {BaseLayer, RenderAble} from "../../../layers/baseLayer.ts";
+import {createGPUBuffer} from "../../../helpers/global.helper.ts";
+import {BaseLayer} from "../../../layers/baseLayer.ts";
+import {Primitive} from "../../primitive/Primitive.ts";
 
 export type LargeBuffer = {
     buffer?: GPUBuffer,
@@ -45,15 +46,15 @@ export class IndirectDraw extends BaseLayer {
     private static applyIndirectUpdate() {
         const indirect = BaseLayer.largeBufferMap.get("Indirect") as LargeBuffer
         indirect.array = []
-
         IndirectDraw.indirectSceneObjects.forEach((sceneObject: SceneObject) => {
-
-            sceneObject.primitives?.forEach((primitive, key) => {
-                const positionCount = (sceneObject.primitivesData.get(primitive.id)?.dataList.get('POSITION')?.array.length as number) / 3;
+            sceneObject.primitives?.forEach((primitive) => {
+                const positionCount = (primitive.geometry.dataList.get('POSITION')?.array.length as number) / 3;
                 const dataArray = [primitive?.indexData?.length ?? positionCount, 1, 0, 0, 0];
-                const startIndex = indirect.array.length;
-                sceneObject.indirectBufferStartIndex.set(key, startIndex);
-                indirect.array.push(...dataArray);
+                primitive.indirectBufferStartIndex = indirect.array.length
+                for (let i = 0, len = dataArray.length; i < len; i++) {
+                    indirect.array.push(dataArray[i]);
+                }
+
             });
         })
 
@@ -64,53 +65,52 @@ export class IndirectDraw extends BaseLayer {
     private static applyIndexUpdate() {
         const indexLargeBuffer = BaseLayer.largeBufferMap.get("Index") as LargeBuffer
         indexLargeBuffer.array = []
-
         IndirectDraw.indexSceneObjects.forEach((sceneObject: SceneObject) => {
             sceneObject.primitives?.forEach((primitive) => {
                 if (!primitive.indexData) throw new Error("indexData not found");
 
-                const offset = indexLargeBuffer.array.length ?? 0;
-
-                sceneObject.indexBufferStartIndex.set(primitive.id, offset);
-                indexLargeBuffer.array.push(...primitive.indexData);
+                primitive.indexBufferStartIndex = indexLargeBuffer.array.length ?? 0
+                for (let i = 0, len = primitive.indexData.length; i < len; i++) {
+                    indexLargeBuffer.array.push(primitive.indexData[i]);
+                }
             });
         })
         indexLargeBuffer.needsUpdate = false
         IndirectDraw.resizeBuffer("index")
     }
 
-    public renderLoop(renderAbleArray: RenderAble[], pass: GPURenderPassEncoder) {
+    public renderLoop(primitives: Primitive[], pass: GPURenderPassEncoder) {
         const indirect = BaseLayer.largeBufferMap.get("Indirect") as LargeBuffer
         const index = BaseLayer.largeBufferMap.get("Index") as LargeBuffer
 
         if (indirect.needsUpdate) IndirectDraw.applyIndirectUpdate()
         if (index.needsUpdate) IndirectDraw.applyIndexUpdate()
+        primitives.forEach((item) => {
+            item.side.forEach((side) => {
+                const pipeline = item.pipelines.get(side)!;
 
-        renderAbleArray.forEach((item) => {
-            pass.setPipeline(item.primitive.pipeline)
-            item.primitive.bindGroups.forEach((group, i) => {
-                pass.setBindGroup(i, group)
+                pass.setPipeline(pipeline)
+                pass.setBindGroup(0, IndirectDraw.globalBindGroup.bindGroup)
+                item.bindGroups.forEach(({bindGroup, location}) => {
+                    pass.setBindGroup(location, bindGroup)
+                })
+                item.vertexBuffers.forEach((buffer, i) => {
+
+
+                    pass.setVertexBuffer(i, buffer)
+                })
+                const indirectOffset = item.indirectBufferStartIndex * 4;
+
+
+                if (item.indirectBufferStartIndex !== undefined) {
+                    const indexBufferByteOffset = item.indexBufferStartIndex! * 4;
+                    pass.setIndexBuffer(index.buffer as GPUBuffer, "uint32", indexBufferByteOffset);
+
+                    pass.drawIndexedIndirect(indirect.buffer as GPUBuffer, indirectOffset);
+                } else {
+                    pass.drawIndirect(indirect.buffer as GPUBuffer, indirectOffset);
+                }
             })
-
-
-            item.primitive.vertexBuffers.forEach((buffer, i) => {
-                pass.setVertexBuffer(i, buffer)
-            })
-
-            const id = item.primitive.id;
-            const sceneObj = item.sceneObject;
-
-            const indirectOffset = sceneObj.indirectBufferStartIndex.get(makePrimitiveKey(item.primitive.id, item.primitive.side))! * 4;
-
-            if (sceneObj.indexBufferStartIndex.has(id)) {
-                const indexBufferStartIndex = sceneObj.indexBufferStartIndex.get(id);
-                const indexBufferByteOffset = indexBufferStartIndex! * 4;
-                pass.setIndexBuffer(index.buffer as GPUBuffer, "uint32", indexBufferByteOffset);
-
-                pass.drawIndexedIndirect(indirect.buffer as GPUBuffer, indirectOffset);
-            } else {
-                pass.drawIndirect(indirect.buffer as GPUBuffer, indirectOffset);
-            }
         })
     }
 

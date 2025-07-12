@@ -17,13 +17,11 @@ export type MeshData = {
 };
 
 export type GeometryData = {
-    id: number,
     dataList: Map<string, AttributeData>;
     indices?: TypedArray;
     indexType: 'uint16' | 'uint32' | 'Unknown';
     indexCount: number;
     lodRanges?: LODRange[]
-    material: Material,
 };
 
 

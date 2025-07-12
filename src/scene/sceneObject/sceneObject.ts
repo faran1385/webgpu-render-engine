@@ -1,8 +1,8 @@
 import {mat3, mat4, quat, vec3} from "gl-matrix";
 import {Mesh, Node, Skin} from "@gltf-transform/core";
-import {BaseLayer, RenderAblePrim} from "../../layers/baseLayer.ts";
-import {GeometryData} from "../loader/loaderTypes.ts";
-import {createGPUBuffer, makePrimitiveKey, updateBuffer} from "../../helpers/global.helper.ts";
+import {BaseLayer} from "../../layers/baseLayer.ts";
+import {createGPUBuffer, updateBuffer} from "../../helpers/global.helper.ts";
+import {Primitive} from "../primitive/Primitive.ts";
 
 
 type SceneObjectConfig = {
@@ -18,8 +18,14 @@ type SceneObjectConfig = {
 
     parent?: SceneObject;
     mesh?: Mesh;
-    primitivesData?: GeometryData[];
 };
+
+type SceneObjectMatrix = {
+    matrix: mat4,
+    scale: vec3,
+    translation: vec3,
+    rotation: quat
+}
 
 
 export class SceneObject {
@@ -30,8 +36,9 @@ export class SceneObject {
 
     modelBuffer?: GPUBuffer;
     normalBuffer?: GPUBuffer;
-    animationMatrix: mat4;
-    transformMatrix: mat4;
+    animationMatrix: SceneObjectMatrix;
+    transformMatrix: SceneObjectMatrix;
+
     localMatrix: mat4;
     worldMatrix: mat4;
     normalMatrix: mat3;
@@ -41,11 +48,9 @@ export class SceneObject {
 
     // draw
     mesh?: Mesh;
-    primitives?: Map<string, RenderAblePrim> = new Map();
-    primitivesData: Map<number, GeometryData> = new Map();
+    primitives?: Map<number, Primitive> = new Map();
     needsUpdate: boolean = false;
-    indexBufferStartIndex: Map<number, number> = new Map();
-    indirectBufferStartIndex: Map<string, number> = new Map();
+
 
     // compute shader
     lodSelectionThreshold: number | undefined = undefined;
@@ -65,8 +70,18 @@ export class SceneObject {
         const scale = config.nodeReference.getScale()
         const rotation = config.nodeReference.getRotation();
         const translation = config.nodeReference.getTranslation()
-        this.animationMatrix = mat4.fromRotationTranslationScale(mat4.create(), quat.fromValues(...rotation), translation, scale);
-        this.transformMatrix = mat4.create()
+        this.animationMatrix = {
+            scale,
+            translation,
+            rotation,
+            matrix: mat4.fromRotationTranslationScale(mat4.create(), quat.fromValues(...rotation), translation, scale)
+        }
+        this.transformMatrix = {
+            matrix: mat4.create(),
+            scale: vec3.create(),
+            translation: vec3.create(),
+            rotation: quat.create()
+        }
         this.localMatrix = mat4.create()
         this.worldMatrix = mat4.create()
         this.normalMatrix = mat3.normalFromMat4(mat3.create(), this.worldMatrix);
@@ -76,23 +91,19 @@ export class SceneObject {
 
         this.parent = config.parent;
         this.mesh = config.mesh;
-        config.primitivesData?.forEach((geo) => {
-            this.primitivesData.set(geo.id, geo);
-        });
     }
 
     setLodSelectionThreshold(threshold: number): void {
         this.lodSelectionThreshold = threshold;
     }
 
-    appendPrimitive(primitive: RenderAblePrim) {
+    appendPrimitive(primitive: Primitive) {
         if (this.primitives) {
-            this.primitives.set(makePrimitiveKey(primitive.id, primitive.side), primitive);
+            this.primitives.set(primitive.id, primitive);
         } else {
             throw new Error("This is not a RenderAble Node");
         }
     }
-
 
     createModelBuffer(device: GPUDevice, matrix: mat4) {
         this.modelBuffer = createGPUBuffer(device, new Float32Array(matrix), GPUBufferUsage.UNIFORM, `${this.name} model buffer`);
@@ -102,44 +113,37 @@ export class SceneObject {
         this.normalBuffer = createGPUBuffer(device, new Float32Array(matrix), GPUBufferUsage.UNIFORM, `${this.name} normal buffer`);
     }
 
-    setTranslation(pos: vec3, matrix: mat4) {
-        mat4.fromRotationTranslationScale(matrix, this.getRotation(matrix), pos, this.getScale(matrix));
-        this.markTransformDirty()
-
+    setTranslation(matrix: SceneObjectMatrix, pos: vec3) {
+        vec3.copy(matrix.translation, pos);
+        this._updateMatrix(matrix);
     }
 
-    setRotation(rot: quat, matrix: mat4) {
-        mat4.fromRotationTranslationScale(matrix, rot, this.getTranslation(matrix), this.getScale(matrix));
-        this.markTransformDirty()
+    setRotation(matrix: SceneObjectMatrix, rot: quat) {
+        quat.copy(matrix.rotation, rot);
+        this._updateMatrix(matrix);
     }
 
-    setScale(scale: vec3, matrix: mat4) {
-        mat4.fromRotationTranslationScale(matrix, this.getRotation(matrix), this.getTranslation(matrix), scale);
-        this.markTransformDirty()
+    setScale(matrix: SceneObjectMatrix, scale: vec3) {
+        vec3.copy(matrix.scale, scale);
+        this._updateMatrix(matrix);
     }
 
-    private getTranslation(matrix: mat4): vec3 {
+    private _updateMatrix(matrix: SceneObjectMatrix) {
+        mat4.fromRotationTranslationScale(matrix.matrix, matrix.rotation, matrix.translation, matrix.scale);
+        this.markTransformDirty();
+    }
+
+    public getPosition() {
+
         const pos = vec3.create();
-        mat4.getTranslation(pos, matrix);
-        return pos;
-    }
-
-    private getRotation(matrix: mat4): quat {
-        const rot = quat.create();
-        mat4.getRotation(rot, matrix);
-        return rot;
-    }
-
-    private getScale(matrix: mat4): vec3 {
-        const scale = vec3.create();
-        mat4.getScaling(scale, matrix);
-        return scale;
+        mat4.getTranslation(pos, this.worldMatrix);
+        return [...pos];
     }
 
 
     markTransformDirty() {
         this.needsUpdate = true;
-        BaseLayer._updateQueue.set(this.id, this)
+        BaseLayer._sceneObjectUpdateQueue.set(this.id, this)
         for (const child of this.children) {
             child.markTransformDirty();
         }
@@ -149,7 +153,7 @@ export class SceneObject {
         const parentMatrix = this.parent?.worldMatrix;
         if (!this.needsUpdate && parentMatrix) return;
 
-        mat4.multiply(this.localMatrix, this.animationMatrix, this.transformMatrix);
+        mat4.multiply(this.localMatrix, this.animationMatrix.matrix, this.transformMatrix.matrix);
         if (parentMatrix) {
             mat4.multiply(this.worldMatrix, parentMatrix, this.localMatrix)
         } else {

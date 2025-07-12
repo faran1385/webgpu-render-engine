@@ -3,10 +3,11 @@ import {OrbitControls} from "../scene/camera/controls.ts";
 import {Pane} from "tweakpane";
 import {updateBuffer} from "../helpers/global.helper.ts";
 
-import {LODRange} from "../scene/loader/loaderTypes.ts";
 import {SceneObject} from "../scene/sceneObject/sceneObject.ts";
-import {TypedArray} from "@gltf-transform/core";
 import {LargeBuffer} from "../scene/computation/IndirectDraw/IndirectDraw.ts";
+import {Material} from "../scene/Material/Material.ts";
+import {Primitive} from "../scene/primitive/Primitive.ts";
+import {LightBuffers} from "../scene/lightManager/lightManager.ts";
 
 export type readyBindGroup = { bindGroup: GPUBindGroup, layout: GPUBindGroupLayout }
 
@@ -15,30 +16,6 @@ export type activeCamera = {
     view: GPUBuffer,
     projection: GPUBuffer,
     position: GPUBuffer
-}
-
-
-export type MeshRenderData = {
-    name: string,
-    normal?: { buffer: GPUBuffer, data: Float32Array, },
-    model: { buffer: GPUBuffer, data: Float32Array },
-}
-
-export type RenderAblePrim = {
-    id: number,
-    pipeline: GPURenderPipeline,
-    bindGroups: GPUBindGroup[],
-    vertexBuffers: GPUBuffer[],
-    lodRanges?: LODRange[],
-    indexData?: TypedArray
-    side?: "back" | "front"
-}
-
-
-export type RenderAble = {
-    renderData: MeshRenderData,
-    primitive: RenderAblePrim,
-    sceneObject: SceneObject,
 }
 
 
@@ -61,18 +38,20 @@ export class BaseLayer {
     private static _resolutionBuffer: GPUBuffer;
     private static _deltaBuffer: GPUBuffer;
     private static _lastFrameTime: number;
+    protected static lightsBuffer: LightBuffers;
     private static _depthTexture: GPUTexture;
     private static _activeCamera: activeCamera;
 
     private static _pane: Pane;
     private static _controls: OrbitControls;
-    public static _updateQueue: Map<number, SceneObject> = new Map();
-    private static _drawCalls: { opaque: RenderAble[], transparent: RenderAble[] } = {
-        opaque: [],
-        transparent: []
-    };
+    public static _sceneObjectUpdateQueue: Map<number, SceneObject> = new Map();
+    public static _materialUpdateQueue: Map<number, {
+        material: Material,
+        oldLayout: number
+    }> = new Map();
+    private static _drawCalls: Set<Primitive> = new Set<Primitive>()
     private static _baseLayerInitialized: boolean = false;
-    protected static renderQueue: { queue: RenderAble[], needsUpdate: boolean } = {queue: [], needsUpdate: false}
+    protected static renderQueue: { queue: Primitive[], needsUpdate: boolean } = {queue: [], needsUpdate: false}
 
     protected static get drawCalls() {
         return BaseLayer._drawCalls;
@@ -90,31 +69,9 @@ export class BaseLayer {
         return mat4.getTranslation(vec3.create(), cameraWorldMatrix)
     }
 
-    protected static set appendDrawCall(sceneObject: SceneObject) {
+    protected static set appendDrawCall(primitive: Primitive) {
         this.renderQueue.needsUpdate = true
-        sceneObject.primitives?.forEach((primitive) => {
-            let renderAble = {
-                sceneObject: sceneObject,
-                primitive,
-                renderData: {
-                    name: sceneObject.name ?? 'draw call',
-                    model: {
-                        buffer: sceneObject.modelBuffer as GPUBuffer,
-                        data: sceneObject.worldMatrix as Float32Array
-                    },
-                    normal: sceneObject.normalBuffer ? {
-                        buffer: sceneObject.normalBuffer,
-                        data: sceneObject.normalMatrix as Float32Array
-                    } : undefined
-                }
-            }
-
-            if (primitive.side) {
-                BaseLayer._drawCalls["transparent"].push(renderAble)
-            } else {
-                BaseLayer._drawCalls["opaque"].push(renderAble)
-            }
-        })
+        this._drawCalls.add(primitive);
     }
 
     protected static get format(): GPUTextureFormat {
@@ -145,6 +102,27 @@ export class BaseLayer {
         return BaseLayer._timeBuffer
     }
 
+    private static createMinimalBuffer(): GPUBuffer {
+        return this.device.createBuffer({
+            size: 32,
+            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+        });
+    }
+
+    protected static createLightEmptyBuffers(dirMax: number, ptMax: number): LightBuffers {
+
+        const directional = dirMax > 0
+            ? this.device.createBuffer({size: dirMax * 8 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST})
+            : this.createMinimalBuffer();
+
+        const point = ptMax > 0
+            ? this.device.createBuffer({size: ptMax * 8 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST})
+            : this.createMinimalBuffer();
+
+        const counts = this.device.createBuffer({size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST});
+
+        return {directional, point, counts};
+    }
 
     protected static set setActiveCamera(camera: activeCamera) {
         BaseLayer._activeCamera = camera
@@ -215,7 +193,6 @@ export class BaseLayer {
                 usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
             }),
         }
-
         this.windowResizeHandler()
 
         BaseLayer._lastFrameTime = performance.now();
@@ -235,7 +212,7 @@ export class BaseLayer {
         window.addEventListener("resize", () => {
             this.windowResizeHandler()
         })
-
+        BaseLayer.lightsBuffer = BaseLayer.createLightEmptyBuffers(0, 0)
 
         const paneElement = BaseLayer.pane.element;
         paneElement.style.zIndex = "103";
@@ -246,13 +223,12 @@ export class BaseLayer {
         document.body.appendChild(paneElement)
 
 
-        BaseLayer._globalBindGroup = this.setGlobalBindGroup();
+        BaseLayer.setGlobalBindGroup();
         this.updateGlobalBuffers(position as Float32Array, projectionMatrix as Float32Array, viewMatrix as Float32Array)
     }
 
 
     private updateGlobalBuffers = (position: Float32Array, projectionMatrix: Float32Array, viewMatrix: Float32Array) => {
-
         const currentTime = performance.now();
         const deltaTime = (currentTime - BaseLayer._lastFrameTime) / 1000;
 
@@ -266,7 +242,7 @@ export class BaseLayer {
     }
 
 
-    private setGlobalBindGroup = (): readyBindGroup => {
+    protected static setGlobalBindGroup = (): void => {
         const bindGroupLayout = BaseLayer.device.createBindGroupLayout({
             label: "globalBindGroupLayout",
             entries: [
@@ -309,7 +285,28 @@ export class BaseLayer {
                     buffer: {
                         type: "uniform"
                     }
-                }
+                },
+                {
+                    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                    binding: 6,
+                    buffer: {
+                        type: "read-only-storage"
+                    }
+                },
+                {
+                    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                    binding: 7,
+                    buffer: {
+                        type: "read-only-storage"
+                    }
+                },
+                {
+                    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                    binding: 8,
+                    buffer: {
+                        type: "uniform"
+                    }
+                },
             ]
         })
 
@@ -346,11 +343,27 @@ export class BaseLayer {
                     buffer: BaseLayer._deltaBuffer
                 },
                 binding: 5,
+            }, {
+                resource: {
+                    buffer: BaseLayer.lightsBuffer.point
+                },
+                binding: 6,
+            }, {
+                resource: {
+                    buffer: BaseLayer.lightsBuffer.directional
+                },
+                binding: 7,
+            }, {
+                resource: {
+                    buffer: BaseLayer.lightsBuffer.counts
+                },
+                binding: 8,
             }],
             layout: bindGroupLayout
         })
 
-        return {
+
+        BaseLayer._globalBindGroup =  {
             layout: bindGroupLayout,
             bindGroup
         }

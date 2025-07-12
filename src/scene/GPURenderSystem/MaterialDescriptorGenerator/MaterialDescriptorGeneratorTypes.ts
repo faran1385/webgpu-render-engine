@@ -1,0 +1,55 @@
+export enum PBRBindPoint {
+    SAMPLER,
+    ALPHA,
+    FACTORS,
+    BASE_COLOR,
+    EMISSIVE,
+    METALLIC_ROUGHNESS,
+    NORMAL,
+    OCCLUSION,
+    CLEARCOAT,
+    CLEARCOAT_ROUGHNESS,
+    CLEARCOAT_NORMAL,
+    SPECULAR,
+    SPECULAR_COLOR,
+    TRANSMISSION,
+}
+
+export enum RenderFlag {
+    BASE_COLOR,
+    EMISSIVE,
+    OPACITY,
+    OCCLUSION,
+    NORMAL,
+    METALLIC,
+    ROUGHNESS,
+    TRANSMISSION,
+    SPECULAR,
+    SPECULAR_COLOR,
+    CLEARCOAT,
+    CLEARCOAT_NORMAL,
+    CLEARCOAT_ROUGHNESS,
+    PBR
+}
+
+export enum PBRFactorsStartPoint {
+    BASE_COLOR = 0,
+    EMISSIVE = 4,
+    METALLIC_ROUGHNESS = 7,
+    NORMAL = 9,
+    OCCLUSION = 10,
+    SPECULAR = 11,
+    SPECULAR_COLOR = 12,
+    TRANSMISSION = 15,
+    CLEARCOAT = 16,
+    CLEARCOAT_ROUGHNESS = 17,
+    CLEARCOAT_NORMAL = 18,
+}
+
+export enum PipelineShaderLocations {
+    POSITION,
+    UV,
+    NORMAL,
+    JOINTS,
+    WEIGHTS
+}

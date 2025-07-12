@@ -5,7 +5,7 @@ import {SceneObject} from "../../sceneObject/sceneObject.ts";
 import {createGPUBuffer, updateBuffer} from "../../../helpers/global.helper.ts";
 import {mat4, vec3} from "gl-matrix";
 import {vec4} from "gl-matrix";
-import {ComputeFrustumCulling} from "../../computeFrustumCulling.ts";
+import {ComputeFrustumCulling} from "./computeFrustumCulling.ts";
 
 export class FrustumCulling extends BaseLayer {
     private static frustumCullingSceneObjects: Map<number, SceneObject> = new Map<number, SceneObject>();
@@ -176,9 +176,8 @@ export class FrustumCulling extends BaseLayer {
                     }
                 })
             }
-            sceneObject.primitives?.forEach((_, key) => {
-                const offset = sceneObject.indirectBufferStartIndex.get(key)!
-                indirectOffsets.array.push(offset)
+            sceneObject.primitives?.forEach((primitive) => {
+                indirectOffsets.array.push(primitive.indirectBufferStartIndex)
             })
         })
         FrustumCulling.resizeBuffer("offsets")
@@ -232,25 +231,27 @@ export class FrustumCulling extends BaseLayer {
     }
 
     public renderLoop(commandEncoder: GPUCommandEncoder, viewMatrix: mat4, projectionMatrix: mat4) {
-        const frustumCullingMinMax = BaseLayer.largeBufferMap.get("FrustumCullingMinMax")!
-        const frustumCullingPlanes = BaseLayer.largeBufferMap.get("FrustumCullingViewPlanes")!
-        updateBuffer(BaseLayer.device, frustumCullingPlanes.buffer as GPUBuffer, new Float32Array(FrustumCulling.calculateFrustumPlanesFlat(viewMatrix, projectionMatrix)));
+        if(FrustumCulling.frustumCullingSceneObjects.size > 0){
+            const frustumCullingMinMax = BaseLayer.largeBufferMap.get("FrustumCullingMinMax")!
+            const frustumCullingPlanes = BaseLayer.largeBufferMap.get("FrustumCullingViewPlanes")!
+            updateBuffer(BaseLayer.device, frustumCullingPlanes.buffer as GPUBuffer, new Float32Array(FrustumCulling.calculateFrustumPlanesFlat(viewMatrix, projectionMatrix)));
 
-        const indirect = BaseLayer.largeBufferMap.get("Indirect")!
-        if (FrustumCulling.frustumCullingSceneObjects.size > 0 && indirect.buffer && indirect.buffer?.size > 0 && (frustumCullingMinMax.needsUpdate)) FrustumCulling.applyUpdate()
+            const indirect = BaseLayer.largeBufferMap.get("Indirect")!
+            if (FrustumCulling.frustumCullingSceneObjects.size > 0 && indirect.buffer && indirect.buffer?.size > 0 && (frustumCullingMinMax.needsUpdate)) FrustumCulling.applyUpdate()
 
-        if (indirect.buffer && frustumCullingMinMax.buffer && FrustumCulling.frustumCullingSceneObjects.size > 0 && (!FrustumCulling.computeSetup ||
-            indirect.version !== FrustumCulling.localLargeBufferVersions.get("Indirect")
-        )) FrustumCulling.initComputeSetup();
+            if (indirect.buffer && frustumCullingMinMax.buffer && FrustumCulling.frustumCullingSceneObjects.size > 0 && (!FrustumCulling.computeSetup ||
+                indirect.version !== FrustumCulling.localLargeBufferVersions.get("Indirect")
+            )) FrustumCulling.initComputeSetup();
 
-        if (FrustumCulling.frustumCullingSceneObjects.size > 0 && FrustumCulling.computeSetup) {
-            const computePass = commandEncoder.beginComputePass({
-                label: "frustum culling compute pass"
-            })
-            computePass.setPipeline(FrustumCulling.computeSetup.pipeline)
-            computePass.setBindGroup(0, FrustumCulling.computeSetup.bindGroup)
-            computePass.dispatchWorkgroups(FrustumCulling.dispatchSize)
-            computePass.end()
+            if (FrustumCulling.computeSetup) {
+                const computePass = commandEncoder.beginComputePass({
+                    label: "frustum culling compute pass"
+                })
+                computePass.setPipeline(FrustumCulling.computeSetup.pipeline)
+                computePass.setBindGroup(0, FrustumCulling.computeSetup.bindGroup)
+                computePass.dispatchWorkgroups(FrustumCulling.dispatchSize)
+                computePass.end()
+            }
         }
     }
 }

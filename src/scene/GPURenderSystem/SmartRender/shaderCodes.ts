@@ -1,111 +1,6 @@
-export const vertexShaderCodes: Map<"withBone" | "withUv" | "withUvAndBone" | "withoutUvAndBone", string> = new Map([
-    ["withBone", `struct vsIn{
-    @location(0) pos:vec3f,
-    @location(3) joints:vec4u,
-    @location(4) weights:vec4f,
-    }
-struct vsOut{
-    @builtin(position) clipPos:vec4f,
-    @location(0) uv:vec2f
-}
-@group(0) @binding(0) var<uniform> projectionMatrix:mat4x4<f32>;
-@group(0) @binding(1) var<uniform> viewMatrix:mat4x4<f32>;
-@group(2) @binding(1) var<storage,read> jointsMatrices:array<mat4x4<f32>>;
-@vertex fn vs(in:vsIn)->vsOut{
-    var output:vsOut;
-    let joint0 = jointsMatrices[in.joints.x];
-    let joint1 = jointsMatrices[in.joints.y];
-    let joint2 = jointsMatrices[in.joints.z];
-    let joint3 = jointsMatrices[in.joints.w];
+import {RenderFlag} from "../MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
 
-    let pos = vec4f(in.pos, 1.0);
-
-    let skinned =
-        (joint0 * pos) * in.weights.x +
-        (joint1 * pos) * in.weights.y +
-        (joint2 * pos) * in.weights.z +
-        (joint3 * pos) * in.weights.w;
-
-    output.clipPos = projectionMatrix * viewMatrix * skinned;
-    return output;
-}`],
-        ["withoutUvAndBone", `struct vsIn{
-    @location(0) pos:vec3f,
-}
-struct vsOut{
-    @builtin(position) clipPos:vec4f,
-}
-@group(0) @binding(0) var<uniform> projectionMatrix:mat4x4<f32>;
-@group(0) @binding(1) var<uniform> viewMatrix:mat4x4<f32>;
-@group(2) @binding(0) var<uniform> modelMatrix:mat4x4<f32>;
-@group(2) @binding(1) var<storage,read> jointsMatrices:array<mat4x4<f32>>;
-
-@vertex fn vs(in:vsIn)->vsOut{
-    var output:vsOut;
-    var worldPos = modelMatrix * vec4f(in.pos, 1);
-    output.clipPos = projectionMatrix * viewMatrix * worldPos;
-    return output;
-}`],
-    ["withUv", `
-struct vsIn{
-    @location(0) pos:vec3f,
-    @location(1) uv:vec2f,
-}
-struct vsOut{
-    @builtin(position) clipPos:vec4f,
-    @location(0) uv:vec2f,
-}
-@group(0) @binding(0) var<uniform> projectionMatrix:mat4x4<f32>;
-@group(0) @binding(1) var<uniform> viewMatrix:mat4x4<f32>;
-@group(2) @binding(0) var<uniform> modelMatrix:mat4x4<f32>;
-@vertex fn vs(in:vsIn)->vsOut{
-    var output:vsOut;
-    var worldPos = modelMatrix * vec4f(in.pos, 1);
-    output.clipPos = projectionMatrix * viewMatrix * worldPos;
-    output.uv = in.uv;
-    return output;
-}`],
-            ["withUvAndBone", `
-struct vsIn {
-    @location(0) pos: vec3f,
-    @location(1) uv: vec2f,
-    @location(3) joints: vec4<u32>,
-    @location(4) weights: vec4f,
-};
-
-struct vsOut {
-    @builtin(position) clipPos: vec4f,
-    @location(0) uv: vec2f,
-};
-
-@group(0) @binding(0) var<uniform> projectionMatrix: mat4x4<f32>;
-@group(0) @binding(1) var<uniform> viewMatrix: mat4x4<f32>;
-
-@group(2) @binding(1) var<storage, read> jointsMatrices: array<mat4x4<f32>>;
-
-@vertex
-fn vs(in: vsIn) -> vsOut {
-    var output: vsOut;
-
-    let joint0 = jointsMatrices[in.joints.x];
-    let joint1 = jointsMatrices[in.joints.y];
-    let joint2 = jointsMatrices[in.joints.z];
-    let joint3 = jointsMatrices[in.joints.w];
-
-    let pos = vec4f(in.pos, 1.0);
-
-    let skinned =
-        (joint0 * pos) * in.weights.x +
-        (joint1 * pos) * in.weights.y +
-        (joint2 * pos) * in.weights.z +
-        (joint3 * pos) * in.weights.w;
-
-    output.clipPos = projectionMatrix * viewMatrix * skinned;
-    output.uv = in.uv;
-    return output;
-}
-`]
-])
+export const fragmentMap = new Map<RenderFlag, string[]>()
 
 export const baseColorFragment = [
     `@group(1) @binding(0) var<uniform> factors:vec4f; 
@@ -137,7 +32,7 @@ export const baseColorFragment = [
     return vec4f(factors.xyz, alpha);
 }`
 ];
-
+fragmentMap.set(RenderFlag.BASE_COLOR, baseColorFragment)
 
 export const emissiveFragments = [
     `@group(1) @binding(0) var<uniform> factors: vec4f;
@@ -151,7 +46,7 @@ export const emissiveFragments = [
 
     return vec4f(model.xyz, 1.);
 }`,
-        `@group(1) @binding(0) var<uniform> factors: vec4f;
+    `@group(1) @binding(0) var<uniform> factors: vec4f;
 @group(1) @binding(1) var<uniform> alphaMode: vec2f;
 
 @fragment fn fs(in: vsOut) -> @location(0) vec4f {
@@ -161,6 +56,7 @@ export const emissiveFragments = [
     return emissiveFactor;
 }`
 ]
+fragmentMap.set(RenderFlag.EMISSIVE, emissiveFragments)
 
 
 export const opacityFragments = [
@@ -201,6 +97,7 @@ export const opacityFragments = [
     return vec4f(vec3f(alpha), 1.0);
 }`
 ]
+fragmentMap.set(RenderFlag.OPACITY, opacityFragments)
 
 
 export const occlusionFragments = [
@@ -221,6 +118,7 @@ export const occlusionFragments = [
     return vec4f(vec3f(strength), 1.);
 }`
 ]
+fragmentMap.set(RenderFlag.OCCLUSION, occlusionFragments)
 
 
 export const normalFragments = [
@@ -241,6 +139,7 @@ export const normalFragments = [
     return vec4f(vec3f(scale), 1.);
 }`
 ]
+fragmentMap.set(RenderFlag.NORMAL, normalFragments)
 
 export const metallicFragments = [
     `@group(1) @binding(0) var<uniform> metallicFactor: f32;
@@ -262,6 +161,7 @@ export const metallicFragments = [
     return vec4f(vec3f(metallicFactor), 1);
 }`
 ]
+fragmentMap.set(RenderFlag.METALLIC, metallicFragments)
 
 
 export const roughnessFragments = [
@@ -284,6 +184,7 @@ export const roughnessFragments = [
     return vec4f(vec3f(roughnessFactor), 1);
 }`
 ]
+fragmentMap.set(RenderFlag.ROUGHNESS, roughnessFragments)
 
 
 export const transmissionFragments = [
@@ -306,6 +207,7 @@ export const transmissionFragments = [
     return vec4f(vec3f(transmissionFactor), 1.);
 }`
 ]
+fragmentMap.set(RenderFlag.TRANSMISSION, transmissionFragments)
 
 
 export const specularFragments = [
@@ -328,6 +230,7 @@ export const specularFragments = [
     return vec4f(vec3f(specularFactor), 1);
 }`
 ]
+fragmentMap.set(RenderFlag.SPECULAR, specularFragments)
 
 
 export const clearcoatFragments = [
@@ -349,5 +252,6 @@ export const clearcoatFragments = [
 }`
 ]
 
+fragmentMap.set(RenderFlag.CLEARCOAT, clearcoatFragments)
 
 

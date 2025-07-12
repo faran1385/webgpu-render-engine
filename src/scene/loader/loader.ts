@@ -1,33 +1,46 @@
-import {Accessor, Material, Mesh, Node, Root, TypedArray, WebIO} from '@gltf-transform/core';
+import {Accessor, Mesh, Node, TypedArray, WebIO} from '@gltf-transform/core';
 import {ALL_EXTENSIONS} from '@gltf-transform/extensions';
 import {quat, vec3} from 'gl-matrix';
-import {AttributeData, GeometryData, LODRange} from "./loaderTypes.ts";
+import {AttributeData, LODRange} from "./loaderTypes.ts";
 import {SceneObject} from "../sceneObject/sceneObject.ts";
 import {generateID} from "../../helpers/global.helper.ts";
+import {Material} from "@gltf-transform/core";
+import {Material as MaterialClass} from "../Material/Material.ts";
+import {Primitive} from "../primitive/Primitive.ts";
+import {Geometry} from "../geometry/Geometry.ts";
 
 const io = new WebIO().registerExtensions(ALL_EXTENSIONS);
 
 /** A GLTF/GLB loader class with optional caching and progress reporting. */
 export class GLTFLoader {
+    private device: GPUDevice;
+    private canvas: HTMLCanvasElement;
+    private ctx: GPUCanvasContext;
+
+    constructor(device: GPUDevice, canvas: HTMLCanvasElement, ctx: GPUCanvasContext) {
+        this.device = device;
+        this.canvas = canvas;
+        this.ctx = ctx;
+    }
+
     /**
      * Loads a model from URL and returns document, meshes, buffers, and animations.
      */
-    public async load(url: string): Promise<{
-        root: Root,
-        sceneObjects: Set<SceneObject>
-    }> {
+    public async load(url: string) {
         let document = await io.read(url);
 
         const root = document.getRoot();
 
         const sceneObjects: Set<SceneObject> = new Set();
         const nodeToSceneObject = new Map<Node, SceneObject>();
-
+        const materialMap = new Map<Material | null, MaterialClass>()
         for (const node of root.listNodes()) {
             const translation = node.getTranslation();
             const rotation = node.getRotation();
             const scale = node.getScale();
             const mesh = node.getMesh();
+
+            const primitives = mesh ? await this.extractGeometry(mesh, materialMap) : undefined;
 
             const sceneObject = new SceneObject({
                 id: generateID(),
@@ -38,12 +51,20 @@ export class GLTFLoader {
                 scale: vec3.fromValues(...scale),
                 mesh: mesh ?? undefined,
                 worldPosition: node.getWorldMatrix() ?? undefined,
-                primitivesData: mesh ? await this.extractGeometry(mesh) : undefined,
-                nodeReference: node
+                nodeReference: node,
             });
+
+            if (primitives) {
+                primitives.forEach(([primitive, materialKey]) => {
+                    const material = materialMap.get(materialKey)!
+                    material.addPrimitive(primitive)
+                    primitive.setMaterial(material)
+                    sceneObject.appendPrimitive(primitive)
+                })
+            }
+
             nodeToSceneObject.set(node, sceneObject);
             sceneObjects.add(sceneObject);
-
         }
 
         for (const node of root.listNodes()) {
@@ -71,11 +92,11 @@ export class GLTFLoader {
     }
 
 
-    private async extractGeometry(mesh: Mesh): Promise<GeometryData[]> {
+    private async extractGeometry(mesh: Mesh, materialMap: Map<Material | null, MaterialClass>): Promise<[Primitive, (Material | null)][]> {
 
         const primitives = mesh.listPrimitives();
 
-        const geometryData: GeometryData[] = [];
+        const prims: [Primitive, (Material | null)][] = [];
         for (const prim of primitives) {
             const semantics = prim.listSemantics();
             let lodRanges = undefined;
@@ -109,17 +130,23 @@ export class GLTFLoader {
                 correctedIndices.set(indices)
                 indexType = "uint32"
             }
-
-            geometryData.push({
+            const primitiveId = generateID();
+            const geometry = new Geometry(generateID(), {
                 dataList: uniforms,
                 indices: indices ? indices.byteLength % 4 !== 0 ? correctedIndices : indices : undefined,
                 indexType,
                 lodRanges: lodRanges,
                 indexCount: indices?.length ?? 0,
-                material: prim.getMaterial() as Material,
-                id: generateID(),
-            });
+            })
+            const primitive = new Primitive({id: primitiveId});
+            primitive.setGeometry(geometry)
+            const alreadyExists = materialMap.get(prim.getMaterial())
+            if (!alreadyExists) {
+                materialMap.set(prim.getMaterial(), new MaterialClass(this.device, this.canvas, this.ctx, prim.getMaterial()))
+            }
+
+            prims.push([primitive, prim.getMaterial()])
         }
-        return geometryData;
+        return prims;
     }
 }

@@ -1,11 +1,11 @@
 import {BaseLayer} from "./baseLayer.ts";
 
-export class CleanLayer extends BaseLayer {
+export class ClearerLayer extends BaseLayer {
 
 
     constructor(device: GPUDevice, canvas: HTMLCanvasElement, ctx: GPUCanvasContext, clearValue: [number, number, number, number]) {
         super(device, canvas, ctx);
-        const commandEncoder = this.device.createCommandEncoder();
+        const commandEncoder = device.createCommandEncoder();
 
         const pass = commandEncoder.beginRenderPass({
             label: "clean pass",
@@ -17,7 +17,7 @@ export class CleanLayer extends BaseLayer {
             }],
         })
         pass.end()
-        this.device.queue.submit([commandEncoder.finish()])
+        device.queue.submit([commandEncoder.finish()])
     }
 
 }

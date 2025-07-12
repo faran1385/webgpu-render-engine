@@ -165,14 +165,16 @@ export class LodSelection extends BaseLayer {
         lodesData.array = [];
 
         LodSelection.lodSelectionSceneObjects.forEach(sceneObject => {
-            sceneObject.primitives?.forEach((primitive, key) => {
+            sceneObject.primitives?.forEach((primitive) => {
                 if (!primitive.lodRanges || primitive.lodRanges.length === 0) throw new Error("sceneObject does not have lodRanges")
                 const flattedPrimitiveLod = primitive.lodRanges.map(lod => [lod.start, lod.count]).flat();
-                const offsetInIndirectBuffer = sceneObject.indirectBufferStartIndex.get(key) as number
+                const offsetInIndirectBuffer = primitive.indirectBufferStartIndex
                 if (!sceneObject.lodSelectionThreshold) throw new Error("lodRange threshold is not set")
                 const dataArray = [sceneObject.getPosition(), sceneObject.lodSelectionThreshold, primitive.lodRanges.length, flattedPrimitiveLod].flat();
                 offsets.array.push(lodesData.array.length, offsetInIndirectBuffer);
-                lodesData.array.push(...dataArray)
+                for (let i = 0, len = dataArray.length; i < len; i++) {
+                    lodesData.array.push(dataArray[i]);
+                }
             })
         })
 
@@ -182,24 +184,27 @@ export class LodSelection extends BaseLayer {
     }
 
     public renderLoop(commandEncoder: GPUCommandEncoder) {
-        const offsets = BaseLayer.largeBufferMap.get("LODSelectionOffsets")!
-        const lodesData = BaseLayer.largeBufferMap.get("LODSelectionData")!
-        const indirect = BaseLayer.largeBufferMap.get("Indirect")!
-        if (LodSelection.lodSelectionSceneObjects.size > 0 && indirect.buffer && indirect.buffer?.size > 0 && (offsets.needsUpdate || lodesData.needsUpdate)) LodSelection.applyUpdate()
+        if(LodSelection.lodSelectionSceneObjects.size > 0){
+            const offsets = BaseLayer.largeBufferMap.get("LODSelectionOffsets")!
+            const lodesData = BaseLayer.largeBufferMap.get("LODSelectionData")!
+            const indirect = BaseLayer.largeBufferMap.get("Indirect")!
+            if (LodSelection.lodSelectionSceneObjects.size > 0 && indirect.buffer && indirect.buffer?.size > 0 && (offsets.needsUpdate || lodesData.needsUpdate)) LodSelection.applyUpdate()
 
-        if (indirect.buffer && LodSelection.lodSelectionSceneObjects.size > 0 && (!LodSelection.computeSetup ||
-            indirect.version !== LodSelection.localLargeBufferVersions.get("Indirect")
-        )) LodSelection.initComputeSetup();
-        if (LodSelection.lodSelectionSceneObjects.size > 0 && LodSelection.computeSetup) {
-            const computePass = commandEncoder.beginComputePass({
-                label: "lod selection compute pass"
-            })
+            if (indirect.buffer && LodSelection.lodSelectionSceneObjects.size > 0 && (!LodSelection.computeSetup ||
+                indirect.version !== LodSelection.localLargeBufferVersions.get("Indirect")
+            )) LodSelection.initComputeSetup();
+            if (LodSelection.computeSetup) {
+                const computePass = commandEncoder.beginComputePass({
+                    label: "lod selection compute pass"
+                })
 
-            computePass.setPipeline(LodSelection.computeSetup.pipeline)
-            computePass.setBindGroup(0, LodSelection.computeSetup.bindGroup)
-            computePass.dispatchWorkgroups(LodSelection.dispatchSize)
-            computePass.end()
+                computePass.setPipeline(LodSelection.computeSetup.pipeline)
+                computePass.setBindGroup(0, LodSelection.computeSetup.bindGroup)
+                computePass.dispatchWorkgroups(LodSelection.dispatchSize)
+                computePass.end()
+            }
         }
+
     }
 
 }

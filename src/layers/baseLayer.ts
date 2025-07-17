@@ -1,94 +1,74 @@
-import {mat4, vec3} from "gl-matrix";
-import {OrbitControls} from "../scene/camera/controls.ts";
 import {Pane} from "tweakpane";
 import {updateBuffer} from "../helpers/global.helper.ts";
+// @ts-ignore
+import lodComputeShader from "../shaders/builtin/lod.wgsl?raw"
 
-import {SceneObject} from "../scene/sceneObject/sceneObject.ts";
-import {LargeBuffer} from "../scene/computation/IndirectDraw/IndirectDraw.ts";
-import {Material} from "../scene/Material/Material.ts";
-import {Primitive} from "../scene/primitive/Primitive.ts";
-import {LightBuffers} from "../scene/lightManager/lightManager.ts";
+import {Scene} from "../engine/scene/Scene.ts";
 
-export type readyBindGroup = { bindGroup: GPUBindGroup, layout: GPUBindGroupLayout }
-
-
-export type activeCamera = {
-    view: GPUBuffer,
-    projection: GPUBuffer,
-    position: GPUBuffer
-}
-
+// @ts-ignore
+import frustumComputeShader from "../shaders/builtin/frustomCulling.wgsl?raw"
 
 export class BaseLayer {
     // base
     public readonly ctx: GPUCanvasContext;
-    public static _format: GPUTextureFormat;
+    private static _format: GPUTextureFormat;
     public readonly canvas: HTMLCanvasElement;
     public static device: GPUDevice;
-    // large buffers
-    public static largeBufferMap: Map<string, LargeBuffer> = new Map<string, LargeBuffer>()
-
-    // renderLoop functions
-    public static readonly renderLoopRunAble: Map<string, (...args: any[]) => void> = new Map()
-    public static readonly renderLoopAnimations: ((t: number) => void)[] = []
 
     // global data
-    private static _globalBindGroup: readyBindGroup;
     private static _timeBuffer: GPUBuffer;
     private static _resolutionBuffer: GPUBuffer;
     private static _deltaBuffer: GPUBuffer;
     private static _lastFrameTime: number;
-    protected static lightsBuffer: LightBuffers;
     private static _depthTexture: GPUTexture;
-    private static _activeCamera: activeCamera;
+    protected static globalBindGroupLayout: GPUBindGroupLayout;
+    protected static activeScene: Scene;
+    protected static frustumFixedComputeSetup: {
+        shaderModule: GPUShaderModule,
+        pipeline: GPUComputePipeline,
+        bindGroupLayout: GPUBindGroupLayout
+    }
+    protected static lodFixedComputeSetup: {
+        shaderModule: GPUShaderModule,
+        pipeline: GPUComputePipeline,
+        bindGroupLayout: GPUBindGroupLayout
+    }
+    // global textures
+    public brdfLUTTexture: GPUTexture | null = null;
+    private static _dummyEnvTextures: {
+        irradiance: GPUTexture;
+        prefiltered: GPUTexture;
+        brdfLut: GPUTexture;
+    }
+    private static _iblSampler: GPUSampler;
 
     private static _pane: Pane;
-    private static _controls: OrbitControls;
-    public static _sceneObjectUpdateQueue: Map<number, SceneObject> = new Map();
-    public static _materialUpdateQueue: Map<number, {
-        material: Material,
-        oldLayout: number
-    }> = new Map();
-    private static _drawCalls: Set<Primitive> = new Set<Primitive>()
     private static _baseLayerInitialized: boolean = false;
-    protected static renderQueue: { queue: Primitive[], needsUpdate: boolean } = {queue: [], needsUpdate: false}
 
-    protected static get drawCalls() {
-        return BaseLayer._drawCalls;
+
+    public get format() {
+        return BaseLayer._format
     }
 
-    protected getCameraVP() {
-        const updatedData = BaseLayer.controls.update();
-        return {projectionMatrix: updatedData.projectionMatrix, viewMatrix: updatedData.viewMatrix}
-    }
-
-    public static getCameraPosition() {
-        const {viewMatrix} = BaseLayer.controls.update();
-        const cameraWorldMatrix = mat4.invert(mat4.create(), viewMatrix);
-
-        return mat4.getTranslation(vec3.create(), cameraWorldMatrix)
-    }
-
-    protected static set appendDrawCall(primitive: Primitive) {
-        this.renderQueue.needsUpdate = true
-        this._drawCalls.add(primitive);
+    public setActiveScene(activeScene: Scene): void {
+        BaseLayer.activeScene = activeScene;
     }
 
     protected static get format(): GPUTextureFormat {
         return BaseLayer._format
     }
+    protected static get iblSampler() {
+        return BaseLayer._iblSampler
+    }
 
-    protected static get globalBindGroup(): readyBindGroup {
-        return BaseLayer._globalBindGroup
+    protected static get dummyTextures() {
+        return BaseLayer._dummyEnvTextures
     }
 
     protected static get depthTexture(): GPUTexture {
         return BaseLayer._depthTexture
     }
 
-    public static get controls(): OrbitControls {
-        return BaseLayer._controls
-    }
 
     protected static get deltaBuffer(): GPUBuffer {
         return BaseLayer._deltaBuffer
@@ -98,40 +78,10 @@ export class BaseLayer {
         return BaseLayer._resolutionBuffer
     }
 
+
     protected static get timeBuffer(): GPUBuffer {
         return BaseLayer._timeBuffer
     }
-
-    private static createMinimalBuffer(): GPUBuffer {
-        return this.device.createBuffer({
-            size: 32,
-            usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-        });
-    }
-
-    protected static createLightEmptyBuffers(dirMax: number, ptMax: number): LightBuffers {
-
-        const directional = dirMax > 0
-            ? this.device.createBuffer({size: dirMax * 8 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST})
-            : this.createMinimalBuffer();
-
-        const point = ptMax > 0
-            ? this.device.createBuffer({size: ptMax * 8 * 4, usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST})
-            : this.createMinimalBuffer();
-
-        const counts = this.device.createBuffer({size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST});
-
-        return {directional, point, counts};
-    }
-
-    protected static set setActiveCamera(camera: activeCamera) {
-        BaseLayer._activeCamera = camera
-    }
-
-    public static get activeCamera(): activeCamera {
-        return BaseLayer._activeCamera
-    }
-
 
     protected static get pane(): Pane {
         return BaseLayer._pane
@@ -147,12 +97,26 @@ export class BaseLayer {
         }
     }
 
+    public async initBRDFLUTTexture() {
+        if (this.brdfLUTTexture) return;
+        const response = await fetch("/brdfLUT.png")
+        const blob = await response.blob();
+        const bitmap = await createImageBitmap(blob)
+        const texture = BaseLayer.device.createTexture({
+            size: [bitmap.width, bitmap.height],
+            usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
+            format: "rgba32float"
+        })
 
-    public update() {
-        const {viewMatrix, projectionMatrix, position} = BaseLayer._controls.update()
-        this.updateGlobalBuffers(position as Float32Array, projectionMatrix as Float32Array, viewMatrix as Float32Array)
+        BaseLayer.device.queue.copyExternalImageToTexture({
+            source: bitmap,
+            flipY: true
+        }, {
+            texture,
+        }, [bitmap.width, bitmap.height])
+
+        this.brdfLUTTexture = texture;
     }
-
 
     private initialize() {
         BaseLayer._format = navigator.gpu.getPreferredCanvasFormat()
@@ -165,36 +129,34 @@ export class BaseLayer {
             format: "depth24plus"
         });
 
-
-        BaseLayer._controls = new OrbitControls({
-            canvas: this.canvas,
-            initialPosition: [0, 0, 30],
-            rotateSpeed: 0.5,
-            zoomSpeed: 0.5,
-            panSpeed: 0.3,
-            dampingFactor: 0.1,
-            fov: Math.PI / 4,
-            near: 0.1,
-            far: 1000,
-        });
-
-        const {viewMatrix, projectionMatrix, position} = BaseLayer._controls.update()
-        BaseLayer.setActiveCamera = {
-            projection: BaseLayer.device.createBuffer({
-                size: (projectionMatrix as Float32Array).byteLength,
-                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-            }),
-            view: BaseLayer.device.createBuffer({
-                size: (viewMatrix as Float32Array).byteLength,
-                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC
-            }),
-            position: BaseLayer.device.createBuffer({
-                size: 12,
-                usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
-            }),
-        }
         this.windowResizeHandler()
-
+        BaseLayer._dummyEnvTextures = {
+            irradiance: BaseLayer.device.createTexture({
+                size: [128, 128, 6],
+                format: 'rgba8unorm',
+                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+                mipLevelCount: 8
+            }),
+            brdfLut: BaseLayer.device.createTexture({
+                size: [1, 1, 1],
+                format: 'rgba8unorm',
+                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+                mipLevelCount: 1
+            }),
+            prefiltered: BaseLayer.device.createTexture({
+                size: [1, 1, 6],
+                format: 'rgba8unorm',
+                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+                mipLevelCount: 1
+            })
+        }
+        BaseLayer._iblSampler = BaseLayer.device.createSampler({
+            addressModeU: "repeat",
+            addressModeV: "repeat",
+            addressModeW: "repeat",
+            magFilter: "linear",
+            minFilter: "linear",
+        });
         BaseLayer._lastFrameTime = performance.now();
         BaseLayer._timeBuffer = BaseLayer.device.createBuffer({
             size: 4,
@@ -212,7 +174,6 @@ export class BaseLayer {
         window.addEventListener("resize", () => {
             this.windowResizeHandler()
         })
-        BaseLayer.lightsBuffer = BaseLayer.createLightEmptyBuffers(0, 0)
 
         const paneElement = BaseLayer.pane.element;
         paneElement.style.zIndex = "103";
@@ -223,27 +184,7 @@ export class BaseLayer {
         document.body.appendChild(paneElement)
 
 
-        BaseLayer.setGlobalBindGroup();
-        this.updateGlobalBuffers(position as Float32Array, projectionMatrix as Float32Array, viewMatrix as Float32Array)
-    }
-
-
-    private updateGlobalBuffers = (position: Float32Array, projectionMatrix: Float32Array, viewMatrix: Float32Array) => {
-        const currentTime = performance.now();
-        const deltaTime = (currentTime - BaseLayer._lastFrameTime) / 1000;
-
-        BaseLayer._lastFrameTime = currentTime;
-        updateBuffer(BaseLayer.device, BaseLayer._resolutionBuffer, new Float32Array([window.innerWidth, window.innerHeight]))
-        updateBuffer(BaseLayer.device, BaseLayer._timeBuffer, new Float32Array([performance.now() / 1000]))
-        updateBuffer(BaseLayer.device, BaseLayer._deltaBuffer, new Float32Array([deltaTime]))
-        updateBuffer(BaseLayer.device, BaseLayer.activeCamera.projection, projectionMatrix)
-        updateBuffer(BaseLayer.device, BaseLayer.activeCamera.view, viewMatrix)
-        updateBuffer(BaseLayer.device, BaseLayer.activeCamera.position, position)
-    }
-
-
-    protected static setGlobalBindGroup = (): void => {
-        const bindGroupLayout = BaseLayer.device.createBindGroupLayout({
+        BaseLayer.globalBindGroupLayout = BaseLayer.device.createBindGroupLayout({
             label: "globalBindGroupLayout",
             entries: [
                 {
@@ -307,66 +248,163 @@ export class BaseLayer {
                         type: "uniform"
                     }
                 },
+                {
+                    visibility: GPUShaderStage.FRAGMENT,
+                    binding: 9,
+                    texture: {
+                        sampleType: "float"
+                    }
+                },
+                {
+                    visibility: GPUShaderStage.FRAGMENT,
+                    binding: 10,
+                    texture: {
+                        sampleType: "float",
+                        viewDimension: "cube"
+                    }
+                },
+                {
+                    visibility: GPUShaderStage.FRAGMENT,
+                    binding: 11,
+                    texture: {
+                        sampleType: "float",
+                        viewDimension: "cube"
+                    }
+                },{
+                    visibility: GPUShaderStage.FRAGMENT,
+                    binding: 12,
+                    sampler:{
+                        type:"filtering"
+                    }
+                },
             ]
+
         })
+        this.setLod()
+        this.setFrustumCulling()
+        this.updateGlobalBuffers()
+        this.updateResolution()
+    }
 
-
-        const bindGroup = BaseLayer.device.createBindGroup({
-            label: "globalBindGroup",
+    private setFrustumCulling(): void {
+        const layout = BaseLayer.device.createBindGroupLayout({
+            label: "frustum culling compute layout",
             entries: [{
-                resource: {
-                    buffer: BaseLayer.activeCamera.projection
+                buffer: {
+                    type: "uniform",
                 },
                 binding: 0,
+                visibility: GPUShaderStage.COMPUTE
             }, {
-                resource: {
-                    buffer: BaseLayer.activeCamera.view
+                buffer: {
+                    type: "read-only-storage",
                 },
                 binding: 1,
+                visibility: GPUShaderStage.COMPUTE
             }, {
-                resource: {
-                    buffer: BaseLayer._timeBuffer
+                buffer: {
+                    type: "read-only-storage",
                 },
                 binding: 2,
+                visibility: GPUShaderStage.COMPUTE
             }, {
-                resource: {
-                    buffer: BaseLayer._resolutionBuffer
+                buffer: {
+                    type: "storage",
                 },
                 binding: 3,
-            }, {
-                resource: {
-                    buffer: BaseLayer.activeCamera.position
-                },
-                binding: 4,
-            }, {
-                resource: {
-                    buffer: BaseLayer._deltaBuffer
-                },
-                binding: 5,
-            }, {
-                resource: {
-                    buffer: BaseLayer.lightsBuffer.point
-                },
-                binding: 6,
-            }, {
-                resource: {
-                    buffer: BaseLayer.lightsBuffer.directional
-                },
-                binding: 7,
-            }, {
-                resource: {
-                    buffer: BaseLayer.lightsBuffer.counts
-                },
-                binding: 8,
-            }],
-            layout: bindGroupLayout
+                visibility: GPUShaderStage.COMPUTE
+            }]
         })
 
+        const module = BaseLayer.device.createShaderModule({
+            label: "frustum culling shader module",
+            code: frustumComputeShader as string
+        })
 
-        BaseLayer._globalBindGroup =  {
-            layout: bindGroupLayout,
-            bindGroup
+        const pipeline = BaseLayer.device.createComputePipeline({
+            compute: {
+                entryPoint: 'cs',
+                module: module
+            },
+            label: "frustum culling pipeline",
+            layout: BaseLayer.device.createPipelineLayout({
+                label: "frustum culling  pipeline layout",
+                bindGroupLayouts: [layout]
+            })
+        });
+
+        BaseLayer.frustumFixedComputeSetup = {
+            bindGroupLayout: layout,
+            shaderModule: module,
+            pipeline: pipeline
         }
+    }
+
+    private setLod(): void {
+        const layout = BaseLayer.device.createBindGroupLayout({
+            label: "lod compute layout",
+            entries: [{
+                buffer: {
+                    type: "uniform",
+                },
+                binding: 0,
+                visibility: GPUShaderStage.COMPUTE
+            }, {
+                buffer: {
+                    type: "read-only-storage",
+                },
+                binding: 1,
+                visibility: GPUShaderStage.COMPUTE
+            }, {
+                buffer: {
+                    type: "read-only-storage",
+                },
+                binding: 2,
+                visibility: GPUShaderStage.COMPUTE
+            }, {
+                buffer: {
+                    type: "storage",
+                },
+                binding: 3,
+                visibility: GPUShaderStage.COMPUTE
+            }]
+        })
+
+        const computeModule = BaseLayer.device.createShaderModule({
+            label: "lodSelection shader module",
+            code: lodComputeShader!
+        })
+
+        const computePipeline = BaseLayer.device.createComputePipeline({
+            compute: {
+                entryPoint: 'cs',
+                module: computeModule
+            },
+            label: "lodSelection pipeline",
+            layout: BaseLayer.device.createPipelineLayout({
+                label: "lodSelection pipeline layout",
+                bindGroupLayouts: [layout]
+            })
+        });
+
+        BaseLayer.frustumFixedComputeSetup = {
+            bindGroupLayout: layout,
+            shaderModule: computeModule,
+            pipeline: computePipeline
+        }
+    }
+
+    updateGlobalBuffers = () => {
+        const currentTime = performance.now();
+        const deltaTime = (currentTime - BaseLayer._lastFrameTime) / 1000;
+
+        BaseLayer._lastFrameTime = currentTime;
+        updateBuffer(BaseLayer.device, BaseLayer.timeBuffer, new Float32Array([performance.now() / 1000]))
+        updateBuffer(BaseLayer.device, BaseLayer.deltaBuffer, new Float32Array([deltaTime]))
+    }
+
+    private updateResolution() {
+        updateBuffer(BaseLayer.device, BaseLayer._resolutionBuffer, new Float32Array([window.innerWidth, window.innerHeight]))
     }
 
 
@@ -374,9 +412,6 @@ export class BaseLayer {
         this.canvas.width = window.innerWidth;
         this.canvas.height = window.innerHeight;
 
-        const {projectionMatrix} = BaseLayer._controls.update()
-        mat4.perspective(projectionMatrix, Math.PI / 4, window.innerWidth / window.innerHeight, 0.1, 100)
-        updateBuffer(BaseLayer.device, BaseLayer.activeCamera.projection, projectionMatrix);
         BaseLayer._depthTexture.destroy();
         BaseLayer._depthTexture = BaseLayer.device.createTexture({
             size: {width: window.innerWidth, height: window.innerHeight, depthOrArrayLayers: 1},

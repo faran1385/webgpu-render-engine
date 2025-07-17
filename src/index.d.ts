@@ -1,4 +1,3 @@
-import {MeshData} from "./scene/loader/loader.ts";
 
 declare module "orbit-controls" {
     // Define the types or declare 'any' if you're unsure about the specific types

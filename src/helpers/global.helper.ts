@@ -1,14 +1,20 @@
 import {mat3, mat4, vec3} from "gl-matrix";
 // @ts-ignore
 import Stats from 'stats-js';
+import {Material as MaterialClass} from "../engine/Material/Material.ts"
 import {Material, TypedArray, vec2} from "@gltf-transform/core";
 import {Clearcoat, Specular, Transmission} from "@gltf-transform/extensions";
 import {
     PBRBindPoint,
     PBRFactorsStartPoint,
     RenderFlag
-} from "../scene/GPURenderSystem/MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
-import {TextureData} from "../scene/Material/Material.ts";
+} from "../engine/GPURenderSystem/MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
+import {TextureData} from "../engine/Material/Material.ts";
+import {Primitive, PrimitiveHashes} from "../engine/primitive/Primitive.ts";
+import {PipelineEntry} from "../renderers/modelRenderer.ts";
+import {GPUCache} from "../engine/GPURenderSystem/GPUCache/GPUCache.ts";
+import {BaseLayer} from "../layers/baseLayer.ts";
+import {ComputeManager} from "../engine/computation/computeManager.ts";
 
 export function createGPUBuffer(
     device: GPUDevice,
@@ -88,7 +94,8 @@ export const initWebGPU = async () => {
     if (!adapter) {
         throw new Error('No adapter supplied!');
     }
-    console.log(adapter)
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
     const device = await adapter.requestDevice({
         requiredFeatures: ["timestamp-query", 'bgra8unorm-storage', 'float32-filterable']
     });
@@ -314,4 +321,78 @@ export function extractMaterial(material: Material) {
         dataMap.set(key, value);
     })
     return dataMap
+}
+
+export async function hashAndCreateRenderSetup(computeManager: ComputeManager, gpuCache: GPUCache, materials: MaterialClass[], primitives: Primitive[], pipelineDescriptors: PipelineEntry) {
+    const geometryLayoutHashes = gpuCache.createGeometryLayoutHashes(primitives)
+    const materialHashes = await gpuCache.createMaterialHashes(materials)
+    const shaderCodesHashes = gpuCache.createShaderCodeHashes(primitives)
+    const pipelineLayoutsHashes = gpuCache.createPipelineLayoutHashes(pipelineDescriptors, materialHashes, geometryLayoutHashes)
+    const pipelineHashes = gpuCache.createPipelineHashes(shaderCodesHashes, pipelineLayoutsHashes)
+    const geometryBindGroupMaps = gpuCache.createGeometryBindGroupMaps(primitives)
+
+    pipelineHashes.forEach((pipelineHash, key) => {
+        const {side, id: primitiveId} = unpackPrimitiveKey(key)
+        const geometryEntries = geometryBindGroupMaps.get(primitiveId)
+        const geometryLayoutHash = geometryLayoutHashes.get(primitiveId)!
+        const {bindGroup: materialBindGroupHash, layout: materialBindGroupLayoutHash} = materialHashes.get(primitiveId)!
+
+        const shaderCodeHash = shaderCodesHashes.get(primitiveId)!
+
+        const pipelineLayout = pipelineLayoutsHashes.get(primitiveId)
+        if (!pipelineLayout) throw new Error("pipelineLayout is not set")
+        const primitive = pipelineLayout?.primitive!
+        const renderSetup = gpuCache.getRenderSetup(
+            pipelineHash,
+            pipelineLayout?.hash!,
+            materialBindGroupHash,
+            geometryLayoutHash,
+            shaderCodeHash
+        )
+        if (!geometryEntries) throw new Error(`Primitive with id ${primitive.id} has no bindGroup descriptor set on geometry`)
+
+        const geometryBindGroup = BaseLayer.device.createBindGroup({
+            entries: geometryEntries,
+            label: `${pipelineLayout?.sceneObject.name ?? ""} geometry bindGroup`,
+            layout: renderSetup.geometryBindGroupLayout
+        })
+
+        primitive.geometry.setBindGroup(geometryBindGroup)
+
+        primitive.setPipeline(side!, renderSetup.pipeline)
+
+
+        primitive.setBindGroup(`${materialBindGroupHash}`, {
+            bindGroup: renderSetup.materialBindGroup,
+            location: 1
+        })
+        primitive.setBindGroup(geometryBindGroup.label, {bindGroup: geometryBindGroup, location: 2})
+
+        primitive.setLodRanges(primitive.geometry.lodRanges)
+        primitive.setIndexData(primitive.geometry.indices)
+        const primitiveHashes: PrimitiveHashes = {
+            shader: shaderCodeHash,
+            materialBindGroup: materialBindGroupHash,
+            materialBindGroupLayout: materialBindGroupLayoutHash,
+            pipeline: pipelineHash,
+            pipelineLayout: pipelineLayout.hash,
+            samplerHash: primitive.material.hashes.sampler
+        }
+
+        primitive.setPrimitiveHashes(primitiveHashes, side!)
+
+        pipelineLayout?.primitive.vertexBufferDescriptors.forEach((item) => {
+            const dataArray = primitive.geometry.dataList.get(item.name)?.array;
+            if (!dataArray) throw new Error(`${item.name} not found in geometry datalist of primitive with id ${pipelineLayout.primitive.id}`)
+            primitive.setVertexBuffers(createGPUBuffer(BaseLayer.device, dataArray, GPUBufferUsage.VERTEX, `${pipelineLayout.sceneObject.name}  ${item.name}`))
+        })
+
+        primitive.modelMatrix = (pipelineLayout?.sceneObject!).worldMatrix;
+        primitive.normalMatrix = (pipelineLayout?.sceneObject!).normalMatrix;
+
+        if (primitive.geometry.indices) {
+            computeManager.setIndex(pipelineLayout.sceneObject)
+        }
+        computeManager.setIndirect(pipelineLayout.sceneObject)
+    })
 }

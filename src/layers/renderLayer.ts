@@ -2,8 +2,8 @@ import {BaseLayer} from "./baseLayer.ts";
 // @ts-ignore
 import lodShader from "../shaders/builtin/lod.wgsl?raw"
 import {mat4, vec3} from "gl-matrix";
-import {GPUCache} from "../scene/GPURenderSystem/GPUCache/GPUCache.ts";
-import {Primitive} from "../scene/primitive/Primitive.ts";
+import {GPUCache} from "../engine/GPURenderSystem/GPUCache/GPUCache.ts";
+import {Primitive} from "../engine/primitive/Primitive.ts";
 
 
 export class RenderLayer extends BaseLayer {
@@ -18,7 +18,7 @@ export class RenderLayer extends BaseLayer {
         const opaque: Primitive[] = [];
         const transparentWithDepth: { primitive: Primitive; depth: number }[] = [];
 
-        for (const primitive of RenderLayer.drawCalls) {
+        for (const primitive of RenderLayer.activeScene.drawCalls()) {
             if (primitive.side.length === 0) continue;
 
             if (primitive.isTransparent) {
@@ -36,7 +36,7 @@ export class RenderLayer extends BaseLayer {
 
         const finalQueue = [...opaque, ...transparentWithDepth.map(d => d.primitive)];
 
-        RenderLayer.renderQueue = {
+        RenderLayer.activeScene.renderQueue = {
             queue: finalQueue,
             needsUpdate: false
         };
@@ -46,57 +46,33 @@ export class RenderLayer extends BaseLayer {
 
 
     private checkForUpdate() {
-        BaseLayer._sceneObjectUpdateQueue.forEach(sceneObject => {
+
+        RenderLayer.activeScene._sceneObjectUpdateQueue.forEach(sceneObject => {
             if (sceneObject.needsUpdate) {
-                sceneObject.updateWorldMatrix(BaseLayer.device)
+                sceneObject.updateWorldMatrix(RenderLayer.device)
             }
         })
-        BaseLayer._materialUpdateQueue.forEach(material => {
+        RenderLayer.activeScene._materialUpdateQueue.forEach(material => {
             this.gpuCache.changeBindGroupEntries(material)
         })
-        BaseLayer._sceneObjectUpdateQueue.clear()
-        BaseLayer._materialUpdateQueue.clear()
+        RenderLayer.activeScene._sceneObjectUpdateQueue.clear()
+        RenderLayer.activeScene._materialUpdateQueue.clear()
     }
 
 
     public render(commandEncoder: GPUCommandEncoder) {
         // animations
-        const time = performance.now() / 1000;
-        RenderLayer.renderLoopAnimations.forEach((func) => func(time))
+
         this.checkForUpdate()
-        const lightUpdate = RenderLayer.renderLoopRunAble.get("LightUpdate");
-        if (lightUpdate) lightUpdate();
 
-        const skinUpdate = RenderLayer.renderLoopRunAble.get("SkinUpdate");
-        if (skinUpdate) skinUpdate();
-        const {viewMatrix, projectionMatrix} = this.getCameraVP()
-        const primitives: Primitive[] = BaseLayer.renderQueue.needsUpdate ? this.buildRenderQueue(viewMatrix) : BaseLayer.renderQueue.queue
 
-        // compute shaders
-        const lodRunAble = RenderLayer.renderLoopRunAble.get("LOD")
-        const frustumCullingRunAble = RenderLayer.renderLoopRunAble.get("FrustumCulling")
-        if (lodRunAble) lodRunAble(commandEncoder);
-        if (frustumCullingRunAble) frustumCullingRunAble(commandEncoder, viewMatrix, projectionMatrix);
-        // render
-        const pass = commandEncoder.beginRenderPass({
-            label: "main pass",
-            depthStencilAttachment: {
-                view: RenderLayer.depthTexture.createView(),
-                depthStoreOp: "store",
-                depthLoadOp: "clear",
-                depthClearValue: 1.
-            },
-            colorAttachments: [{
-                view: this.ctx.getCurrentTexture().createView(),
-                storeOp: "store",
-                loadOp: "load",
-            }]
-        })
+        const sceneActiveCamera = RenderLayer.activeScene.getActiveCamera()
+        const viewMatrix = sceneActiveCamera.getViewMatrix();
 
-        const indirectDrawRunAble = RenderLayer.renderLoopRunAble.get("IndirectDraw")
-        const computeManagerRunAble = RenderLayer.renderLoopRunAble.get("ComputeManager")
-        if (computeManagerRunAble) computeManagerRunAble(viewMatrix);
-        if (indirectDrawRunAble) indirectDrawRunAble(primitives, pass)
-        pass.end()
+        const primitives: Primitive[] = RenderLayer.activeScene.renderQueue.needsUpdate ?
+            this.buildRenderQueue(viewMatrix) :
+            RenderLayer.activeScene.renderQueue.queue
+
+        RenderLayer.activeScene.update(commandEncoder, primitives)
     }
 }

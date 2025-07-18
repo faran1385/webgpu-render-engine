@@ -34,7 +34,7 @@ export class BaseLayer {
         bindGroupLayout: GPUBindGroupLayout
     }
     // global textures
-    public brdfLUTTexture: GPUTexture | null = null;
+    private static _brdfLUTTexture: GPUTexture | null = null;
     private static _dummyEnvTextures: {
         irradiance: GPUTexture;
         prefiltered: GPUTexture;
@@ -45,6 +45,14 @@ export class BaseLayer {
     private static _pane: Pane;
     private static _baseLayerInitialized: boolean = false;
 
+
+    public get brdfLut() {
+        return BaseLayer._brdfLUTTexture
+    }
+
+    public set setBrdfLut(brdfLut: GPUTexture) {
+        BaseLayer._brdfLUTTexture = brdfLut
+    }
 
     public get format() {
         return BaseLayer._format
@@ -57,6 +65,7 @@ export class BaseLayer {
     protected static get format(): GPUTextureFormat {
         return BaseLayer._format
     }
+
     protected static get iblSampler() {
         return BaseLayer._iblSampler
     }
@@ -97,26 +106,6 @@ export class BaseLayer {
         }
     }
 
-    public async initBRDFLUTTexture() {
-        if (this.brdfLUTTexture) return;
-        const response = await fetch("/brdfLUT.png")
-        const blob = await response.blob();
-        const bitmap = await createImageBitmap(blob)
-        const texture = BaseLayer.device.createTexture({
-            size: [bitmap.width, bitmap.height],
-            usage: GPUTextureUsage.COPY_DST | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT,
-            format: "rgba32float"
-        })
-
-        BaseLayer.device.queue.copyExternalImageToTexture({
-            source: bitmap,
-            flipY: true
-        }, {
-            texture,
-        }, [bitmap.width, bitmap.height])
-
-        this.brdfLUTTexture = texture;
-    }
 
     private initialize() {
         BaseLayer._format = navigator.gpu.getPreferredCanvasFormat()
@@ -151,9 +140,6 @@ export class BaseLayer {
             })
         }
         BaseLayer._iblSampler = BaseLayer.device.createSampler({
-            addressModeU: "repeat",
-            addressModeV: "repeat",
-            addressModeW: "repeat",
             magFilter: "linear",
             minFilter: "linear",
         });
@@ -270,11 +256,11 @@ export class BaseLayer {
                         sampleType: "float",
                         viewDimension: "cube"
                     }
-                },{
+                }, {
                     visibility: GPUShaderStage.FRAGMENT,
                     binding: 12,
-                    sampler:{
-                        type:"filtering"
+                    sampler: {
+                        type: "filtering"
                     }
                 },
             ]

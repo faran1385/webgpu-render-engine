@@ -39,16 +39,15 @@ const loader = new GLTFLoader(device, canvas, ctx)
 
 const {sceneObjects, nodeMap} = await loader.load("/s.glb", scene)
 const hdrLoader = new HDRLoader(device);
-const cubeMap = await hdrLoader.load("/e.hdr", ToneMapping.REINHARD_MAX, 2)
+const cubeMap = await hdrLoader.load("/e.hdr", ToneMapping.REINHARD_MAX, 1)
 await scene.backgroundManager.setBackground(gpuCache, [1], cubeMap)
-await scene.environmentManager.setEnvironment(cubeMap)
+await scene.environmentManager.setEnvironment(cubeMap,512)
 scene.lightManager.addDirectional({
-    intensity: 2,
+    intensity: 1,
     color: [1, 1, 1],
-    position: [10, 5, 0]
+    position: [5, 6, 5]
 })
 
-console.log(device)
 const modelRenderer = new ModelRenderer({
     gpuCache,
     device,

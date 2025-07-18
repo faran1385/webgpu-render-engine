@@ -170,7 +170,7 @@ export class Scene extends BaseLayer {
                 },
                 binding: 8,
             }, {
-                resource: this.brdfLUTTexture?.createView() ?? BaseLayer.dummyTextures.brdfLut.createView(),
+                resource: this.brdfLut?.createView() ?? BaseLayer.dummyTextures.brdfLut.createView(),
                 binding: 9,
             }, {
                 resource:  this.environmentManager.prefilteredMap?.createView({dimension:"cube"}) ?? BaseLayer.dummyTextures.prefiltered.createView({dimension:"cube"}),

@@ -5,6 +5,14 @@ import {
     RenderFlag
 } from "../MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
 import {Primitive} from "../../primitive/Primitive.ts";
+import {
+    distributionGGX,
+    fresnelSchlick, fresnelSchlickRoughness,
+    geometrySchlickGGX,
+    geometrySmith
+} from "../../../helpers/pbrShaderFunctions.ts";
+import {postProcessUtilsMap} from "../../postProcessUtils/postProcessUtilsShaderCodes.ts";
+import {PostProcessUtils} from "../../postProcessUtils/postProcessUtilsTypes.ts";
 
 
 export class ShaderGenerator {
@@ -89,9 +97,10 @@ fn vs(in: vsIn) -> vsOut {
     getPBRCode(primitive: Primitive) {
         const dataMap = primitive.material.textureMap
         const hasBoneData = Boolean(primitive.geometry.dataList.get('JOINTS_0') && primitive.geometry.dataList.get("WEIGHTS_0"))
-        const hasNormal = Boolean(primitive.geometry.dataList.get('NORMAL'))
 
+        const hasNormal = Boolean(primitive.geometry.dataList.get('NORMAL'))
         const generatedVertexCode = this.baseVertex(hasBoneData, true, hasNormal)
+
         return generatedVertexCode + '\n' + `
             struct DLight {
                 color: vec3f,
@@ -116,9 +125,9 @@ fn vs(in: vsIn) -> vsOut {
             @group(0) @binding(6) var<storage, read> pLights: array<PLight>;
             @group(0) @binding(7) var<storage, read> dLights: array<DLight>;
             @group(0) @binding(8) var<uniform> lightCounts: LightCounts;
-            @group(0) @binding(9) var brdfLutTexture:texture_2d<f32>;
-            @group(0) @binding(10) var prefilteredTexture:texture_cube<f32>;
-            @group(0) @binding(11) var irradianceTexture:texture_cube<f32>;
+            @group(0) @binding(9) var brdfLUT:texture_2d<f32>;
+            @group(0) @binding(10) var prefilterMap:texture_cube<f32>;
+            @group(0) @binding(11) var irradianceMap:texture_cube<f32>;
             @group(0) @binding(12) var iblSampler:sampler;
 
             @group(1) @binding(0) var textureSampler:sampler;
@@ -136,92 +145,77 @@ fn vs(in: vsIn) -> vsOut {
             ${dataMap.get(RenderFlag.CLEARCOAT_ROUGHNESS)?.texture ? `@group(1) @binding(${PBRBindPoint.CLEARCOAT_ROUGHNESS}) var clearcoatRoughness:texture_2d<f32>;` : ""}
             ${dataMap.get(RenderFlag.CLEARCOAT_NORMAL)?.texture ? `@group(1) @binding(${PBRBindPoint.CLEARCOAT_NORMAL}) var clearcoatNormalTexture:texture_2d<f32>;` : ""}
             @group(0) @binding(4) var<uniform> cameraPosition:vec3f;
-            const PI=3.14159265359;
             
-            fn D_GGX(NoH:f32,  a:f32)->f32 {
-                let a2 = a * a;
-                let f = (NoH * a2 - NoH) * NoH + 1.0;
-                return a2 / (PI * f * f);
-            }
-            
-            fn F_Schlick(u:f32, f0:vec3f)->vec3f {
-                return f0 + (vec3(1.0) - f0) * pow(1.0 - u, 5.0);
-            }
-            
-            fn V_SmithGGXCorrelated(NoV:f32, NoL:f32, a:f32)->f32 {
-                let a2 = a * a;
-                let GGXL = NoV * sqrt((-NoL * a2 + NoL) * NoL + a2);
-                let GGXV = NoL * sqrt((-NoV * a2 + NoV) * NoV + a2);
-                return 0.5 / (GGXV + GGXL);
-            }
-            
-            fn Fd_Lambert()->f32 {
-                return 1.0 / PI;
-            }
-            
-            fn getIBLContribution(N:vec3f,V: vec3f, roughness:f32 , F0:vec3f, baseColor:vec3f)->vec3f {
-                // Diffuse irradiance
-                let irradiance = textureSample(irradianceTexture,iblSampler ,N).rgb;
-                let diffuse = irradiance * baseColor;
-            
-                // Specular
-                let R = reflect(-V, N);
-                let prefilteredColor = textureSampleLevel(prefilteredTexture,iblSampler, R, roughness * 7.).rgb;
-                let brdf = textureSample(brdfLutTexture,iblSampler, vec2(max(dot(N, V), 0.0), roughness)).rg;
-                let specular = prefilteredColor * (F0 * brdf.x + brdf.y);
-            
-                return diffuse + specular;
-            }
+            const PI = 3.14159265359;
+
+            ${distributionGGX}
+            ${geometrySchlickGGX}
+            ${geometrySmith}
+            ${fresnelSchlick}
+            ${fresnelSchlickRoughness}
+            ${postProcessUtilsMap.get(PostProcessUtils.GAMMA_CORRECTION)}
+            const MAX_REFLECTION_LOD = 4.0;
                         
             @fragment fn fs(in: vsOut) -> @location(0) vec4f {
-                // --- Sample textures & factors ---
-                let baseColor = ${dataMap.get(RenderFlag.BASE_COLOR)?.texture ? `textureSample(baseColorTexture, textureSampler, in.uv)
-                                * vec4f(factors[0], factors[1], factors[2], factors[3])` : "vec4f(factors[0], factors[1], factors[2], factors[3])"};
+                var ao  = ${dataMap.get(RenderFlag.OCCLUSION)?.texture ? `textureSample(occlusionTexture,textureSampler,in.uv).r * factors[10];` : `factors[10];`}
+                let albedo = ${dataMap.get(RenderFlag.BASE_COLOR)?.texture ? `textureSample(baseColorTexture, textureSampler, in.uv) * vec4f(factors[0], factors[1], factors[2], factors[3])` : "vec4f(factors[0], factors[1], factors[2], factors[3])"};
                 ${dataMap.get(RenderFlag.METALLIC)?.texture ? `let metallicRoughness = textureSample(metallicRoughnessTexture, textureSampler, in.uv);` : ``}
                 var metallic  = ${dataMap.get(RenderFlag.METALLIC)?.texture ? `metallicRoughness.b * factors[7];` : `factors[7];`}
-                var ao  = ${dataMap.get(RenderFlag.OCCLUSION)?.texture ? `textureSample(occlusionTexture,textureSampler,in.uv).r * factors[10];` : `factors[10];`}
-                var emissive  = ${dataMap.get(RenderFlag.EMISSIVE)?.texture ? `textureSample(emissiveTexture,textureSampler,in.uv);` : `vec3f(factors[4], factors[5], factors[6]);`}
                 var roughness  = ${dataMap.get(RenderFlag.ROUGHNESS)?.texture ? `metallicRoughness.g * factors[8];` : `factors[8];`}
-                roughness = clamp(roughness, 0.089, 1.0);
-                roughness = 0.1;
-                metallic=.0;
+                roughness = clamp(0., 0.089, 1.0);
+                metallic=0.;
                 
-                // variables
-                let reflectance=2.;
-                let N=in.normal;
-                let f0 = 0.16 * reflectance * reflectance * (1.0 - metallic) + baseColor.xyz * metallic;
-                let V=normalize(cameraPosition - in.worldPos);
-                let NoV = max(dot(N, V), 0.0001);
-                let a=roughness * roughness;                
-                var color=vec3f(0);
+                let worldPosition=in.worldPos;
+                let n = normalize(in.normal);
+                let v = normalize(cameraPosition - worldPosition);
+                let r = reflect(-v, n);
                 
-                for(var i=0;i < i32(lightCounts.directionalCount);i++){
-                    let lightColor=dLights[i].color * dLights[i].intensity;
-                    let lightPos=dLights[i].position;
-                    let L=normalize(lightPos - in.worldPos);
-                    let H = normalize(V + L);
+                let f0 = mix(vec3f(0.04), albedo.xyz, metallic);
+
+                var lo = vec3f(0.0);
+                
+                for (var i:u32 = 0; i < lightCounts.directionalCount; i++) {
+                    let l = normalize(dLights[i].position - worldPosition);
+                    let h = normalize(v + l);
                     
-                    let NoL = max(dot(N, L), 0.0);
-                    let NoH = max(dot(N, H), 0.0);
-                    let LoH = max(dot(L, H), 0.0);
-                          
-                    let D = D_GGX(NoH, a);
-                    let  F = F_Schlick(LoH, f0);
-                    let G = V_SmithGGXCorrelated(NoV, NoL, roughness);
+                    let distance = length(dLights[i].position - worldPosition);
+                    let attenuation = 1.0 / (distance * distance);
+                    let radiance = (dLights[i].color * dLights[i].intensity) * attenuation;
                     
-                    // specular BRDF
-                    let Fr = (D * G) * F;        
-                            
-                    // diffuse BRDF
-                    let kd = (1.0 - F) * (1.0 - metallic);
-                    let Fd = baseColor.rgb * kd / PI;
-    
-                    color = color + (Fd + Fr) * lightColor * NoL;
+                    let d = distributionGGX(n, h, roughness);
+                    let g = geometrySmith(n, v, l, roughness);
+                    let f = fresnelSchlick(max(dot(h, v), 0.0), f0);
+                    
+                    let numerator = d * g * f;
+                    let denominator = 4.0 * max(dot(n, v), 0.0) * max(dot(n, l), 0.0) + 0.00001;
+                    let specular = numerator / denominator;
+                    
+                    let kS = f;
+                    var kD = vec3f(1.0) - kS;
+                    kD *= 1.0 - metallic;
+                    
+                    let nDotL = max(dot(n, l), 0.00001);
+                    lo += (kD * albedo.xyz / PI + specular) * radiance * nDotL;
                 }
-                color *=ao;
-                color +=emissive;
-                let iblColor=getIBLContribution(N,V,roughness,f0,baseColor.xyz);
-                return vec4f(vec3f(color + iblColor),1.);
+                
+                let f = fresnelSchlickRoughness(max(dot(n, v), 0.00001), f0, roughness);
+                let kS = f;
+                var kD = vec3f(1.0) - kS;
+                kD *= 1.0 - metallic;
+                
+                let irradiance = textureSample(irradianceMap, iblSampler, n).rgb;
+                let diffuse = irradiance * albedo.xyz;
+                
+                let prefilteredColor = textureSampleLevel(prefilterMap, iblSampler, r, roughness * MAX_REFLECTION_LOD).rgb;
+                let brdf = textureSample(brdfLUT, iblSampler, vec2f(max(dot(n, v), 0.0), roughness)).rg;
+                let specular = prefilteredColor * (f * brdf.x + brdf.y);
+                
+                let ambient = (kD * diffuse + specular) * ao;
+
+                var color = ambient + lo;
+                color = applyGamma(color,1);
+
+                return vec4f(vec3f(color),1.);
             }
 
         `

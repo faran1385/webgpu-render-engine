@@ -10,10 +10,14 @@ import {Primitive} from "../primitive/Primitive.ts";
 import {cubeIndices, cubePositions} from "./cubeData.ts";
 import {Scene} from "../scene/Scene.ts";
 import {GPUCache} from "../GPURenderSystem/GPUCache/GPUCache.ts";
+import {
+    EXPOSURE,
+    GAMMA_CORRECTION,
+    TONE_MAPPING, TONE_MAPPING_CALL
+} from "../../helpers/postProcessUtils/postProcessUtilsShaderCodes.ts";
 
 export class Background extends BaseLayer {
     private lastSceneObject: SceneObject | null = null;
-    private exposureBuffer: GPUBuffer | null = null;
     private scene!: Scene;
 
     constructor(device: GPUDevice, canvas: HTMLCanvasElement, ctx: GPUCanvasContext, scene: Scene) {
@@ -22,7 +26,7 @@ export class Background extends BaseLayer {
     }
 
 
-     initRenderClass() {
+    initRenderClass(exposure: number) {
 
         const material = new Material(Background.device, this.canvas, this.ctx, null)
         const geometry = new Geometry({
@@ -52,7 +56,6 @@ export class Background extends BaseLayer {
         }
         material.samplerInfo.bindPoint = 1
 
-
         material.descriptor.layout = [{
             texture: {
                 sampleType: "float",
@@ -67,6 +70,11 @@ export class Background extends BaseLayer {
             binding: 1,
             visibility: GPUShaderStage.FRAGMENT
         }]
+
+        const primitive = new Primitive()
+        const toneMapping = this.scene.getToneMapping(primitive);
+
+
         material.setShaderCodeString(`
         struct vsInput{
             @location(0) pos:vec3f,
@@ -88,10 +96,15 @@ export class Background extends BaseLayer {
                 vec4<f32>(view[0].xyz, 0.0),
                 vec4<f32>(view[1].xyz, 0.0),
                 vec4<f32>(view[2].xyz, 0.0),
-                vec4<f32>(0.0, 0.0, 0.0, 1.0)
+                vec4<f32>(0,0,0, 1.0)
         );
 }
 
+        ${GAMMA_CORRECTION}
+        ${EXPOSURE}
+        ${TONE_MAPPING}
+        override TONE_MAPPING_NUMBER = 0;
+        override EXPOSURE = 1.;
         @vertex
         fn vs(in: vsInput) -> vsOutput {
             var output: vsOutput;
@@ -114,11 +127,13 @@ export class Background extends BaseLayer {
         fn fs(in:vsOutput) -> @location(0) vec4f {
         
            
-            let color = textureSample(skyboxTexture, skyboxSampler, normalize(in.dir));
-            return vec4(color.rgb, 1.0);
+            var color = textureSample(skyboxTexture, skyboxSampler, normalize(in.dir)).rgb;
+            ${TONE_MAPPING_CALL}
+            color = applyExposure(color,EXPOSURE);
+            color = applyGamma(color,2.2);
+            return vec4(color, 1.0);
         }
         `)
-        const primitive = new Primitive()
         material.addPrimitive(primitive)
         primitive.setGeometry(geometry)
         primitive.setMaterial(material)
@@ -133,7 +148,11 @@ export class Background extends BaseLayer {
                 depthWriteEnabled: false,
                 format: "depth24plus"
             },
-            targets: [{format: Background.format}]
+            targets: [{format: Background.format}],
+            fragmentConstants: {
+                TONE_MAPPING_NUMBER: toneMapping,
+                EXPOSURE: exposure
+            }
         })
         primitive.setVertexBufferDescriptors([{
             name: 'POSITION',
@@ -152,6 +171,7 @@ export class Background extends BaseLayer {
             rotation: quat.fromValues(0, 0, 0, 1),
             scene: this.scene
         })
+
         sceneObject.setScale(sceneObject.transformMatrix, vec3.fromValues(100, 100, 100))
         sceneObject.createModelBuffer(Background.device, sceneObject.worldMatrix)
 
@@ -175,15 +195,25 @@ export class Background extends BaseLayer {
             (this.lastSceneObject.scene.background?.material as any)?.descriptor?.entries[0]?.textureDescriptor.texture.destroy()
             this.lastSceneObject.scene.computeManager.indirectDraw.deleteIndirect(this.lastSceneObject)
             this.lastSceneObject.scene.computeManager.indirectDraw.deleteIndex(this.lastSceneObject)
-            this.exposureBuffer?.destroy();
         }
         if (this.scene.background) {
-            gpuCache.disposePrimitive(this.scene.background, this.scene.background.side[0])
+            gpuCache.disposePrimitive(this.scene.background, this.scene.background.sides[0])
         }
     }
 
-    async setBackground(gpuCache: GPUCache, hashArray: number[], cubeMap: GPUTexture) {
-        const {primitive, sceneObject} = this.initRenderClass()
+    setExposure(exposure: number) {
+        if (!this.lastSceneObject) throw new Error("There is no active Env");
+        const primitive = Array.from(this.lastSceneObject.primitives!)[0][1]
+        primitive.sides.forEach((side) => {
+            const desc = primitive.pipelineDescriptors.get(side)!
+            desc.fragmentConstants ? desc.fragmentConstants.EXPOSURE = exposure : ""
+        })
+
+        this.scene.pipelineUpdateQueue.add(primitive)
+    }
+
+    async setBackground(gpuCache: GPUCache, hashArray: number[], cubeMap: GPUTexture, exposure: number | undefined = undefined) {
+        const {primitive, sceneObject} = this.initRenderClass(exposure ?? 1)
 
 
         primitive.material.descriptor.hashEntries = [new Float32Array(hashArray)]

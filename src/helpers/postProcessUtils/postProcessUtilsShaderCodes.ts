@@ -1,50 +1,29 @@
-import {PostProcessUtils, ToneMapping} from "./postProcessUtilsTypes.ts";
+import {ToneMapping} from "./postProcessUtilsTypes.ts";
 
-export const postProcessUtilsMap = new Map<PostProcessUtils, string>();
-export const toneMappingMap = new Map<ToneMapping, {
-    shader: string,
-    functionName: string,
-}>();
 
-postProcessUtilsMap.set(PostProcessUtils.EXPOSURE, `
+export const EXPOSURE = `
 fn applyExposure(color: vec3f, exposure: f32) -> vec3f {
     return color * exposure;
 }
-`)
-postProcessUtilsMap.set(PostProcessUtils.GAMMA_CORRECTION, `
+`
+export const GAMMA_CORRECTION = `
 fn applyGamma(color: vec3f, gamma: f32) -> vec3f {
     return pow(color, vec3f(1.0 / gamma));
 }
-`)
-toneMappingMap.set(ToneMapping.NONE, {
-    shader: `
+`
+
+
+export const TONE_MAPPING=`
 fn toneMapNone(color: vec3f) -> vec3f {
     return color;
 }
-`,
-    functionName: "toneMapNone"
-})
-toneMappingMap.set(ToneMapping.REINHARD, {
-    shader:`
 fn toneMapReinhard(color: vec3f) -> vec3f {
     return color / (color + vec3f(1.0));
 }
-`,
-    functionName:'toneMapReinhard'
-})
-
-toneMappingMap.set(ToneMapping.REINHARD_MAX, {
-    shader:`
 fn toneMapReinhard2(color: vec3f) -> vec3f {
     let maxChannel = max(color.r, max(color.g, color.b));
     return color / (vec3f(1.0) + maxChannel);
 }
-`,
-    functionName:'toneMapReinhard2'
-})
-
-toneMappingMap.set(ToneMapping.FILMIC, {
-    shader:`
 fn toneMapFilmicChannel(x: f32) -> f32 {
     let A = 0.15;
     let B = 0.50;
@@ -64,11 +43,6 @@ fn toneMapFilmic(color: vec3f) -> vec3f {
         toneMapFilmicChannel(color.b)
     ) / whiteScale;
 }
-`,
-    functionName:'toneMapFilmic'
-})
-toneMappingMap.set(ToneMapping.ACES, {
-    shader:`
 fn toneMapACESChannel(x: f32) -> f32 {
     let a = 2.51;
     let b = 0.03;
@@ -84,6 +58,18 @@ fn toneMapACES(color: vec3f) -> vec3f {
         toneMapACESChannel(color.b)
     );
 }
-`,
-    functionName:'toneMapACES'
-})
+`
+
+export const TONE_MAPPING_CALL=`
+if(TONE_MAPPING_NUMBER == ${ToneMapping.NONE}){
+    color = toneMapNone(color);
+}else if(TONE_MAPPING_NUMBER == ${ToneMapping.REINHARD}){
+    color = toneMapReinhard(color);
+}else if(TONE_MAPPING_NUMBER == ${ToneMapping.REINHARD_MAX}){
+    color = toneMapReinhard2(color);
+}else if(TONE_MAPPING_NUMBER == ${ToneMapping.FILMIC}){
+    color = toneMapFilmic(color);
+}else{
+    color = toneMapACES(color);
+}
+`

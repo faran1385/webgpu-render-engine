@@ -1,22 +1,24 @@
 import {updateBuffer} from "../../helpers/global.helper.ts";
+
 export interface DLight {
     color: [number, number, number];
     intensity: number;
     position: [number, number, number];
 }
 
-export interface PLight extends DLight {
-    decay: number;
+export interface ALight {
+    color: [number, number, number];
+    intensity: number;
 }
 
 export interface LightBuffers {
     directional: GPUBuffer;
-    point: GPUBuffer;
+    ambient: GPUBuffer;
     counts: GPUBuffer;
 }
 
 /**
- * Manages directional and point lights with dynamic GPU buffers.
+ * Manages directional lights with dynamic GPU buffers.
  * Provides add/remove by ID for fast lookup.
  * Buffers are created/expanded on-demand via flushIfDirty().
  */
@@ -24,18 +26,18 @@ export class LightManager {
     private static device: GPUDevice;
 
     private maxDirectional: number;
-    private maxPoint: number;
+    private maxAmbient: number;
     private nextId = 1;
     public lightsBuffer: LightBuffers;
     private needUpdate = false;
     private dLights = new Map<number, DLight>();
-    private pLights = new Map<number, PLight>();
+    private aLights = new Map<number, ALight>();
 
 
     constructor(device: GPUDevice) {
         this.maxDirectional = 0;
+        this.maxAmbient = 0;
         LightManager.device = device;
-        this.maxPoint = 0;
 
         this.lightsBuffer = this.createLightEmptyBuffers(0, 0)
     }
@@ -51,6 +53,25 @@ export class LightManager {
     }
 
     /**
+     * Adds an ambient light and returns its unique ID.
+     */
+    addAmbient(light: ALight): number {
+        const id = this.nextId++;
+        this.aLights.set(id, light);
+        this.needUpdate = true;
+        return id;
+    }
+
+    /**
+     * Removes an ambient light by its ID.
+     */
+    removeAmbient(id: number): void {
+        if (this.aLights.delete(id)) {
+            this.needUpdate = true;
+        }
+    }
+
+    /**
      * Removes a directional light by its ID.
      */
     removeDirectional(id: number): void {
@@ -59,33 +80,15 @@ export class LightManager {
         }
     }
 
-    /**
-     * Adds a point light and returns its unique ID.
-     */
-    addPoint(light: PLight): number {
-        const id = this.nextId++;
-        this.pLights.set(id, light);
-        this.needUpdate = true;
-        return id;
-    }
-
-    /**
-     * Removes a point light by its ID.
-     */
-    removePoint(id: number): void {
-        if (this.pLights.delete(id)) {
-            this.needUpdate = true;
-        }
-    }
 
     /**
      * Ensures GPU buffers are correctly sized and up-to-date.
      * Call once per frame before rendering.
      */
     flushIfDirty() {
-        if(!this.needUpdate) return
+        if (!this.needUpdate) return
         const neededD = this.dLights.size;
-        const neededP = this.pLights.size;
+        const neededA = this.aLights.size;
         let needToReBind = false
 
 
@@ -93,13 +96,13 @@ export class LightManager {
             this.resizeDirectionalBuffer(neededD);
             needToReBind = true;
         }
-        if (neededP > this.maxPoint) {
-            this.resizePointBuffer(neededP);
+        if (neededA > this.maxAmbient) {
+            this.resizeAmbientBuffer(neededA);
             needToReBind = true;
         }
         this.uploadCounts();
         this.uploadDLights();
-        this.uploadPLights();
+        this.uploadALights();
         this.needUpdate = false;
         return needToReBind
     }
@@ -109,7 +112,7 @@ export class LightManager {
             this.lightsBuffer.directional.destroy();
         }
         this.maxDirectional = newMax;
-        const floatCount = newMax * 8;
+        const floatCount = newMax * 12;
         const byteSize = floatCount * 4;
         this.lightsBuffer.directional = LightManager.device.createBuffer({
             size: byteSize,
@@ -117,55 +120,56 @@ export class LightManager {
         });
     }
 
-    private createMinimalBuffer(): GPUBuffer {
+    private createMinimalBuffer(size:number): GPUBuffer {
         return LightManager.device.createBuffer({
-            size: 32,
+            size,
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
     }
 
-    protected createLightEmptyBuffers(dirMax: number, ptMax: number): LightBuffers {
+    protected createLightEmptyBuffers(dirMax: number, aMax: number): LightBuffers {
 
         const directional = dirMax > 0
             ? LightManager.device.createBuffer({
-                size: dirMax * 8 * 4,
+                size: dirMax * 12 * 4,
                 usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
             })
-            : this.createMinimalBuffer();
+            : this.createMinimalBuffer(48);
 
-        const point = ptMax > 0
+        const ambient = aMax > 0
             ? LightManager.device.createBuffer({
-                size: ptMax * 8 * 4,
+                size: aMax * 8 * 4,
                 usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
             })
-            : this.createMinimalBuffer();
+            : this.createMinimalBuffer(32);
 
         const counts = LightManager.device.createBuffer({
             size: 16,
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         });
 
-        return {directional, point, counts};
+        return {directional, ambient, counts};
     }
 
-    private resizePointBuffer(newMax: number): void {
+    private resizeAmbientBuffer(newMax: number): void {
         if (this.lightsBuffer) {
-            this.lightsBuffer.point.destroy();
+            this.lightsBuffer.ambient.destroy();
         }
-        this.maxPoint = newMax;
+        this.maxAmbient = newMax;
         const floatCount = newMax * 8;
         const byteSize = floatCount * 4;
-        this.lightsBuffer.point = LightManager.device.createBuffer({
+        this.lightsBuffer.ambient = LightManager.device.createBuffer({
             size: byteSize,
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
     }
 
+
     private uploadCounts(): void {
         if (!this.lightsBuffer) return;
         const counts = new Uint32Array([
             this.dLights.size,
-            this.pLights.size,
+            this.aLights.size,
             0,
             0,
         ]);
@@ -174,37 +178,40 @@ export class LightManager {
 
     private uploadDLights(): void {
         if (!this.lightsBuffer) return;
-        const data = new Float32Array(this.maxDirectional * 8);
+        const data = new Float32Array(this.maxDirectional * 12);
         let offset = 0;
 
         for (const light of this.dLights.values()) {
             data.set(light.color, offset);    // vec3
             offset += 3;
-
             data[offset++] = light.intensity; // f32
+
+
+            data[offset++] = 0; // f32
+            data.set([0, 0], offset);    // vec2
+            offset += 2;
 
             data.set(light.position, offset); // vec3
             offset += 3;
-
-            data[offset++] = 0.0;             // padding (f32)
         }
-
 
         updateBuffer(LightManager.device, this.lightsBuffer.directional, data)
     }
 
-    private uploadPLights(): void {
+
+    private uploadALights(): void {
         if (!this.lightsBuffer) return;
-        const data = new Float32Array(this.maxPoint * 8);
+        const data = new Float32Array(this.maxAmbient * 8);
         let offset = 0;
-        for (const light of this.pLights.values()) {
+        for (const light of this.aLights.values()) {
             data.set(light.color, offset);
             offset += 3;
             data[offset++] = light.intensity;
-            data.set(light.position, offset);
+            data[offset++] = 0;
+            data.set([0,0,0], offset);
             offset += 3;
-            data[offset++] = light.decay;
         }
-        updateBuffer(LightManager.device, this.lightsBuffer.point, data)
+        console.log(data)
+        updateBuffer(LightManager.device, this.lightsBuffer.ambient, data)
     }
 }

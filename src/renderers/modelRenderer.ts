@@ -68,6 +68,7 @@ export class ModelRenderer {
         if (typeof T === "number") {
             if (!this.smartRenderer) throw new Error("SmartRenderer is not set");
             if (this.sceneObjects.size === 0) throw new Error("sceneObjects is not set");
+            this.materials.forEach(mat => mat.setRenderMethod(T))
             this.initEntry = this.smartRenderer.entryCreator(this.sceneObjects, T, this.nodeMap)
         } else {
             this.initEntry = T

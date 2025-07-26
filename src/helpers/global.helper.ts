@@ -117,14 +117,14 @@ export const updateBuffer = (device: GPUDevice, buffer: GPUBuffer, data: TypedAr
     device.queue.writeBuffer(buffer, 0, data as TypedArray)
 }
 
-export const getTextureFromData = async (device: GPUDevice, size: vec2 | vec3, data: TypedArray) => {
+export const getTextureFromData = async (device: GPUDevice, size: vec2 | vec3, data: TypedArray, format: GPUTextureFormat) => {
 
     const imageBitmap = await createImageBitmap(new Blob([data]));
     const texture = device.createTexture({
         size: [...size],
         usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
         textureBindingViewDimension: "2d",
-        format: "bgra8unorm",
+        format: format,
     })
     device.queue.copyExternalImageToTexture(
         {source: imageBitmap},
@@ -357,17 +357,6 @@ export async function hashAndCreateRenderSetup(computeManager: ComputeManager, g
             layout: renderSetup.geometryBindGroupLayout
         })
 
-        primitive.geometry.setBindGroup(geometryBindGroup)
-
-        primitive.setPipeline(side!, renderSetup.pipeline)
-
-
-        primitive.setBindGroup(`${materialBindGroupHash}`, {
-            bindGroup: renderSetup.materialBindGroup,
-            location: 1
-        })
-        primitive.setBindGroup(geometryBindGroup.label, {bindGroup: geometryBindGroup, location: 2})
-
         primitive.setLodRanges(primitive.geometry.lodRanges)
         primitive.setIndexData(primitive.geometry.indices)
         const primitiveHashes: PrimitiveHashes = {
@@ -376,11 +365,11 @@ export async function hashAndCreateRenderSetup(computeManager: ComputeManager, g
             materialBindGroupLayout: materialBindGroupLayoutHash,
             pipeline: pipelineHash,
             pipelineLayout: pipelineLayout.hash,
-            samplerHash: primitive.material.hashes.sampler
+            samplerHash: primitive.material.hashes.sampler.new
         }
 
         primitive.setPrimitiveHashes(primitiveHashes, side!)
-
+        primitive.setRenderSetup(geometryBindGroup, gpuCache)
         pipelineLayout?.primitive.vertexBufferDescriptors.forEach((item) => {
             const dataArray = primitive.geometry.dataList.get(item.name)?.array;
             if (!dataArray) throw new Error(`${item.name} not found in geometry datalist of primitive with id ${pipelineLayout.primitive.id}`)

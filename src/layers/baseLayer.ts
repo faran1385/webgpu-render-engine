@@ -1,4 +1,3 @@
-import {Pane} from "tweakpane";
 import {updateBuffer} from "../helpers/global.helper.ts";
 // @ts-ignore
 import lodComputeShader from "../shaders/builtin/lod.wgsl?raw"
@@ -42,7 +41,6 @@ export class BaseLayer {
     }
     private static _iblSampler: GPUSampler;
 
-    private static _pane: Pane;
     private static _baseLayerInitialized: boolean = false;
 
 
@@ -92,10 +90,6 @@ export class BaseLayer {
         return BaseLayer._timeBuffer
     }
 
-    protected static get pane(): Pane {
-        return BaseLayer._pane
-    }
-
     constructor(device: GPUDevice, canvas: HTMLCanvasElement, ctx: GPUCanvasContext) {
         BaseLayer.device = device;
         this.canvas = canvas;
@@ -109,7 +103,6 @@ export class BaseLayer {
 
     private initialize() {
         BaseLayer._format = navigator.gpu.getPreferredCanvasFormat()
-        BaseLayer._pane = new Pane();
 
         BaseLayer._depthTexture = BaseLayer.device.createTexture({
             size: {width: window.innerWidth, height: window.innerHeight, depthOrArrayLayers: 1},
@@ -122,26 +115,29 @@ export class BaseLayer {
         BaseLayer._dummyEnvTextures = {
             irradiance: BaseLayer.device.createTexture({
                 size: [128, 128, 6],
-                format: 'rgba8unorm',
+                format: this.format,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
                 mipLevelCount: 8
             }),
             brdfLut: BaseLayer.device.createTexture({
                 size: [1, 1, 1],
-                format: 'rgba8unorm',
+                format: this.format,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
                 mipLevelCount: 1
             }),
             prefiltered: BaseLayer.device.createTexture({
                 size: [1, 1, 6],
-                format: 'rgba8unorm',
+                format: this.format,
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
                 mipLevelCount: 1
             })
         }
         BaseLayer._iblSampler = BaseLayer.device.createSampler({
             magFilter: "linear",
+            addressModeU:"clamp-to-edge",
+            addressModeV:"clamp-to-edge",
             minFilter: "linear",
+            mipmapFilter:"nearest"
         });
         BaseLayer._lastFrameTime = performance.now();
         BaseLayer._timeBuffer = BaseLayer.device.createBuffer({
@@ -160,14 +156,6 @@ export class BaseLayer {
         window.addEventListener("resize", () => {
             this.windowResizeHandler()
         })
-
-        const paneElement = BaseLayer.pane.element;
-        paneElement.style.zIndex = "103";
-        paneElement.style.position = "absolute";
-        paneElement.style.right = "10px";
-        paneElement.style.top = "10px";
-        paneElement.style.width = "300px";
-        document.body.appendChild(paneElement)
 
 
         BaseLayer.globalBindGroupLayout = BaseLayer.device.createBindGroupLayout({
@@ -214,21 +202,21 @@ export class BaseLayer {
                     }
                 },
                 {
-                    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                    visibility: GPUShaderStage.FRAGMENT,
                     binding: 6,
                     buffer: {
                         type: "read-only-storage"
                     }
                 },
                 {
-                    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                    visibility: GPUShaderStage.FRAGMENT,
                     binding: 7,
                     buffer: {
                         type: "read-only-storage"
                     }
                 },
                 {
-                    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                    visibility: GPUShaderStage.FRAGMENT,
                     binding: 8,
                     buffer: {
                         type: "uniform"
@@ -262,7 +250,7 @@ export class BaseLayer {
                     sampler: {
                         type: "filtering"
                     }
-                },
+                }
             ]
 
         })

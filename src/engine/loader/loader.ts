@@ -26,7 +26,7 @@ export class GLTFLoader {
     /**
      * Loads a model from URL and returns document, meshes, buffers, and animations.
      */
-    public async load(url: string,scene:Scene) {
+    public async load(url: string, scene: Scene) {
         let document = await io.read(url);
 
         const root = document.getRoot();
@@ -59,6 +59,7 @@ export class GLTFLoader {
                     const material = materialMap.get(materialKey)!
                     material.addPrimitive(primitive)
                     primitive.setMaterial(material)
+                    primitive.setSceneObject(sceneObject)
                     sceneObject.appendPrimitive(primitive)
                 })
             }

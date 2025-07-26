@@ -51,5 +51,6 @@ export enum PipelineShaderLocations {
     UV,
     NORMAL,
     JOINTS,
-    WEIGHTS
+    WEIGHTS,
+    TANGENT
 }

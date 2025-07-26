@@ -19,7 +19,7 @@ export class RenderLayer extends BaseLayer {
         const transparentWithDepth: { primitive: Primitive; depth: number }[] = [];
 
         for (const primitive of RenderLayer.activeScene.drawCalls()) {
-            if (primitive.side.length === 0) continue;
+            if (primitive.sides.length === 0) continue;
 
             if (primitive.isTransparent) {
                 const model = primitive.modelMatrix;
@@ -52,11 +52,13 @@ export class RenderLayer extends BaseLayer {
                 sceneObject.updateWorldMatrix(RenderLayer.device)
             }
         })
-        RenderLayer.activeScene._materialUpdateQueue.forEach(material => {
-            this.gpuCache.changeBindGroupEntries(material)
+
+        RenderLayer.activeScene.pipelineUpdateQueue.forEach(prim => {
+            this.gpuCache.changePipeline(prim);
         })
+
+        RenderLayer.activeScene.pipelineUpdateQueue.clear()
         RenderLayer.activeScene._sceneObjectUpdateQueue.clear()
-        RenderLayer.activeScene._materialUpdateQueue.clear()
     }
 
 

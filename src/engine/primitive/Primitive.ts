@@ -5,6 +5,10 @@ import {mat3, mat4} from "gl-matrix";
 import {Geometry} from "../geometry/Geometry.ts";
 import {Material} from "../Material/Material.ts";
 import {generateID} from "../../helpers/global.helper.ts";
+import {SceneObject} from "../sceneObject/sceneObject.ts";
+import {GPUCache} from "../GPURenderSystem/GPUCache/GPUCache.ts";
+import {ToneMapping} from "../../helpers/postProcessUtils/postProcessUtilsTypes.ts";
+import {Scene} from "../scene/Scene.ts";
 
 export type Side = "front" | "back" | "none"
 
@@ -20,11 +24,10 @@ export type PrimitiveHashes = {
 export class Primitive {
     id!: number;
     pipelines = new Map<Side, GPURenderPipeline>();
-    bindGroups = new Map<string, { bindGroup: GPUBindGroup, location: number }>();
     vertexBuffers: GPUBuffer[] = [];
     lodRanges: LODRange[] | undefined = undefined;
     indexData: TypedArray | undefined = undefined;
-    side: (Side)[] = [];
+    sides: (Side)[] = [];
     isTransparent: boolean = false;
     vertexBufferDescriptors: (GPUVertexBufferLayout & { name: string; })[] = []
     pipelineDescriptors = new Map<Side, RenderState>();
@@ -34,6 +37,7 @@ export class Primitive {
     indirectBufferStartIndex!: number;
     geometry!: Geometry
     material!: Material
+    sceneObject!: SceneObject
     primitiveHashes = new Map<Side, PrimitiveHashes>();
 
 
@@ -52,6 +56,20 @@ export class Primitive {
 
     setGeometry(geometry: Geometry) {
         this.geometry = geometry;
+    }
+
+    updateExposure(exposure: number,scene:Scene) {
+        this.pipelineDescriptors.forEach(descriptor => {
+            descriptor.fragmentConstants ? descriptor.fragmentConstants.EXPOSURE = exposure : null
+        })
+        scene.pipelineUpdateQueue.add(this)
+    }
+
+    updateToneMapping(toneMapping: ToneMapping,scene:Scene) {
+        this.pipelineDescriptors.forEach(descriptor => {
+            descriptor.fragmentConstants ? descriptor.fragmentConstants.TONE_MAPPING_NUMBER = toneMapping : null
+        })
+        scene.pipelineUpdateQueue.add(this)
     }
 
     setVertexBufferDescriptors(descriptors: (GPUVertexBufferLayout & { name: string; })[]) {
@@ -74,10 +92,6 @@ export class Primitive {
         this.pipelines.set(side, pipeline);
     }
 
-    setBindGroup(label: string, value: { bindGroup: GPUBindGroup, location: number }) {
-        this.bindGroups.set(label, value);
-    }
-
     setVertexBuffers(vertexBuffers: GPUBuffer) {
         this.vertexBuffers.push(vertexBuffers);
     }
@@ -87,7 +101,27 @@ export class Primitive {
     }
 
     setSide(side: Side) {
-        this.side.push(side)
+        this.sides.push(side)
+    }
+
+    setSceneObject(sceneObject: SceneObject) {
+        this.sceneObject = sceneObject;
+    }
+
+    setRenderSetup(geometryBindGroup: GPUBindGroup, gpuCache: GPUCache) {
+        this.sides.forEach(side => {
+            const hashes = this.primitiveHashes.get(side)!;
+            const setup = gpuCache.getRenderSetup(
+                hashes.pipeline,
+                hashes.pipelineLayout,
+                hashes.materialBindGroup,
+                this.geometry.hashes.bindGroupLayout!,
+                hashes.shader
+            )
+            this.setPipeline(side, setup.pipeline)
+            this.material.bindGroup = setup.materialBindGroup;
+            this.geometry.bindGroup = geometryBindGroup;
+        })
     }
 
     setModelMatrix(modelMatrix: mat4) {

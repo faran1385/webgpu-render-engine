@@ -93,7 +93,8 @@ export class MaterialDescriptorGenerator {
                     conversion: getTextureFromData,
                     conversionType: "texture",
                     size: targetRenderData.texture.size,
-                    data: targetRenderData.texture.data
+                    data: targetRenderData.texture.data,
+                    format: targetRenderData.pbrBindPoint === PBRBindPoint.BASE_COLOR ? "rgba8unorm-srgb" : "rgba8unorm"
                 },
                 materialKey: RenderFlag[material.renderMethod]
             })
@@ -218,7 +219,9 @@ export class MaterialDescriptorGenerator {
                         conversion: getTextureFromData,
                         conversionType: "texture",
                         size: item.texture?.size,
-                        data: item.texture?.data
+                        data: item.texture?.data,
+                        format: item.pbrBindPoint === PBRBindPoint.BASE_COLOR ? "rgba8unorm-srgb" : "rgba8unorm"
+
                     },
                     materialKey: RenderFlag[key]
                 })

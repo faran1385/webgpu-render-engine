@@ -87,15 +87,15 @@ export class IndirectDraw {
         const index = this.scene.largeBufferMap.get("Index") as LargeBuffer
 
         if (environment) {
-            environment.side.forEach((side) => {
+            environment.sides.forEach((side) => {
                 const pipeline = environment.pipelines.get(side);
                 if (!pipeline) throw new Error("pipeline not found");
 
                 pass.setPipeline(pipeline)
                 pass.setBindGroup(0, this.scene.globalBindGroup)
-                environment.bindGroups.forEach(({bindGroup, location}) => {
-                    pass.setBindGroup(location, bindGroup)
-                })
+                pass.setBindGroup(1,environment.material.bindGroup)
+                pass.setBindGroup(2,environment.geometry.bindGroup)
+
                 environment.vertexBuffers.forEach((buffer, i) => {
                     pass.setVertexBuffer(i, buffer)
                 })
@@ -112,14 +112,14 @@ export class IndirectDraw {
 
         }
         primitives.forEach((item) => {
-            item.side.forEach((side) => {
+            item.sides.forEach((side) => {
                 const pipeline = item.pipelines.get(side)!;
 
                 pass.setPipeline(pipeline)
                 pass.setBindGroup(0, this.scene.globalBindGroup)
-                item.bindGroups.forEach(({bindGroup, location}) => {
-                    pass.setBindGroup(location, bindGroup)
-                })
+                pass.setBindGroup(1,item.material.bindGroup)
+                pass.setBindGroup(2,item.geometry.bindGroup)
+
                 item.vertexBuffers.forEach((buffer, i) => {
 
 

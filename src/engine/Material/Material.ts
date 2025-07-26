@@ -16,7 +16,7 @@ import {Primitive} from "../primitive/Primitive.ts";
 export type TextureData = {
     texture: {
         data: TypedArray,
-        size: vec2
+        size: vec2,
     } | null,
     factor: number | number[],
     pbrBindPoint: number,
@@ -24,27 +24,25 @@ export type TextureData = {
 }
 
 type Hashes = {
-    bindGroupLayout: number | null,
-    bindGroup: number | null
-    sampler: number | null
-    shader: number | null
+    bindGroupLayout: { old: number | null, new: number | null },
+    bindGroup: { old: number | null, new: number | null }
+    sampler: { old: number | null, new: number | null }
+    shader: { old: number | null, new: number | null }
 }
 
 export class Material extends BaseLayer {
     id: number;
-    renderMethod: RenderFlag = RenderFlag.PBR
+    renderMethod: RenderFlag = RenderFlag.BASE_COLOR
     samplerInfo: {
         descriptor: GPUSamplerDescriptor | null,
         bindPoint: number | null
-        needsUpdate: boolean,
-    } = {descriptor: null, needsUpdate: false, bindPoint: null}
+    } = {descriptor: null, bindPoint: null}
     textureMap: Map<RenderFlag, TextureData> = new Map();
     descriptor: {
         layout: GPUBindGroupLayoutEntry[] | null,
         entries: BindGroupEntryCreationType[] | null,
         hashEntries: HashCreationBindGroupEntry | null,
-        needsUpdate: boolean
-    } = {layout: null, entries: null, hashEntries: null, needsUpdate: false}
+    } = {layout: null, entries: null, hashEntries: null}
     name!: string;
     alpha: {
         mode: "OPAQUE" | "MASK" | "BLEND",
@@ -52,11 +50,20 @@ export class Material extends BaseLayer {
     } = {mode: "OPAQUE", cutoff: 0}
     primitives: Set<Primitive> = new Set()
     hashes: Hashes = {
-        bindGroup: null, bindGroupLayout: null, sampler: null, shader: null
+        bindGroup: {old: null, new: null},
+        bindGroupLayout: {old: null, new: null},
+        sampler: {old: null, new: null},
+        shader: {old: null, new: null}
     }
+    bindGroup!: GPUBindGroup
     resources: Map<string, GPUBuffer | GPUTexture | GPUSampler> = new Map();
     isDoubleSided: boolean = false
     shaderCode: string | null = null
+    updateStates = {
+        descriptor: false,
+        shader: false
+    }
+
 
     constructor(device: GPUDevice, canvas: HTMLCanvasElement, ctx: GPUCanvasContext, material: MaterialType | null) {
         super(device, canvas, ctx);
@@ -99,22 +106,53 @@ export class Material extends BaseLayer {
         }
     }
 
+    setBindGroup(bindGroup: GPUBindGroup) {
+        this.bindGroup = bindGroup;
+    }
+
     setShaderCodeString(str: string) {
         this.shaderCode = str
     }
 
-    async setDescriptor(layout: GPUBindGroupLayoutEntry[], entries: BindGroupEntryCreationType[], hashEntries: HashCreationBindGroupEntry) {
-        this.descriptor = {
-            layout,
-            entries,
-            hashEntries,
-            needsUpdate: true
-        }
-        console.log(this.descriptor)
+
+    setBaseColorFactor(newValue:[number,number,number,number]) {
+        const factors = this.resources.get('Factors') as (GPUBuffer | undefined)
+        if (!factors) throw new Error("factors does not exist on resources");
+
+
+
+        BaseLayer.device.queue.writeBuffer(factors, PBRFactorsStartPoint.BASE_COLOR * 4, new Float32Array(newValue));
+    }
+
+    setMetallicFactor(newValue: number) {
+        const factors = this.resources.get('Factors') as (GPUBuffer | undefined)
+        if (!factors) throw new Error("factors does not exist on resources");
+
+
+        const singleFloat = new Float32Array([newValue]);
+
+        BaseLayer.device.queue.writeBuffer(factors, PBRFactorsStartPoint.METALLIC_ROUGHNESS * 4, singleFloat);
+    }
+
+    setRoughnessFactor(newValue: number) {
+        const factors = this.resources.get('Factors') as (GPUBuffer | undefined)
+        if (!factors) throw new Error("factors does not exist on resources");
+
+
+        const singleFloat = new Float32Array([newValue]);
+
+        BaseLayer.device.queue.writeBuffer(factors, (PBRFactorsStartPoint.METALLIC_ROUGHNESS + 1) * 4, singleFloat);
     }
 
     setHashes(key: keyof Hashes, value: number) {
-        this.hashes[key] = value
+        const oldVal = this.hashes[key].new;
+
+        if (value !== oldVal) {
+            this.hashes[key] = {
+                new: value,
+                old: oldVal
+            }
+        }
     }
 
     addPrimitive(prim: Primitive) {
@@ -135,7 +173,6 @@ export class Material extends BaseLayer {
                 entries,
                 hashEntries,
                 layout,
-                needsUpdate: false
             }
 
         } else {
@@ -144,7 +181,6 @@ export class Material extends BaseLayer {
                 entries,
                 hashEntries,
                 layout,
-                needsUpdate: false
             }
         }
     }

@@ -3,7 +3,7 @@ import {vec3} from "gl-matrix";
 import {Material} from "../../Material/Material.ts"
 
 export type bufferConvertFunc = (device: GPUDevice, data: TypedArray, usage: GPUBufferUsageFlags, label: string) => GPUBuffer
-export type textureConvertFunc = (device: GPUDevice, size: vec2 | vec3, data: TypedArray) => Promise<GPUTexture>
+export type textureConvertFunc = (device: GPUDevice, size: vec2 | vec3, data: TypedArray, format: GPUTextureFormat) => Promise<GPUTexture>
 export type BindGroupEntryCreationType = {
     textureDescriptor?: {
         texture: GPUTexture,
@@ -15,6 +15,7 @@ export type BindGroupEntryCreationType = {
     } & ({
         conversionType: "texture",
         size: vec2 | vec3
+        format: GPUTextureFormat,
     } | {
         conversionType: "buffer",
         label: string,
@@ -39,4 +40,6 @@ export type RenderState = {
     primitive: GPUPrimitiveState,
     targets: GPUColorTargetState[]
     depthStencil: GPUDepthStencilState
+    vertexConstants?: Record<string, number>
+    fragmentConstants?: Record<string, number>
 }

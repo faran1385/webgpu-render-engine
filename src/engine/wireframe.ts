@@ -172,7 +172,7 @@ export class Wireframe extends BaseLayer {
             const imageBitmap = await createImageBitmap(new Blob([geom.material.texture.array]));
             const texture = this.device.createTexture({
                 size: [geom.material.texture.size[0], geom.material.texture.size[1]],
-                format: 'rgba8unorm',
+                format: 'bgra8unorm',
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
             });
 

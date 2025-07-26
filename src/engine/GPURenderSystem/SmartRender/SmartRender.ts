@@ -1,14 +1,10 @@
 import {Node} from "@gltf-transform/core";
 
-import {
-    SmartRenderInitEntryPassType, PipelineEntry
-} from "../../../renderers/modelRenderer.ts";
+import {PipelineEntry, SmartRenderInitEntryPassType} from "../../../renderers/modelRenderer.ts";
 
 import {SceneObject} from "../../sceneObject/sceneObject.ts";
 import {ShaderGenerator} from "../ShaderGenerator/ShaderGenerator.ts";
-import {
-    MaterialDescriptorGenerator
-} from "../MaterialDescriptorGenerator/MaterialDescriptorGenerator.ts";
+import {MaterialDescriptorGenerator} from "../MaterialDescriptorGenerator/MaterialDescriptorGenerator.ts";
 import {PipelineShaderLocations, RenderFlag} from "../MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
 
 export class SmartRender {
@@ -18,7 +14,7 @@ export class SmartRender {
     static shaderGenerator: ShaderGenerator;
     static materialBindGroupGenerator: MaterialDescriptorGenerator;
 
-    constructor(device: GPUDevice,format:GPUTextureFormat) {
+    constructor(device: GPUDevice, format: GPUTextureFormat) {
         SmartRender.device = device;
         SmartRender.format = format;
         SmartRender.shaderGenerator = new ShaderGenerator()
@@ -129,8 +125,24 @@ export class SmartRender {
                             name: `NORMAL`
                         })
                     }
+                    if (geometry.dataList.get(`TANGENT`)) {
+                        buffers.push({
+                            arrayStride: 3 * 4,
+                            attributes: [{
+                                offset: 0,
+                                shaderLocation: PipelineShaderLocations.TANGENT,
+                                format: "float32x3"
+                            }],
+                            name: `TANGENT`
+                        })
+                    }
                     const isDoubleSided = primitive.material.isDoubleSided
                     const isTransparent = primitive.material.alpha.mode === "BLEND"
+                    const canNormalMap = Boolean(primitive.material.textureMap.get(RenderFlag.NORMAL)?.texture && primitive.geometry.dataList.has("NORMAL") && primitive.geometry.dataList.has("TANGENT"))
+
+                    if (primitive.material.renderMethod === RenderFlag.PBR) {
+                        primitive.sceneObject.scene.addExposureDependent(primitive)
+                    }
 
                     if (isTransparent && isDoubleSided) {
                         primitive.setSide("back")
@@ -159,8 +171,12 @@ export class SmartRender {
                                         operation: "add",
                                     },
                                 },
-                                format: SmartRender.format
+                                format: SmartRender.format,
                             }],
+                            fragmentConstants: primitive.material.renderMethod === RenderFlag.PBR ? {
+                                TONE_MAPPING_NUMBER: primitive.sceneObject.scene.getToneMapping(primitive),
+                                EXPOSURE: primitive.sceneObject.scene.environmentManager.getExposure()
+                            } : undefined
                         })
                         primitive.setPipelineDescriptor("back", {
                             primitive: {
@@ -188,6 +204,10 @@ export class SmartRender {
                                 },
                                 format: SmartRender.format
                             }],
+                            fragmentConstants: primitive.material.renderMethod === RenderFlag.PBR ? {
+                                TONE_MAPPING_NUMBER: primitive.sceneObject.scene.getToneMapping(primitive),
+                                EXPOSURE: primitive.sceneObject.scene.environmentManager.getExposure()
+                            } : undefined
                         })
 
                     } else {
@@ -219,8 +239,13 @@ export class SmartRender {
                                 } : undefined,
                                 format: SmartRender.format
                             }],
+                            fragmentConstants: primitive.material.renderMethod === RenderFlag.PBR ? {
+                                TONE_MAPPING_NUMBER: primitive.sceneObject.scene.getToneMapping(primitive),
+                                EXPOSURE: primitive.sceneObject.scene.environmentManager.getExposure()
+                            } : undefined
                         })
                     }
+                    console.log(canNormalMap)
                     primitive.setIsTransparent(isTransparent)
                     primitive.setVertexBufferDescriptors(buffers)
                     output.push({

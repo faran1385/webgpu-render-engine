@@ -7,17 +7,20 @@ import {
 import {Primitive} from "../../primitive/Primitive.ts";
 import {
     distributionGGX,
-    fresnelSchlick, fresnelSchlickRoughness,
-    geometrySchlickGGX,
+    fresnelSchlick,
+    fresnelSchlickRoughness,
     geometrySmith
 } from "../../../helpers/pbrShaderFunctions.ts";
-import {postProcessUtilsMap} from "../../postProcessUtils/postProcessUtilsShaderCodes.ts";
-import {PostProcessUtils} from "../../postProcessUtils/postProcessUtilsTypes.ts";
+import {
+    EXPOSURE,
+    GAMMA_CORRECTION,
+    TONE_MAPPING, TONE_MAPPING_CALL
+} from "../../../helpers/postProcessUtils/postProcessUtilsShaderCodes.ts";
 
 
 export class ShaderGenerator {
 
-    baseVertex(hasBoneData: boolean, hasTexture: boolean, hasNormal: boolean): string {
+    baseVertex(hasBoneData: boolean, hasTexture: boolean, hasNormal: boolean, useNormalMap: boolean): string {
         return `
 struct vsIn {
     @location(${PipelineShaderLocations.POSITION}) pos: vec3f,
@@ -29,12 +32,20 @@ struct vsIn {
     ${hasNormal ? `
     @location(${PipelineShaderLocations.NORMAL}) normal: vec3<f32>,
     ` : ""}
+    ${useNormalMap ? `
+        @location(${PipelineShaderLocations.TANGENT}) tangent: vec4<f32>,
+    ` : ""}
 };
 
 struct vsOut {
     @builtin(position) clipPos: vec4f,
     ${hasTexture ? `@location(0) uv: vec2f,` : ""}
     ${hasTexture ? `@location(2) normal: vec3f,` : ""}
+    ${useNormalMap ?
+            `@location(3) TBN0: vec3f,
+             @location(4) TBN1: vec3f,
+             @location(5) TBN2: vec3f,`
+            : ""}
     @location(1) worldPos:vec3f,
 };
 
@@ -43,6 +54,15 @@ struct vsOut {
 ${!hasBoneData ? "@group(2) @binding(0) var<uniform> modelMatrix:mat4x4<f32>;" : ""}
 
 ${hasBoneData ? `@group(2) @binding(1) var<storage, read> jointsMatrices: array<mat4x4<f32>>;` : ""}
+
+${hasBoneData ? `
+fn skinMat(pos : vec4<f32>) -> vec4<f32> {
+  return jointMats[0] * pos * in.weights.x +
+         jointMats[1] * pos * in.weights.y +
+         jointMats[2] * pos * in.weights.z +
+         jointMats[3] * pos * in.weights.w;
+}
+` : ''}
 @vertex
 fn vs(in: vsIn) -> vsOut {
     var output: vsOut;
@@ -56,22 +76,36 @@ fn vs(in: vsIn) -> vsOut {
 
     let pos = vec4f(in.pos, 1.0);
 
-    ${hasBoneData ? `
-        let skinned =
-        (joint0 * pos) * in.weights.x +
-        (joint1 * pos) * in.weights.y +
-        (joint2 * pos) * in.weights.z +
-        (joint3 * pos) * in.weights.w;
-    ` : ""}
+    ${hasBoneData ? `let skinnedPos : vec4<f32> = skinMat(vec4<f32>(in.position, 1.0));` : ""}
     ${!hasBoneData ? `var worldPos = modelMatrix * pos;` : ""}
     ${hasBoneData ? `
-        output.clipPos = projectionMatrix * viewMatrix * skinned;
+        output.clipPos = projectionMatrix * viewMatrix * skinnedPos;
     
     ` : `
         output.clipPos = projectionMatrix * viewMatrix * worldPos;
     `}
     ${hasTexture ? `output.uv = in.uv;` : ""}
     ${hasNormal ? `output.normal = in.normal;` : ""}
+    ${useNormalMap ? hasBoneData ? `
+        let skinnedN : vec3<f32> = (skinMat(vec4<f32>(in.normal, 0.0))).xyz;
+        let skinnedT : vec3<f32> = (skinMat(vec4<f32>(in.tangent.xyz, 0.0))).xyz;
+        let handedness : f32    = in.tangent.w;
+        let N = normalize(skinnedN);
+        let T = normalize(skinnedT);
+        
+        let B = cross(N, T) * handedness;
+        
+        output.TBN0 = T;
+        output.TBN1 = B;
+        output.TBN2 = N;
+    ` : `
+        let T = normalize((modelMatrix * vec4(in.tangent.xyz, 0.0)).xyz);
+        let N = normalize((modelMatrix * vec4(in.normal, 0.0)).xyz);
+        let B = cross(N, T) * in.tangent.w;
+        output.TBN0 = T;
+        output.TBN1 = B;
+        output.TBN2 = N;
+    ` : ""}
     ${hasBoneData ? `
         output.worldPos = skinned.xyz;
     ` : `
@@ -85,7 +119,7 @@ fn vs(in: vsIn) -> vsOut {
         const hasTexture = Boolean(primitive.material.textureMap.get(renderFlag)?.texture);
         const hasBoneData = Boolean(primitive.geometry.dataList.get('JOINTS_0') && primitive.geometry.dataList.get("WEIGHTS_0"))
 
-        const generatedVertexCode = this.baseVertex(hasBoneData, hasTexture, false)
+        const generatedVertexCode = this.baseVertex(hasBoneData, hasTexture, false, false)
         const generatedFragmentCode = fragmentMap.get(renderFlag);
         if (!generatedFragmentCode) throw new Error("Shader key not found");
 
@@ -99,31 +133,36 @@ fn vs(in: vsIn) -> vsOut {
         const hasBoneData = Boolean(primitive.geometry.dataList.get('JOINTS_0') && primitive.geometry.dataList.get("WEIGHTS_0"))
 
         const hasNormal = Boolean(primitive.geometry.dataList.get('NORMAL'))
-        const generatedVertexCode = this.baseVertex(hasBoneData, true, hasNormal)
+        const canNormalMap = Boolean(primitive.material.textureMap.get(RenderFlag.NORMAL)?.texture && primitive.geometry.dataList.has("NORMAL") && primitive.geometry.dataList.has("TANGENT"))
+
+        const generatedVertexCode = this.baseVertex(hasBoneData, true, hasNormal, canNormalMap)
 
         return generatedVertexCode + '\n' + `
             struct DLight {
                 color: vec3f,
                 intensity: f32,
-                position: vec3f,
                 _pad: f32, 
+                _pad1: vec2f, 
+                position: vec3f,
             };
             
-            struct PLight {
+            struct ALight {
                 color: vec3f,
                 intensity: f32,
-                position: vec3f,
-                decay: f32,
+                _pad: f32, 
+                _pad1: vec2f, 
             };
             
+            
             struct LightCounts {
-                directionalCount: u32,
-                pointCount: u32,
-                _pad: vec2u, 
+                directional: u32,
+                ambient: u32,
+                _pad: u32, 
+                _pad1: u32, 
             };
         
-            @group(0) @binding(6) var<storage, read> pLights: array<PLight>;
             @group(0) @binding(7) var<storage, read> dLights: array<DLight>;
+            @group(0) @binding(6) var<storage, read> aLights: array<ALight>;
             @group(0) @binding(8) var<uniform> lightCounts: LightCounts;
             @group(0) @binding(9) var brdfLUT:texture_2d<f32>;
             @group(0) @binding(10) var prefilterMap:texture_cube<f32>;
@@ -145,76 +184,97 @@ fn vs(in: vsIn) -> vsOut {
             ${dataMap.get(RenderFlag.CLEARCOAT_ROUGHNESS)?.texture ? `@group(1) @binding(${PBRBindPoint.CLEARCOAT_ROUGHNESS}) var clearcoatRoughness:texture_2d<f32>;` : ""}
             ${dataMap.get(RenderFlag.CLEARCOAT_NORMAL)?.texture ? `@group(1) @binding(${PBRBindPoint.CLEARCOAT_NORMAL}) var clearcoatNormalTexture:texture_2d<f32>;` : ""}
             @group(0) @binding(4) var<uniform> cameraPosition:vec3f;
-            
+            const MAX_REFLECTION_LOD = ${primitive.sceneObject.scene.ENV_MAX_LOD_COUNT ?? 0};
             const PI = 3.14159265359;
-
             ${distributionGGX}
-            ${geometrySchlickGGX}
             ${geometrySmith}
             ${fresnelSchlick}
             ${fresnelSchlickRoughness}
-            ${postProcessUtilsMap.get(PostProcessUtils.GAMMA_CORRECTION)}
-            const MAX_REFLECTION_LOD = 4.0;
-                        
+            ${GAMMA_CORRECTION}
+            ${TONE_MAPPING}
+            ${EXPOSURE}
+            
+            override TONE_MAPPING_NUMBER = 0;
+            override EXPOSURE = 0.;
+            
+            
+            fn getIBL(NoV:f32,f0:vec3f,roughness:f32,metallic:f32,n:vec3f,v:vec3f,r:vec3f,albedo:vec3f,ao:f32)->vec3f{
+                let irradiance = textureSample(irradianceMap, iblSampler, n).xyz;  
+                let envBRDF  = textureSample(brdfLUT,iblSampler, vec2f(max(dot(n, v), 0.0), roughness)).rg;
+                let prefilteredColor = textureSampleLevel(prefilterMap,iblSampler, r,  roughness * MAX_REFLECTION_LOD).rgb; 
+                let F = fresnelSchlickRoughness(NoV, f0,roughness);
+                let kS = F;
+                var kD = 1.0 - kS;
+                kD *= 1.0 - metallic;
+            
+                let diffuse=irradiance * albedo.xyz * kD;
+                let specular = prefilteredColor * (F * envBRDF.x + envBRDF.y);
+                
+                return (diffuse + specular) * ao;
+            }
+            
             @fragment fn fs(in: vsOut) -> @location(0) vec4f {
                 var ao  = ${dataMap.get(RenderFlag.OCCLUSION)?.texture ? `textureSample(occlusionTexture,textureSampler,in.uv).r * factors[10];` : `factors[10];`}
-                let albedo = ${dataMap.get(RenderFlag.BASE_COLOR)?.texture ? `textureSample(baseColorTexture, textureSampler, in.uv) * vec4f(factors[0], factors[1], factors[2], factors[3])` : "vec4f(factors[0], factors[1], factors[2], factors[3])"};
+                var emissive  = ${dataMap.get(RenderFlag.EMISSIVE)?.texture ? `textureSample(emissiveTexture,textureSampler,in.uv).rgb * vec3f(factors[4],factors[5],factors[6]);` : `vec3f(factors[4],factors[5],factors[6]);`}
+                var albedo = ${dataMap.get(RenderFlag.BASE_COLOR)?.texture ? `textureSample(baseColorTexture, textureSampler, in.uv) * vec4f(factors[0], factors[1], factors[2], factors[3])` : "vec4f(factors[0], factors[1], factors[2], factors[3])"};
                 ${dataMap.get(RenderFlag.METALLIC)?.texture ? `let metallicRoughness = textureSample(metallicRoughnessTexture, textureSampler, in.uv);` : ``}
                 var metallic  = ${dataMap.get(RenderFlag.METALLIC)?.texture ? `metallicRoughness.b * factors[7];` : `factors[7];`}
                 var roughness  = ${dataMap.get(RenderFlag.ROUGHNESS)?.texture ? `metallicRoughness.g * factors[8];` : `factors[8];`}
-                roughness = clamp(0., 0.089, 1.0);
-                metallic=0.;
-                
-                let worldPosition=in.worldPos;
-                let n = normalize(in.normal);
-                let v = normalize(cameraPosition - worldPosition);
-                let r = reflect(-v, n);
-                
-                let f0 = mix(vec3f(0.04), albedo.xyz, metallic);
+                metallic = clamp(metallic, 0.0, 1.0);
+                roughness = clamp(roughness, 0.04, 1.0);
 
-                var lo = vec3f(0.0);
-                
-                for (var i:u32 = 0; i < lightCounts.directionalCount; i++) {
+                let worldPosition=in.worldPos;
+                let v=normalize(cameraPosition - worldPosition);
+                var n=normalize(in.normal);
+                ${canNormalMap ? `
+                    let TBN = mat3x3<f32>(in.TBN0, in.TBN1, in.TBN2);
+                    let mapNormal = textureSample(normalTexture, textureSampler, in.uv) * 2.0 - 1.0;
+                    n = normalize(TBN * mapNormal.xyz);
+                ` : ""}           
+                var f0 = vec3(0.04); 
+                f0 = mix(f0, albedo.xyz, metallic); 
+                let r = reflect(-v, n);  
+                var Lo = vec3(0.0);
+                let NoV=max(dot(n,v),0.);
+                for (var i:u32 = 0; i < lightCounts.directional; i++) {
                     let l = normalize(dLights[i].position - worldPosition);
                     let h = normalize(v + l);
+                    let HoV=max(dot(h,v),0.);
+                    let NoL=max(dot(n,l),0.);
                     
-                    let distance = length(dLights[i].position - worldPosition);
-                    let attenuation = 1.0 / (distance * distance);
-                    let radiance = (dLights[i].color * dLights[i].intensity) * attenuation;
+                    let radiance = dLights[i].color * dLights[i].intensity;
+
                     
-                    let d = distributionGGX(n, h, roughness);
-                    let g = geometrySmith(n, v, l, roughness);
-                    let f = fresnelSchlick(max(dot(h, v), 0.0), f0);
+                    let D=distributionGGX(n,h,roughness);
+                    let G=geometrySmith(n,v,l,roughness);
+                    let F=fresnelSchlick(NoV,f0);
                     
-                    let numerator = d * g * f;
-                    let denominator = 4.0 * max(dot(n, v), 0.0) * max(dot(n, l), 0.0) + 0.00001;
-                    let specular = numerator / denominator;
+                    let Ks=F;
+                    var Kd=vec3f(1.) - metallic;
+                    Kd *= 1. - Ks;
                     
-                    let kS = f;
-                    var kD = vec3f(1.0) - kS;
-                    kD *= 1.0 - metallic;
+                    let neom=D*F*G;
+                    let denom=4 * NoL * NoV + 0.0001;
+                    let specular=neom / denom;
                     
-                    let nDotL = max(dot(n, l), 0.00001);
-                    lo += (kD * albedo.xyz / PI + specular) * radiance * nDotL;
+
+                    Lo += (Kd * albedo.xyz / PI + specular) * radiance  * NoL; 
+                }
+                                
+                for (var i:u32 = 0; i < lightCounts.ambient; i++) {
+                    let F        = fresnelSchlickRoughness(NoV, f0, roughness);
+                    let kS       = F;
+                    let kD       = (1.0 - kS) * (1.0 - metallic);
+                    let Li=aLights[i].color * aLights[i].intensity;
+                    Lo += kD * albedo.xyz / PI * Li;
                 }
                 
-                let f = fresnelSchlickRoughness(max(dot(n, v), 0.00001), f0, roughness);
-                let kS = f;
-                var kD = vec3f(1.0) - kS;
-                kD *= 1.0 - metallic;
+                Lo+=getIBL(NoV,f0,roughness,metallic,n,v,r,albedo.xyz,ao);
                 
-                let irradiance = textureSample(irradianceMap, iblSampler, n).rgb;
-                let diffuse = irradiance * albedo.xyz;
-                
-                let prefilteredColor = textureSampleLevel(prefilterMap, iblSampler, r, roughness * MAX_REFLECTION_LOD).rgb;
-                let brdf = textureSample(brdfLUT, iblSampler, vec2f(max(dot(n, v), 0.0), roughness)).rg;
-                let specular = prefilteredColor * (f * brdf.x + brdf.y);
-                
-                let ambient = (kD * diffuse + specular) * ao;
-
-                var color = ambient + lo;
-                color = applyGamma(color,1);
-
+                var color=Lo;
+                color=applyExposure(color,EXPOSURE);
+                ${TONE_MAPPING_CALL}
+                color = applyGamma(color,2.2); 
                 return vec4f(vec3f(color),1.);
             }
 

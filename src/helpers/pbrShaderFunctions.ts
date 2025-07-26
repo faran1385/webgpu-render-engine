@@ -1,46 +1,49 @@
+
+
 export const distributionGGX = /* wgsl */ `
-fn distributionGGX(n: vec3f, h: vec3f, roughness: f32) -> f32 {
-  let a = roughness * roughness;
-  let a2 = a * a;
-  let nDotH = max(dot(n, h), 0.0);
-  let nDotH2 = nDotH * nDotH;
-  var denom = (nDotH2 * (a2 - 1.0) + 1.0);
-  denom = PI * denom * denom;
-  return a2 / denom;
+fn distributionGGX(N:vec3f,H:vec3f, r: f32) -> f32 {
+    let a=r*r;
+    let a2=a*a;
+    let NoH  = max(dot(N, H), 0.0);
+    let NoH2=NoH*NoH;
+    var denominator=NoH2 * (a2 - 1) + 1;
+    denominator = PI * (denominator * denominator);
+    return a2 / denominator;
 }
 `;
 
-export const geometrySchlickGGX = /* wgsl */ `
-fn geometrySchlickGGX(nDotV: f32, roughness: f32) -> f32 {
-  let r = (roughness + 1.0);
-  let k = (r * r) / 8.0;
-  return nDotV / (nDotV * (1.0 - k) + k);
-}
-`;
 
-export const geometrySmith = /* wgsl */ `
-fn geometrySmith(n: vec3f, v: vec3f, l: vec3f, roughness: f32) -> f32 {
-  let nDotV = max(dot(n, v), 0.0);
-  let nDotL = max(dot(n, l), 0.0);
-  let ggx2 = geometrySchlickGGX(nDotV, roughness);
-  let ggx1 = geometrySchlickGGX(nDotL, roughness);
-  return ggx1 * ggx2;
+export const geometrySmith = `
+fn GeometrySchlickGGX(NoV:f32, roughness:f32)->f32{
+    let r = (roughness + 1.0);
+    let k = (r * r) / 8.0;
+    return NoV / (NoV * (1.0 - k) + k);
 }
-`;
 
+
+  
+fn geometrySmith(N:vec3f, V:vec3f, L:vec3f,k:f32)->f32{
+    let NoV = max(dot(N, V), 0.0);
+    let NoL = max(dot(N, L), 0.0);
+    let ggx1 = GeometrySchlickGGX(NoV, k);
+    let ggx2 = GeometrySchlickGGX(NoL, k);
+    
+    return ggx1 * ggx2;
+}
+`
 export const fresnelSchlick = /* wgsl */ `
-fn fresnelSchlick(cosTheta: f32, f0: vec3f) -> vec3f {
-  return f0 + (1.0 - f0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+fn fresnelSchlick(cosTheta:f32, F0:vec3f)->vec3f{
+    return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
 }
 `;
-
 export const fresnelSchlickRoughness = /* wgsl */ `
-fn fresnelSchlickRoughness(cosTheta: f32, f0: vec3f, roughness: f32) -> vec3f {
-  return f0 + (max(vec3(1.0 - roughness), f0) - f0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-}
+fn fresnelSchlickRoughness(cosTheta:f32, F0:vec3f,roughness:f32)->vec3f{
+    return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+    }
 `;
 
 export const radicalInverseVdC = /* wgsl */ `
+// http://holger.dammertz.org/stuff/notes_HammersleyOnHemisphere.html
 // efficient VanDerCorpus calculation.
 fn radicalInverseVdC(bits: u32) -> f32 {
   var result = bits;
@@ -79,3 +82,56 @@ fn importanceSampleGGX(xi: vec2f, n: vec3f, roughness: f32) -> vec3f {
   return normalize(sampleVec);
 }
 `;
+
+export const toneMappings = {
+    reinhard: /* wgsl */ `
+  fn toneMapping(color: vec3f) -> vec3f {
+    return color / (color + vec3f(1.0));
+  }
+  `,
+    uncharted2: /* wgsl */ `
+  fn uncharted2Helper(x: vec3f) -> vec3f {
+    let a = 0.15;
+    let b = 0.50;
+    let c = 0.10;
+    let d = 0.20;
+    let e = 0.02;
+    let f = 0.30;
+
+    return (x * (a * x + c * b) + d * e) / (x * (a * x + b) + d * f) - e / f;
+  }
+
+  fn toneMapping(color: vec3f) -> vec3f {
+    let w = 11.2;
+    let exposureBias = 2.0;
+    let current = uncharted2Helper(exposureBias * color);
+    let whiteScale = 1 / uncharted2Helper(vec3f(w));
+    return current * whiteScale;
+  }
+  `,
+    aces: /* wgsl */ `
+  fn toneMapping(color: vec3f) -> vec3f {
+    let a = 2.51;
+    let b = 0.03;
+    let c = 2.43;
+    let d = 0.59;
+    let e = 0.14;
+
+    return (color * (a * color + b)) / (color * (c * color + d) + e);
+  }
+  `,
+    lottes: /* wgsl */ `
+  fn toneMapping(color: vec3f) -> vec3f {
+    let a = vec3f(1.6);
+    let d = vec3f(0.977);
+    let hdrMax = vec3f(8.0);
+    let midIn = vec3f(0.18);
+    let midOut = vec3f(0.267);
+
+    let b = (-pow(midIn, a) + pow(hdrMax, a) * midOut) / ((pow(hdrMax, a * d) - pow(midIn, a * d)) * midOut);
+    let c = (pow(hdrMax, a * d) * pow(midIn, a) - pow(hdrMax, a) * pow(midIn, a * d) * midOut) / ((pow(hdrMax, a * d) - pow(midIn, a * d)) * midOut);
+
+    return pow(color, a) / (pow(color, a * d) * b + c);
+  }
+  `,
+};

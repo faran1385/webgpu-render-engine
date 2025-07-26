@@ -24,16 +24,16 @@ export class HashGenerator {
 
     private encodeSampler(desc: GPUSamplerDescriptor): string {
         return [
-            desc.addressModeU ?? "none",
-            desc.addressModeV ?? "none",
-            desc.addressModeW ?? "none",
-            desc.magFilter ?? "none",
-            desc.minFilter ?? "none",
-            desc.mipmapFilter ?? "none",
-            desc.lodMinClamp?.toFixed(4) ?? "0.0000",
-            desc.lodMaxClamp?.toFixed(4) ?? "32.0000",
-            desc.compare ?? "none",
-            desc.maxAnisotropy ?? 1
+            desc?.addressModeU ?? "none",
+            desc?.addressModeV ?? "none",
+            desc?.addressModeW ?? "none",
+            desc?.magFilter ?? "none",
+            desc?.minFilter ?? "none",
+            desc?.mipmapFilter ?? "none",
+            desc?.lodMinClamp?.toFixed(4) ?? "0.0000",
+            desc?.lodMaxClamp?.toFixed(4) ?? "32.0000",
+            desc?.compare ?? "none",
+            desc?.maxAnisotropy ?? 1
         ].join("-");
     }
 
@@ -190,6 +190,30 @@ export class HashGenerator {
         str += ds.stencilReadMask ?? 0xffffffff;
         str += ds.stencilWriteMask ?? 0xffffffff;
         str += ds.format?.length ?? -1;
+
+        const vConst = state.vertexConstants;
+        if (vConst && Object.keys(vConst).length > 0) {
+            const keys = Object.keys(vConst).sort();
+            for (const key of keys) {
+                str += key.length;
+                str += key;
+                str += vConst[key];
+            }
+        } else {
+            str += "0";
+        }
+
+        const fConst = state.fragmentConstants;
+        if (fConst && Object.keys(fConst).length > 0) {
+            const keys = Object.keys(fConst).sort();
+            for (const key of keys) {
+                str += key.length;
+                str += key;
+                str += fConst[key];
+            }
+        } else {
+            str += "0";
+        }
 
         return str;
     }

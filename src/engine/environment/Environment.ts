@@ -4,8 +4,7 @@ import {Scene} from "../scene/Scene.ts";
 import {
     cubeIndices,
     cubemapVertexShader,
-    cubemapViewMatricesInverted,
-    cubePositions,
+    cubePositions, views,
 } from "./cubeData.ts";
 import {
     distributionGGX,
@@ -21,14 +20,14 @@ export class Environment {
     private scene!: Scene;
     public irradianceMap: null | GPUTexture = null;
     public prefilteredMap: null | GPUTexture = null;
+    private exposure = 1;
 
     constructor(device: GPUDevice, scene: Scene) {
         this.device = device;
         this.scene = scene;
     }
 
-    private createIrradiance(cubeMap: GPUTexture) {
-        const IRRADIANCE_SIZE = 32;
+    private createIrradiance(cubeMap: GPUTexture, IRRADIANCE_SIZE: number) {
         const irradiance = this.device.createTexture({
             size: [IRRADIANCE_SIZE, IRRADIANCE_SIZE, 6],
             label: "irradiance map",
@@ -57,13 +56,14 @@ export class Environment {
           const PI = 3.14159265359;
         
           @fragment
-          fn main(@location(0) worldPosition: vec4f) -> @location(0) vec4f {
-            let normal = normalize(worldPosition.xyz);
+          fn main(@location(0) worldPosition: vec3f) -> @location(0) vec4f {
+            let normal = normalize(vec3f(worldPosition.x,-worldPosition.y,worldPosition.z));
             var irradiance = vec3f(0.0, 0.0, 0.0);
         
-            var up = vec3f(0.0, 1.0, 0.0);
+            var up = select(vec3f(0,1,0), vec3f(1,0,0),abs(normal.y) > 0.99);
             let right = normalize(cross(up, normal));
             up = normalize(cross(normal, right));
+
         
             var sampleDelta = 0.025;
             var nrSamples = 0.0;
@@ -78,7 +78,11 @@ export class Environment {
                 nrSamples = nrSamples + 1.0;
               }
             }
-            irradiance = PI * irradiance * (1.0 / nrSamples);
+            let dTheta = sampleDelta;
+            let dPhi = sampleDelta;
+            irradiance = irradiance * dTheta * dPhi;
+
+            
         
             return vec4f(irradiance, 1.0);
           }
@@ -171,7 +175,7 @@ export class Environment {
                 },
             });
 
-            const view = cubemapViewMatricesInverted[i];
+            const view = views[i];
             const modelViewProjectionMatrix = mat4.multiply(mat4.create(), projection, view);
             updateBuffer(this.device, uniformBuffer, modelViewProjectionMatrix as Float32Array);
 
@@ -192,11 +196,12 @@ export class Environment {
     }
 
 
-    private createPrefiltered(cubeMap: GPUTexture,SAMPLE_COUNT:number) {
-        const PREFILTER_MAP_SIZE = 128;
-        const ROUGHNESS_LEVELS = 5;
+    private createPrefiltered(cubeMap: GPUTexture, SAMPLE_COUNT: number, TEXTURE_RESOLUTION: number) {
+        const ROUGHNESS_LEVELS = Math.floor(Math.log2(TEXTURE_RESOLUTION));
+        this.scene.ENV_MAX_LOD_COUNT = ROUGHNESS_LEVELS;
+
         const prefilteredTexture = this.device.createTexture({
-            size: [PREFILTER_MAP_SIZE, PREFILTER_MAP_SIZE, 6],
+            size: [TEXTURE_RESOLUTION, TEXTURE_RESOLUTION, 6],
             dimension: "2d",
             format: "rgba8unorm",
             usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
@@ -205,7 +210,7 @@ export class Environment {
 
         const depthTexture = this.device.createTexture({
             label: "prefilter map depth",
-            size: {width: PREFILTER_MAP_SIZE, height: PREFILTER_MAP_SIZE},
+            size: {width: TEXTURE_RESOLUTION, height: TEXTURE_RESOLUTION},
             format: "depth24plus",
             usage: GPUTextureUsage.RENDER_ATTACHMENT,
             mipLevelCount: ROUGHNESS_LEVELS,
@@ -214,7 +219,7 @@ export class Environment {
         const vertexShader = /* wgsl */ `
         struct VSOut {
           @builtin(position) Position: vec4f,
-          @location(0) worldPosition: vec4f,
+          @location(0) worldPosition: vec3f,
         };
         
         struct Uniforms {
@@ -229,7 +234,7 @@ export class Environment {
           var output: VSOut;
           let worldPosition: vec4f=vec4f(position,1.);
           output.Position = uniforms.modelViewProjectionMatrix * worldPosition;
-          output.worldPosition = worldPosition;
+          output.worldPosition = worldPosition.xyz;
           return output;
         }
         `;
@@ -252,9 +257,9 @@ export class Environment {
         ${importanceSampleGGX}
         
         @fragment
-        fn main(@location(0) worldPosition: vec4f) -> @location(0) vec4f {
-          var n = normalize(worldPosition.xyz);
-        
+        fn main(@location(0) worldPosition: vec3f) -> @location(0) vec4f {
+          var n = normalize(vec3f(worldPosition.x,-worldPosition.y,worldPosition.z));
+
           // Make the simplifying assumption that V equals R equals the normal
           let r = n;
           let v = r;
@@ -279,7 +284,7 @@ export class Environment {
               let hDotV = max(dot(h, v), 0.0);
               let pdf = d * nDotH / (4.0 * hDotV) + 0.0001;
         
-              let resolution = ${PREFILTER_MAP_SIZE}.0; // resolution of source cubemap (per face)
+              let resolution = ${TEXTURE_RESOLUTION}.0; // resolution of source cubemap (per face)
               let saTexel = 4.0 * PI / (6.0 * resolution * resolution);
               let saSample = 1.0 / (f32(SAMPLE_COUNT) * pdf + 0.0001);
         
@@ -398,7 +403,7 @@ export class Environment {
                     },
                 });
 
-                const view = cubemapViewMatricesInverted[i];
+                const view = views[i];
                 const modelViewProjectionMatrix = mat4.multiply(mat4.create(), projection, view);
 
                 this.device.queue.writeBuffer(
@@ -425,7 +430,14 @@ export class Environment {
         return prefilteredTexture;
     }
 
-    private initBRDFLUT() {
+    setExposure(number: number) {
+        this.exposure = number;
+        this.scene.updateExposure(this.exposure)
+    }
+
+    getExposure(){return this.exposure}
+
+    public initBRDFLUT() {
         if (this.scene.brdfLut) return;
         const BRDF_LUT_SIZE = 64;
 
@@ -594,9 +606,9 @@ export class Environment {
         this.scene.setBrdfLut = texture;
     }
 
-    async setEnvironment(cubeMap: GPUTexture,prefilterSampleCount: number) {
-        const irradiance = this.createIrradiance(cubeMap)
-        const prefiltered = this.createPrefiltered(cubeMap,prefilterSampleCount)
+    async setEnvironment(cubeMap: GPUTexture, prefilterSampleCount: number, prefilterTextureResolution: number, irradianceResolution: number) {
+        const irradiance = this.createIrradiance(cubeMap, irradianceResolution)
+        const prefiltered = this.createPrefiltered(cubeMap, prefilterSampleCount, prefilterTextureResolution)
         this.initBRDFLUT()
         this.irradianceMap = irradiance;
         this.prefilteredMap = prefiltered;

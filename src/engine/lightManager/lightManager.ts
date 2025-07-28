@@ -211,7 +211,6 @@ export class LightManager {
             data.set([0,0,0], offset);
             offset += 3;
         }
-        console.log(data)
         updateBuffer(LightManager.device, this.lightsBuffer.ambient, data)
     }
 }

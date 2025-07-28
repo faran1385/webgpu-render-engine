@@ -3,7 +3,6 @@ import {quat, vec3} from "gl-matrix";
 import {
     hashAndCreateRenderSetup,
 } from "../../helpers/global.helper.ts";
-import {Material} from "../Material/Material.ts";
 import {Geometry} from "../geometry/Geometry.ts";
 import {SceneObject} from "../sceneObject/sceneObject.ts";
 import {Primitive} from "../primitive/Primitive.ts";
@@ -15,6 +14,7 @@ import {
     GAMMA_CORRECTION,
     TONE_MAPPING, TONE_MAPPING_CALL
 } from "../../helpers/postProcessUtils/postProcessUtilsShaderCodes.ts";
+import {StandardMaterial} from "../Material/StandardMaterial.ts";
 
 export class Background extends BaseLayer {
     private lastSceneObject: SceneObject | null = null;
@@ -28,7 +28,7 @@ export class Background extends BaseLayer {
 
     initRenderClass(exposure: number) {
 
-        const material = new Material(Background.device, this.canvas, this.ctx, null)
+        const material = new StandardMaterial(null)
         const geometry = new Geometry({
             dataList: new Map([["POSITION", {
                 array: cubePositions,
@@ -46,7 +46,7 @@ export class Background extends BaseLayer {
             },
             visibility: GPUShaderStage.VERTEX
         }]
-        material.samplerInfo.descriptor = {
+        material.descriptor.sampler = {
             addressModeW: "repeat",
             addressModeV: "repeat",
             addressModeU: "repeat",
@@ -54,20 +54,19 @@ export class Background extends BaseLayer {
             mipmapFilter: "linear",
             minFilter: "linear"
         }
-        material.samplerInfo.bindPoint = 1
 
         material.descriptor.layout = [{
             texture: {
                 sampleType: "float",
                 viewDimension: "cube"
             },
-            binding: 0,
+            binding: 1,
             visibility: GPUShaderStage.FRAGMENT
         }, {
             sampler: {
                 type: "filtering"
             },
-            binding: 1,
+            binding: 0,
             visibility: GPUShaderStage.FRAGMENT
         }]
 
@@ -75,7 +74,7 @@ export class Background extends BaseLayer {
         const toneMapping = this.scene.getToneMapping(primitive);
 
 
-        material.setShaderCodeString(`
+        material.shaderCode = `
         struct vsInput{
             @location(0) pos:vec3f,
         }
@@ -120,8 +119,8 @@ export class Background extends BaseLayer {
             return output;
         }
 
-        @group(1) @binding(0) var skyboxTexture: texture_cube<f32>;
-        @group(1) @binding(1) var skyboxSampler: sampler;
+        @group(1) @binding(1) var skyboxTexture: texture_cube<f32>;
+        @group(1) @binding(0) var skyboxSampler: sampler;
         
         @fragment
         fn fs(in:vsOutput) -> @location(0) vec4f {
@@ -133,7 +132,7 @@ export class Background extends BaseLayer {
             color = applyGamma(color,2.2);
             return vec4(color, 1.0);
         }
-        `)
+        `
         material.addPrimitive(primitive)
         primitive.setGeometry(geometry)
         primitive.setMaterial(material)
@@ -174,7 +173,7 @@ export class Background extends BaseLayer {
 
         sceneObject.setScale(sceneObject.transformMatrix, vec3.fromValues(100, 100, 100))
         sceneObject.createModelBuffer(Background.device, sceneObject.worldMatrix)
-
+        primitive.sceneObject = sceneObject
         geometry.descriptors.bindGroup = [{
             name: "model",
             resource: {
@@ -224,14 +223,11 @@ export class Background extends BaseLayer {
                     dimension: "cube",
                 }
             },
-            materialKey: `Cube_Texture`,
-            bindingPoint: 0
+            materialResourcesKey: `Cube_Texture`,
+            bindingPoint: 1
         }]
 
-        await hashAndCreateRenderSetup(this.scene.computeManager, gpuCache, [primitive.material], [primitive], [{
-            primitive: primitive,
-            sceneObject: sceneObject
-        }])
+        await hashAndCreateRenderSetup(this.scene.computeManager, gpuCache, [primitive.material], [primitive])
 
         this.deletePrevious(gpuCache)
 

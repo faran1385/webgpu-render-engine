@@ -28,7 +28,6 @@ export class Scene extends BaseLayer {
     public readonly renderLoopAnimations: ((t: number) => void)[] = []
     public readonly _sceneObjectUpdateQueue: Map<number, SceneObject> = new Map();
 
-    public pipelineUpdateQueue = new Set<Primitive>()
     private _drawCalls: Set<Primitive> = new Set<Primitive>()
     renderQueue: { queue: Primitive[], needsUpdate: boolean } = {queue: [], needsUpdate: false}
     private _background: Primitive | null = null
@@ -66,7 +65,7 @@ export class Scene extends BaseLayer {
         return this._drawCalls;
     }
 
-    updateExposure(exposure:number) {
+    updateExposure(exposure: number) {
         this._ENV_EXPOSURE_DEPENDENT.forEach(primitive => primitive.updateExposure(exposure, this))
     }
 

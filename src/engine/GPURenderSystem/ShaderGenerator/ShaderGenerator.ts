@@ -1,6 +1,5 @@
-import {fragmentMap} from "../SmartRender/shaderCodes.ts";
 import {
-    PBRBindPoint,
+    StandardMaterialBindPoint,
     PipelineShaderLocations,
     RenderFlag
 } from "../MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
@@ -115,25 +114,11 @@ fn vs(in: vsIn) -> vsOut {
 }`
     }
 
-    getInspectCode(primitive: Primitive, renderFlag: RenderFlag) {
-        const hasTexture = Boolean(primitive.material.textureMap.get(renderFlag)?.texture);
+    getStandardCode(primitive: Primitive) {
+        const dataMap = primitive.material.textureDataMap
         const hasBoneData = Boolean(primitive.geometry.dataList.get('JOINTS_0') && primitive.geometry.dataList.get("WEIGHTS_0"))
-
-        const generatedVertexCode = this.baseVertex(hasBoneData, hasTexture, false, false)
-        const generatedFragmentCode = fragmentMap.get(renderFlag);
-        if (!generatedFragmentCode) throw new Error("Shader key not found");
-
-        let value = generatedFragmentCode[hasTexture ? 0 : 1]
-
-        return generatedVertexCode + '\n' + value
-    }
-
-    getPBRCode(primitive: Primitive) {
-        const dataMap = primitive.material.textureMap
-        const hasBoneData = Boolean(primitive.geometry.dataList.get('JOINTS_0') && primitive.geometry.dataList.get("WEIGHTS_0"))
-
         const hasNormal = Boolean(primitive.geometry.dataList.get('NORMAL'))
-        const canNormalMap = Boolean(primitive.material.textureMap.get(RenderFlag.NORMAL)?.texture && primitive.geometry.dataList.has("NORMAL") && primitive.geometry.dataList.has("TANGENT"))
+        const canNormalMap = Boolean(primitive.material.textureDataMap.get(RenderFlag.NORMAL)?.texture && primitive.geometry.dataList.has("NORMAL") && primitive.geometry.dataList.has("TANGENT"))
 
         const generatedVertexCode = this.baseVertex(hasBoneData, true, hasNormal, canNormalMap)
 
@@ -169,20 +154,19 @@ fn vs(in: vsIn) -> vsOut {
             @group(0) @binding(11) var irradianceMap:texture_cube<f32>;
             @group(0) @binding(12) var iblSampler:sampler;
 
-            @group(1) @binding(0) var textureSampler:sampler;
-            @group(1) @binding(1) var<uniform> alphaMode:vec2f;
-            @group(1) @binding(2) var<storage,read> factors:array<f32>;
-            ${dataMap.get(RenderFlag.BASE_COLOR)?.texture ? `@group(1) @binding(${PBRBindPoint.BASE_COLOR}) var baseColorTexture:texture_2d<f32>;` : ""}
-            ${dataMap.get(RenderFlag.EMISSIVE)?.texture ? `@group(1) @binding(${PBRBindPoint.EMISSIVE}) var emissiveTexture:texture_2d<f32>;` : ""}
-            ${dataMap.get(RenderFlag.METALLIC)?.texture ? `@group(1) @binding(${PBRBindPoint.METALLIC_ROUGHNESS}) var metallicRoughnessTexture:texture_2d<f32>;` : ""}
-            ${dataMap.get(RenderFlag.NORMAL)?.texture ? `@group(1) @binding(${PBRBindPoint.NORMAL}) var normalTexture:texture_2d<f32>;` : ""}
-            ${dataMap.get(RenderFlag.OCCLUSION)?.texture ? `@group(1) @binding(${PBRBindPoint.OCCLUSION}) var occlusionTexture:texture_2d<f32>;` : ""}
-            ${dataMap.get(RenderFlag.SPECULAR)?.texture ? `@group(1) @binding(${PBRBindPoint.SPECULAR})  var specularTexture:texture_2d<f32>;` : ""}
-            ${dataMap.get(RenderFlag.SPECULAR_COLOR)?.texture ? `@group(1) @binding(${PBRBindPoint.SPECULAR_COLOR})  var specularColorTexture:texture_2d<f32>;` : ""}
-            ${dataMap.get(RenderFlag.TRANSMISSION)?.texture ? `@group(1) @binding(${PBRBindPoint.TRANSMISSION})  var transmissionTexture:texture_2d<f32>;` : ""}
-            ${dataMap.get(RenderFlag.CLEARCOAT)?.texture ? `@group(1) @binding(${PBRBindPoint.CLEARCOAT}) var clearcoatTexture:texture_2d<f32>;` : ""}
-            ${dataMap.get(RenderFlag.CLEARCOAT_ROUGHNESS)?.texture ? `@group(1) @binding(${PBRBindPoint.CLEARCOAT_ROUGHNESS}) var clearcoatRoughness:texture_2d<f32>;` : ""}
-            ${dataMap.get(RenderFlag.CLEARCOAT_NORMAL)?.texture ? `@group(1) @binding(${PBRBindPoint.CLEARCOAT_NORMAL}) var clearcoatNormalTexture:texture_2d<f32>;` : ""}
+            @group(1) @binding(${StandardMaterialBindPoint.SAMPLER}) var textureSampler:sampler;
+            @group(1) @binding(${StandardMaterialBindPoint.FACTORS}) var<storage,read> factors:array<f32>;
+            ${dataMap.get(RenderFlag.BASE_COLOR)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.BASE_COLOR]) ? `@group(1) @binding(${StandardMaterialBindPoint.BASE_COLOR}) var baseColorTexture:texture_2d<f32>;` : ""}
+            ${dataMap.get(RenderFlag.EMISSIVE)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.EMISSIVE]) ? `@group(1) @binding(${StandardMaterialBindPoint.EMISSIVE}) var emissiveTexture:texture_2d<f32>;` : ""}
+            ${dataMap.get(RenderFlag.METALLIC)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.METALLIC]) ? `@group(1) @binding(${StandardMaterialBindPoint.METALLIC}) var metallicRoughnessTexture:texture_2d<f32>;` : ""}
+            ${dataMap.get(RenderFlag.NORMAL)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.NORMAL]) ? `@group(1) @binding(${StandardMaterialBindPoint.NORMAL}) var normalTexture:texture_2d<f32>;` : ""}
+            ${dataMap.get(RenderFlag.OCCLUSION)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.OCCLUSION]) ? `@group(1) @binding(${StandardMaterialBindPoint.OCCLUSION}) var occlusionTexture:texture_2d<f32>;` : ""}
+            ${dataMap.get(RenderFlag.SPECULAR)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.SPECULAR]) ? `@group(1) @binding(${StandardMaterialBindPoint.SPECULAR})  var specularTexture:texture_2d<f32>;` : ""}
+            ${dataMap.get(RenderFlag.SPECULAR_COLOR)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.SPECULAR_COLOR]) ? `@group(1) @binding(${StandardMaterialBindPoint.SPECULAR_COLOR})  var specularColorTexture:texture_2d<f32>;` : ""}
+            ${dataMap.get(RenderFlag.TRANSMISSION)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.TRANSMISSION]) ? `@group(1) @binding(${StandardMaterialBindPoint.TRANSMISSION})  var transmissionTexture:texture_2d<f32>;` : ""}
+            ${dataMap.get(RenderFlag.CLEARCOAT)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.CLEARCOAT]) ? `@group(1) @binding(${StandardMaterialBindPoint.CLEARCOAT}) var clearcoatTexture:texture_2d<f32>;` : ""}
+            ${dataMap.get(RenderFlag.CLEARCOAT_ROUGHNESS)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.CLEARCOAT_ROUGHNESS]) ? `@group(1) @binding(${StandardMaterialBindPoint.CLEARCOAT_ROUGHNESS}) var clearcoatRoughness:texture_2d<f32>;` : ""}
+            ${dataMap.get(RenderFlag.CLEARCOAT_NORMAL)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.CLEARCOAT_NORMAL]) ? `@group(1) @binding(${StandardMaterialBindPoint.CLEARCOAT_NORMAL}) var clearcoatNormalTexture:texture_2d<f32>;` : ""}
             @group(0) @binding(4) var<uniform> cameraPosition:vec3f;
             const MAX_REFLECTION_LOD = ${primitive.sceneObject.scene.ENV_MAX_LOD_COUNT ?? 0};
             const PI = 3.14159265359;
@@ -196,6 +180,8 @@ fn vs(in: vsIn) -> vsOut {
             
             override TONE_MAPPING_NUMBER = 0;
             override EXPOSURE = 0.;
+            override ALPHA_MODE = 0;
+            override ALPHA_CUTOFF = 0;
             
             
             fn getIBL(NoV:f32,f0:vec3f,roughness:f32,metallic:f32,n:vec3f,v:vec3f,r:vec3f,albedo:vec3f,ao:f32)->vec3f{
@@ -214,12 +200,12 @@ fn vs(in: vsIn) -> vsOut {
             }
             
             @fragment fn fs(in: vsOut) -> @location(0) vec4f {
-                var ao  = ${dataMap.get(RenderFlag.OCCLUSION)?.texture ? `textureSample(occlusionTexture,textureSampler,in.uv).r * factors[10];` : `factors[10];`}
-                var emissive  = ${dataMap.get(RenderFlag.EMISSIVE)?.texture ? `textureSample(emissiveTexture,textureSampler,in.uv).rgb * vec3f(factors[4],factors[5],factors[6]);` : `vec3f(factors[4],factors[5],factors[6]);`}
-                var albedo = ${dataMap.get(RenderFlag.BASE_COLOR)?.texture ? `textureSample(baseColorTexture, textureSampler, in.uv) * vec4f(factors[0], factors[1], factors[2], factors[3])` : "vec4f(factors[0], factors[1], factors[2], factors[3])"};
-                ${dataMap.get(RenderFlag.METALLIC)?.texture ? `let metallicRoughness = textureSample(metallicRoughnessTexture, textureSampler, in.uv);` : ``}
-                var metallic  = ${dataMap.get(RenderFlag.METALLIC)?.texture ? `metallicRoughness.b * factors[7];` : `factors[7];`}
-                var roughness  = ${dataMap.get(RenderFlag.ROUGHNESS)?.texture ? `metallicRoughness.g * factors[8];` : `factors[8];`}
+                var ao  = ${dataMap.get(RenderFlag.OCCLUSION)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.OCCLUSION]) ? `textureSample(occlusionTexture,textureSampler,in.uv).r * factors[10];` : `factors[10];`}
+                var emissive  = ${dataMap.get(RenderFlag.EMISSIVE)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.EMISSIVE]) ? `textureSample(emissiveTexture,textureSampler,in.uv).rgb * vec3f(factors[4],factors[5],factors[6]);` : `vec3f(factors[4],factors[5],factors[6]);`}
+                var albedo = ${dataMap.get(RenderFlag.BASE_COLOR)?.texture  || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.BASE_COLOR])? `textureSample(baseColorTexture, textureSampler, in.uv) * vec4f(factors[0], factors[1], factors[2], factors[3])` : "vec4f(factors[0], factors[1], factors[2], factors[3])"};
+                ${dataMap.get(RenderFlag.METALLIC)?.texture  || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.METALLIC])? `let metallicRoughness = textureSample(metallicRoughnessTexture, textureSampler, in.uv);` : ``}
+                var metallic  = ${dataMap.get(RenderFlag.METALLIC)?.texture  || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.METALLIC])? `metallicRoughness.b * factors[7];` : `factors[7];`}
+                var roughness  = ${dataMap.get(RenderFlag.ROUGHNESS)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.ROUGHNESS]) ? `metallicRoughness.g * factors[8];` : `factors[8];`}
                 metallic = clamp(metallic, 0.0, 1.0);
                 roughness = clamp(roughness, 0.04, 1.0);
 
@@ -247,7 +233,7 @@ fn vs(in: vsIn) -> vsOut {
                     
                     let D=distributionGGX(n,h,roughness);
                     let G=geometrySmith(n,v,l,roughness);
-                    let F=fresnelSchlick(NoV,f0);
+                    let F=fresnelSchlick(HoV,f0);
                     
                     let Ks=F;
                     var Kd=vec3f(1.) - metallic;

@@ -437,7 +437,7 @@ export class Environment {
 
     getExposure(){return this.exposure}
 
-    public initBRDFLUT() {
+    private initBRDFLUT() {
         if (this.scene.brdfLut) return;
         const BRDF_LUT_SIZE = 64;
 

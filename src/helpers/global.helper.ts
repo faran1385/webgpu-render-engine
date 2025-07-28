@@ -1,20 +1,20 @@
 import {mat3, mat4, vec3} from "gl-matrix";
 // @ts-ignore
 import Stats from 'stats-js';
-import {Material as MaterialClass} from "../engine/Material/Material.ts"
+import {MaterialInstance} from "../engine/Material/Material.ts"
 import {Material, TypedArray, vec2} from "@gltf-transform/core";
 import {Clearcoat, Specular, Transmission} from "@gltf-transform/extensions";
 import {
-    PBRBindPoint,
-    PBRFactorsStartPoint,
+    StandardMaterialBindPoint,
+    StandardMaterialFactorsStartPoint,
     RenderFlag
 } from "../engine/GPURenderSystem/MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
 import {TextureData} from "../engine/Material/Material.ts";
 import {Primitive, PrimitiveHashes} from "../engine/primitive/Primitive.ts";
-import {PipelineEntry} from "../renderers/modelRenderer.ts";
 import {GPUCache} from "../engine/GPURenderSystem/GPUCache/GPUCache.ts";
 import {BaseLayer} from "../layers/baseLayer.ts";
 import {ComputeManager} from "../engine/computation/computeManager.ts";
+import {StandardMaterial} from "../engine/Material/StandardMaterial.ts";
 
 export function createGPUBuffer(
     device: GPUDevice,
@@ -153,8 +153,8 @@ export function extractExtensions(material: Material) {
             size: vec2
         } | null,
         factor: number | number[],
-        pbrBindPoint: number,
-        pbrFactorStartPoint: number,
+        bindPoint: number,
+        factorStartPoint: number,
     }>();
 
     material.listExtensions().forEach((extension) => {
@@ -168,8 +168,8 @@ export function extractExtensions(material: Material) {
                     data: specularTexture.getImage()!
                 } : null,
                 factor: extension.getSpecularFactor(),
-                pbrBindPoint: PBRBindPoint.SPECULAR,
-                pbrFactorStartPoint: PBRFactorsStartPoint.SPECULAR,
+                bindPoint: StandardMaterialBindPoint.SPECULAR,
+                factorStartPoint: StandardMaterialFactorsStartPoint.SPECULAR,
             })
 
             extensionMap.set(RenderFlag.SPECULAR_COLOR, {
@@ -178,8 +178,8 @@ export function extractExtensions(material: Material) {
                     data: specularColorTexture.getImage()!
                 } : null,
                 factor: extension.getSpecularColorFactor(),
-                pbrBindPoint: PBRBindPoint.SPECULAR_COLOR,
-                pbrFactorStartPoint: PBRFactorsStartPoint.SPECULAR_COLOR,
+                bindPoint: StandardMaterialBindPoint.SPECULAR_COLOR,
+                factorStartPoint: StandardMaterialFactorsStartPoint.SPECULAR_COLOR,
             })
         } else if (extension instanceof Transmission) {
             const transmissionTexture = extension.getTransmissionTexture();
@@ -190,8 +190,8 @@ export function extractExtensions(material: Material) {
                     data: transmissionTexture.getImage()!
                 } : null,
                 factor: extension.getTransmissionFactor(),
-                pbrBindPoint: PBRBindPoint.TRANSMISSION,
-                pbrFactorStartPoint: PBRFactorsStartPoint.TRANSMISSION,
+                bindPoint: StandardMaterialBindPoint.TRANSMISSION,
+                factorStartPoint: StandardMaterialFactorsStartPoint.TRANSMISSION,
 
             })
 
@@ -204,8 +204,8 @@ export function extractExtensions(material: Material) {
                     data: clearcoatTexture.getImage()!
                 } : null,
                 factor: extension.getClearcoatFactor(),
-                pbrBindPoint: PBRBindPoint.CLEARCOAT,
-                pbrFactorStartPoint: PBRFactorsStartPoint.CLEARCOAT,
+                bindPoint: StandardMaterialBindPoint.CLEARCOAT,
+                factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT,
             })
 
 
@@ -217,8 +217,8 @@ export function extractExtensions(material: Material) {
                     data: clearcoatRoughnessTexture.getImage()!
                 } : null,
                 factor: extension.getClearcoatRoughnessFactor(),
-                pbrBindPoint: PBRBindPoint.CLEARCOAT_ROUGHNESS,
-                pbrFactorStartPoint: PBRFactorsStartPoint.CLEARCOAT_ROUGHNESS,
+                bindPoint: StandardMaterialBindPoint.CLEARCOAT_ROUGHNESS,
+                factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT_ROUGHNESS,
             })
 
             const clearcoatNormalTexture = extension.getClearcoatNormalTexture();
@@ -229,8 +229,8 @@ export function extractExtensions(material: Material) {
                     data: clearcoatNormalTexture.getImage()!
                 } : null,
                 factor: extension.getClearcoatNormalScale(),
-                pbrBindPoint: PBRBindPoint.CLEARCOAT_NORMAL,
-                pbrFactorStartPoint: PBRFactorsStartPoint.CLEARCOAT_NORMAL,
+                bindPoint: StandardMaterialBindPoint.CLEARCOAT_NORMAL,
+                factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT_NORMAL,
             })
         }
     })
@@ -238,6 +238,9 @@ export function extractExtensions(material: Material) {
     return extensionMap;
 }
 
+export function isLightDependentMaterial(material: MaterialInstance) {
+    return material instanceof StandardMaterial
+}
 
 export function needsSampler(map: Map<RenderFlag, TextureData>) {
     return Array.from(map).some(([_, value]) => value.texture)
@@ -256,26 +259,36 @@ export function extractMaterial(material: Material) {
             }
             : null,
         factor: material.getBaseColorFactor(),
-        pbrBindPoint: PBRBindPoint.BASE_COLOR,
-        pbrFactorStartPoint: PBRFactorsStartPoint.BASE_COLOR
+        bindPoint: StandardMaterialBindPoint.BASE_COLOR,
+        factorStartPoint: StandardMaterialFactorsStartPoint.BASE_COLOR
     }
     dataMap.set(RenderFlag.BASE_COLOR, baseColorData);
     dataMap.set(RenderFlag.OPACITY, baseColorData);
 
     const mrTexture = material.getMetallicRoughnessTexture();
-    const mrData = {
+
+    dataMap.set(RenderFlag.METALLIC, {
         texture: mrTexture
             ? {
                 data: mrTexture.getImage() as TypedArray,
                 size: mrTexture.getSize() as [number, number]
             }
             : null,
-        factor: [material.getMetallicFactor(), material.getRoughnessFactor()],
-        pbrBindPoint: PBRBindPoint.METALLIC_ROUGHNESS,
-        pbrFactorStartPoint: PBRFactorsStartPoint.METALLIC_ROUGHNESS
-    }
-    dataMap.set(RenderFlag.METALLIC, mrData);
-    dataMap.set(RenderFlag.ROUGHNESS, mrData);
+        factor: [material.getMetallicFactor()],
+        bindPoint: StandardMaterialBindPoint.METALLIC,
+        factorStartPoint: StandardMaterialFactorsStartPoint.METALLIC
+    });
+    dataMap.set(RenderFlag.ROUGHNESS, {
+        texture: mrTexture
+            ? {
+                data: mrTexture.getImage() as TypedArray,
+                size: mrTexture.getSize() as [number, number]
+            }
+            : null,
+        factor: [material.getRoughnessFactor()],
+        bindPoint: StandardMaterialBindPoint.ROUGHNESS,
+        factorStartPoint: StandardMaterialFactorsStartPoint.ROUGHNESS
+    });
 
     const normalTex = material.getNormalTexture();
     dataMap.set(RenderFlag.NORMAL, {
@@ -286,8 +299,8 @@ export function extractMaterial(material: Material) {
             }
             : null,
         factor: material.getNormalScale(),
-        pbrBindPoint: PBRBindPoint.NORMAL,
-        pbrFactorStartPoint: PBRFactorsStartPoint.NORMAL
+        bindPoint: StandardMaterialBindPoint.NORMAL,
+        factorStartPoint: StandardMaterialFactorsStartPoint.NORMAL
     });
 
     const occTex = material.getOcclusionTexture();
@@ -299,8 +312,8 @@ export function extractMaterial(material: Material) {
             }
             : null,
         factor: material.getOcclusionStrength(),
-        pbrBindPoint: PBRBindPoint.OCCLUSION,
-        pbrFactorStartPoint: PBRFactorsStartPoint.OCCLUSION
+        bindPoint: StandardMaterialBindPoint.OCCLUSION,
+        factorStartPoint: StandardMaterialFactorsStartPoint.OCCLUSION
     });
 
     const emissiveTex = material.getEmissiveTexture();
@@ -312,8 +325,8 @@ export function extractMaterial(material: Material) {
             }
             : null,
         factor: material.getEmissiveFactor(),
-        pbrBindPoint: PBRBindPoint.EMISSIVE,
-        pbrFactorStartPoint: PBRFactorsStartPoint.EMISSIVE
+        bindPoint: StandardMaterialBindPoint.EMISSIVE,
+        factorStartPoint: StandardMaterialFactorsStartPoint.EMISSIVE
     });
 
     const extensions = extractExtensions(material)
@@ -323,15 +336,15 @@ export function extractMaterial(material: Material) {
     return dataMap
 }
 
-export async function hashAndCreateRenderSetup(computeManager: ComputeManager, gpuCache: GPUCache, materials: MaterialClass[], primitives: Primitive[], pipelineDescriptors: PipelineEntry) {
+export async function hashAndCreateRenderSetup(computeManager: ComputeManager, gpuCache: GPUCache, materials: MaterialInstance[], primitives: Primitive[]) {
     const geometryLayoutHashes = gpuCache.createGeometryLayoutHashes(primitives)
     const materialHashes = await gpuCache.createMaterialHashes(materials)
     const shaderCodesHashes = gpuCache.createShaderCodeHashes(primitives)
-    const pipelineLayoutsHashes = gpuCache.createPipelineLayoutHashes(pipelineDescriptors, materialHashes, geometryLayoutHashes)
+    const pipelineLayoutsHashes = gpuCache.createPipelineLayoutHashes(primitives, materialHashes, geometryLayoutHashes)
     const pipelineHashes = gpuCache.createPipelineHashes(shaderCodesHashes, pipelineLayoutsHashes)
     const geometryBindGroupMaps = gpuCache.createGeometryBindGroupMaps(primitives)
-
     pipelineHashes.forEach((pipelineHash, key) => {
+
         const {side, id: primitiveId} = unpackPrimitiveKey(key)
         const geometryEntries = geometryBindGroupMaps.get(primitiveId)
         const geometryLayoutHash = geometryLayoutHashes.get(primitiveId)!
@@ -353,7 +366,7 @@ export async function hashAndCreateRenderSetup(computeManager: ComputeManager, g
 
         const geometryBindGroup = BaseLayer.device.createBindGroup({
             entries: geometryEntries,
-            label: `${pipelineLayout?.sceneObject.name ?? ""} geometry bindGroup`,
+            label: `${pipelineLayout?.primitive.sceneObject.name ?? ""} geometry bindGroup`,
             layout: renderSetup.geometryBindGroupLayout
         })
 
@@ -369,19 +382,19 @@ export async function hashAndCreateRenderSetup(computeManager: ComputeManager, g
         }
 
         primitive.setPrimitiveHashes(primitiveHashes, side!)
-        primitive.setRenderSetup(geometryBindGroup, gpuCache)
+        primitive.setRenderSetup(geometryBindGroup, gpuCache, side)
         pipelineLayout?.primitive.vertexBufferDescriptors.forEach((item) => {
             const dataArray = primitive.geometry.dataList.get(item.name)?.array;
             if (!dataArray) throw new Error(`${item.name} not found in geometry datalist of primitive with id ${pipelineLayout.primitive.id}`)
-            primitive.setVertexBuffers(createGPUBuffer(BaseLayer.device, dataArray, GPUBufferUsage.VERTEX, `${pipelineLayout.sceneObject.name}  ${item.name}`))
+            primitive.setVertexBuffers(createGPUBuffer(BaseLayer.device, dataArray, GPUBufferUsage.VERTEX, `${pipelineLayout.primitive.sceneObject.name}  ${item.name}`))
         })
 
-        primitive.modelMatrix = (pipelineLayout?.sceneObject!).worldMatrix;
-        primitive.normalMatrix = (pipelineLayout?.sceneObject!).normalMatrix;
+        primitive.modelMatrix = (pipelineLayout?.primitive.sceneObject!).worldMatrix;
+        primitive.normalMatrix = (pipelineLayout?.primitive.sceneObject!).normalMatrix;
 
         if (primitive.geometry.indices) {
-            computeManager.setIndex(pipelineLayout.sceneObject)
+            computeManager.setIndex(pipelineLayout.primitive.sceneObject)
         }
-        computeManager.setIndirect(pipelineLayout.sceneObject)
+        computeManager.setIndirect(pipelineLayout.primitive.sceneObject)
     })
 }

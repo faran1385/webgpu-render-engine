@@ -6,6 +6,8 @@ import {Scene} from "../engine/scene/Scene.ts";
 
 // @ts-ignore
 import frustumComputeShader from "../shaders/builtin/frustomCulling.wgsl?raw"
+import {MaterialInstance} from "../engine/Material/Material.ts";
+import {Primitive} from "../engine/primitive/Primitive.ts";
 
 export class BaseLayer {
     // base
@@ -42,7 +44,8 @@ export class BaseLayer {
     private static _iblSampler: GPUSampler;
 
     private static _baseLayerInitialized: boolean = false;
-
+    public static materialUpdateQueue = new Set<MaterialInstance>();
+    public pipelineUpdateQueue = new Set<Primitive>()
 
     public get brdfLut() {
         return BaseLayer._brdfLUTTexture
@@ -134,10 +137,10 @@ export class BaseLayer {
         }
         BaseLayer._iblSampler = BaseLayer.device.createSampler({
             magFilter: "linear",
-            addressModeU:"clamp-to-edge",
-            addressModeV:"clamp-to-edge",
+            addressModeU: "clamp-to-edge",
+            addressModeV: "clamp-to-edge",
             minFilter: "linear",
-            mipmapFilter:"nearest"
+            mipmapFilter: "nearest"
         });
         BaseLayer._lastFrameTime = performance.now();
         BaseLayer._timeBuffer = BaseLayer.device.createBuffer({

@@ -1,11 +1,12 @@
 import {Node} from "@gltf-transform/core";
 
-import {PipelineEntry, SmartRenderInitEntryPassType} from "../../../renderers/modelRenderer.ts";
 
 import {SceneObject} from "../../sceneObject/sceneObject.ts";
 import {ShaderGenerator} from "../ShaderGenerator/ShaderGenerator.ts";
 import {MaterialDescriptorGenerator} from "../MaterialDescriptorGenerator/MaterialDescriptorGenerator.ts";
-import {PipelineShaderLocations, RenderFlag} from "../MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
+import {PipelineShaderLocations} from "../MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
+import {StandardMaterial} from "../../Material/StandardMaterial.ts";
+import {isLightDependentMaterial} from "../../../helpers/global.helper.ts";
 
 export class SmartRender {
     static device: GPUDevice;
@@ -35,7 +36,7 @@ export class SmartRender {
         }])
     }
 
-    private getGeometryBindGroups(sceneObjects: SceneObject[], nodeMap: undefined | Map<Node, SceneObject>) {
+    getGeometryBindGroups(sceneObjects: SceneObject[], nodeMap: undefined | Map<Node, SceneObject>) {
 
         sceneObjects.forEach(sceneObject => {
             const entries: (GPUBindGroupEntry & { name?: "model" | "normal" })[] = []
@@ -68,11 +69,12 @@ export class SmartRender {
         })
     }
 
-    private getPipelineDescriptors(sceneObjects: SceneObject[]): PipelineEntry {
-        const output: PipelineEntry = []
+    getPipelineDescriptors(sceneObjects: SceneObject[]) {
         sceneObjects.forEach(sceneObject => {
             if (sceneObject.primitives && sceneObject.primitives.size > 0) {
                 sceneObject.primitives.forEach((primitive) => {
+                    primitive.pipelineDescriptors.clear()
+
                     const geometry = primitive.geometry;
                     const buffers: (GPUVertexBufferLayout & { name: string; })[] = [{
                         arrayStride: 3 * 4,
@@ -138,10 +140,14 @@ export class SmartRender {
                     }
                     const isDoubleSided = primitive.material.isDoubleSided
                     const isTransparent = primitive.material.alpha.mode === "BLEND"
-                    const canNormalMap = Boolean(primitive.material.textureMap.get(RenderFlag.NORMAL)?.texture && primitive.geometry.dataList.has("NORMAL") && primitive.geometry.dataList.has("TANGENT"))
-
-                    if (primitive.material.renderMethod === RenderFlag.PBR) {
+                    const fragmentConstant: any = {
+                        ALPHA_MODE: primitive.material.alpha.mode === "OPAQUE" ? 0 : primitive.material.alpha.mode === "BLEND" ? 1 : 2,
+                        ALPHA_CUTOFF: primitive.material.alpha.cutoff
+                    }
+                    if (isLightDependentMaterial(primitive.material)) {
                         primitive.sceneObject.scene.addExposureDependent(primitive)
+                        fragmentConstant.TONE_MAPPING_NUMBER = primitive.sceneObject.scene.getToneMapping(primitive)
+                        fragmentConstant.EXPOSURE = primitive.sceneObject.scene.environmentManager.getExposure()
                     }
 
                     if (isTransparent && isDoubleSided) {
@@ -173,10 +179,7 @@ export class SmartRender {
                                 },
                                 format: SmartRender.format,
                             }],
-                            fragmentConstants: primitive.material.renderMethod === RenderFlag.PBR ? {
-                                TONE_MAPPING_NUMBER: primitive.sceneObject.scene.getToneMapping(primitive),
-                                EXPOSURE: primitive.sceneObject.scene.environmentManager.getExposure()
-                            } : undefined
+                            fragmentConstants: fragmentConstant
                         })
                         primitive.setPipelineDescriptor("back", {
                             primitive: {
@@ -204,10 +207,7 @@ export class SmartRender {
                                 },
                                 format: SmartRender.format
                             }],
-                            fragmentConstants: primitive.material.renderMethod === RenderFlag.PBR ? {
-                                TONE_MAPPING_NUMBER: primitive.sceneObject.scene.getToneMapping(primitive),
-                                EXPOSURE: primitive.sceneObject.scene.environmentManager.getExposure()
-                            } : undefined
+                            fragmentConstants: fragmentConstant
                         })
 
                     } else {
@@ -239,31 +239,22 @@ export class SmartRender {
                                 } : undefined,
                                 format: SmartRender.format
                             }],
-                            fragmentConstants: primitive.material.renderMethod === RenderFlag.PBR ? {
-                                TONE_MAPPING_NUMBER: primitive.sceneObject.scene.getToneMapping(primitive),
-                                EXPOSURE: primitive.sceneObject.scene.environmentManager.getExposure()
-                            } : undefined
+                            fragmentConstants: fragmentConstant
                         })
                     }
-                    console.log(canNormalMap)
+
                     primitive.setIsTransparent(isTransparent)
                     primitive.setVertexBufferDescriptors(buffers)
-                    output.push({
-                        primitive,
-                        sceneObject,
-                    })
                 })
             }
         })
 
-        return output
     }
 
     public entryCreator(
         sceneObjectsSet: Set<SceneObject>,
-        renderFlag: RenderFlag,
         nodeMap: undefined | Map<Node, SceneObject>
-    ): SmartRenderInitEntryPassType {
+    ) {
         const sceneObjects = this.getRenderAbleNodes(sceneObjectsSet)
 
         sceneObjects.forEach(sceneObject => {
@@ -271,7 +262,7 @@ export class SmartRender {
                 primitive.material.initDescriptor(SmartRender.materialBindGroupGenerator)
             })
         })
-        const pipelineDescriptors = this.getPipelineDescriptors(sceneObjects)
+        this.getPipelineDescriptors(sceneObjects)
         this.getGeometryBindGroups(sceneObjects, nodeMap)
 
 
@@ -288,19 +279,14 @@ export class SmartRender {
                     }
 
                     let code = '';
-                    if (RenderFlag.PBR !== renderFlag) {
-                        code = SmartRender.shaderGenerator.getInspectCode(primitive, renderFlag!)
-                    } else {
-                        code = SmartRender.shaderGenerator.getPBRCode(primitive)
+                    if (primitive.material instanceof StandardMaterial) {
+                        code = SmartRender.shaderGenerator.getStandardCode(primitive)
                     }
-                    primitive.material.setShaderCodeString(code)
+                    primitive.material.shaderCode = code
                 })
             }
         })
 
-        return {
-            pipelineDescriptors,
-        }
     }
 
     private getRenderAbleNodes(sceneObjects: Set<SceneObject>) {

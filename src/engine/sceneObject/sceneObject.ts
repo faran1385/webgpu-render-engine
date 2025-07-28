@@ -63,27 +63,28 @@ export class SceneObject {
         this.id = generateID();
         this.name = config.name;
 
-
-        this.animationMatrix = {
+        const configTransformation = {
             scale: config.scale,
             translation: config.translation,
             rotation: config.rotation,
             matrix: mat4.fromRotationTranslationScale(mat4.create(), config.rotation, config.translation, config.scale)
         }
-        this.transformMatrix = {
+        const rawTransformation = {
             matrix: mat4.create(),
             scale: vec3.create(),
             translation: vec3.create(),
             rotation: quat.create()
         }
+        this.animationMatrix = config.skin ? configTransformation : rawTransformation
+        this.transformMatrix = config.skin ? rawTransformation : configTransformation
         this.localMatrix = mat4.create()
         this.worldMatrix = mat4.create()
         this.normalMatrix = mat3.normalFromMat4(mat3.create(), this.worldMatrix);
 
-
+        console.log()
         this.skin = config.skin;
         this.parent = config.parent;
-        this.scene= config.scene;
+        this.scene = config.scene;
     }
 
     setLodSelectionThreshold(threshold: number): void {
@@ -100,10 +101,6 @@ export class SceneObject {
 
     createModelBuffer(device: GPUDevice, matrix: mat4) {
         this.modelBuffer = createGPUBuffer(device, new Float32Array(matrix), GPUBufferUsage.UNIFORM, `${this.name} model buffer`);
-    }
-
-    createNormalBuffer(device: GPUDevice, matrix: mat3 | mat4) {
-        this.normalBuffer = createGPUBuffer(device, new Float32Array(matrix), GPUBufferUsage.UNIFORM, `${this.name} normal buffer`);
     }
 
     setTranslation(matrix: SceneObjectMatrix, pos: vec3) {

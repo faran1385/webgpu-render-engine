@@ -1,10 +1,10 @@
-export enum PBRBindPoint {
+export enum StandardMaterialBindPoint {
     SAMPLER,
-    ALPHA,
     FACTORS,
     BASE_COLOR,
     EMISSIVE,
-    METALLIC_ROUGHNESS,
+    METALLIC = 4,
+    ROUGHNESS = 4,
     NORMAL,
     OCCLUSION,
     CLEARCOAT,
@@ -29,13 +29,13 @@ export enum RenderFlag {
     CLEARCOAT,
     CLEARCOAT_NORMAL,
     CLEARCOAT_ROUGHNESS,
-    PBR
 }
 
-export enum PBRFactorsStartPoint {
+export enum StandardMaterialFactorsStartPoint {
     BASE_COLOR = 0,
     EMISSIVE = 4,
-    METALLIC_ROUGHNESS = 7,
+    METALLIC = 7,
+    ROUGHNESS = 8,
     NORMAL = 9,
     OCCLUSION = 10,
     SPECULAR = 11,

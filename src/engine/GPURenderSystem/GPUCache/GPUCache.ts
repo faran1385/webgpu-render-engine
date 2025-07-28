@@ -5,11 +5,17 @@ import {
     RenderState,
     textureConvertFunc
 } from "./GPUCacheTypes.ts";
-import {Material} from "../../Material/Material.ts";
+import {Material, MaterialInstance} from "../../Material/Material.ts";
 import {Primitive, Side} from "../../primitive/Primitive.ts";
 import {HashGenerator} from "../Hasher/HashGenerator.ts";
 import {makePrimitiveKey} from "../../../helpers/global.helper.ts";
-import {PipelineEntry, PipelineLayoutHashItem} from "../../../renderers/modelRenderer.ts";
+import {PipelineLayoutHashItem} from "../../../renderers/modelRenderer.ts";
+import {
+    RenderFlag, StandardMaterialBindPoint,
+} from "../MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
+import {SmartRender} from "../SmartRender/SmartRender.ts";
+import {SceneObject} from "../../sceneObject/sceneObject.ts";
+import {StandardMaterial} from "../../Material/StandardMaterial.ts";
 
 export class GPUCache extends BaseLayer {
     static readonly pipelineMap: Map<string, {
@@ -37,11 +43,13 @@ export class GPUCache extends BaseLayer {
         primitives: Set<number>
     }> = new Map();
     static hasher: HashGenerator;
+    static smartRenderer: SmartRender;
 
 
     constructor(device: GPUDevice, canvas: HTMLCanvasElement, ctx: GPUCanvasContext, hasher: HashGenerator) {
         super(device, canvas, ctx);
         GPUCache.hasher = hasher
+        GPUCache.smartRenderer = new SmartRender(device, BaseLayer.format);
     }
 
     isSubset(subset: Set<number>, superset: Set<number>): boolean {
@@ -80,6 +88,110 @@ export class GPUCache extends BaseLayer {
         }
     }
 
+    changeMaterial(material: MaterialInstance) {
+        const sceneObjects: SceneObject[] = []
+
+        material.primitives?.forEach(p => {
+            const pSet = new Set<number>([p.id]);
+            p.primitiveHashes.forEach(hashes => {
+                if (material.descriptor.sampler) this.removeResource(hashes.samplerHash as never, pSet, "samplerMap")
+                this.removeResource(hashes.shader as never, pSet, "shaderModuleMap")
+                this.removeResource(hashes.pipeline as never, pSet, "pipelineMap")
+                this.removeResource(hashes.materialBindGroup as never, pSet, "materialBindGroupMap")
+            })
+            p.material.initDescriptor(SmartRender.materialBindGroupGenerator)
+            sceneObjects.push(p.sceneObject)
+        })
+
+        material.primitives.forEach(primitive => {
+            const geometry = primitive.geometry
+            const hasBoneData = Boolean(geometry.dataList.get('JOINTS_0') && geometry.dataList.get("WEIGHTS_0"))
+
+            if (hasBoneData) {
+                primitive.geometry.descriptors.layout = SmartRender.defaultGeometryBindGroupLayout[1]
+            } else {
+                primitive.geometry.descriptors.layout = SmartRender.defaultGeometryBindGroupLayout[0]
+            }
+
+            let code = '';
+            if (primitive.material instanceof StandardMaterial) {
+                code = SmartRender.shaderGenerator.getStandardCode(primitive)
+            }
+            primitive.material.shaderCode=code
+        })
+
+        const bindGroupHash = GPUCache.hasher.hashBindGroup(material.descriptor.hashEntries!)
+        material.setHashes("bindGroup", bindGroupHash)
+        let sampler: GPUSampler | undefined = material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.SAMPLER]) as GPUSampler | undefined
+
+        if (material.descriptor.sampler) {
+            const samplerHash = GPUCache.hasher.hashSampler(material.descriptor.sampler)
+            material.setHashes("sampler", samplerHash)
+            this.appendSampler(material.descriptor.sampler, samplerHash, Array.from(material.primitives))
+            sampler = GPUCache.samplerMap.get(samplerHash)?.sampler!
+        }
+
+        const bindgroupAlreadyExists = GPUCache.materialBindGroupMap.get(bindGroupHash);
+
+        if (!bindgroupAlreadyExists) {
+            const {layout} = GPUCache.bindGroupLayoutMap.get(material.hashes.bindGroupLayout.new!)!
+            const entries: GPUBindGroupEntry[] = []
+
+            material.descriptor.entries?.forEach(entry => {
+                entries.push({
+                    binding: entry.bindingPoint,
+                    resource: entry.textureDescriptor ?
+                        entry.textureDescriptor.texture.createView(entry.textureDescriptor.viewDescriptor)
+                        : {buffer: entry.buffer!}
+                })
+            })
+            if (sampler) {
+                entries.push({
+                    binding: StandardMaterialBindPoint.SAMPLER,
+                    resource: sampler
+                })
+            }
+
+            const bindGroup = GPUCache.device.createBindGroup({
+                entries,
+                layout
+            })
+            material.bindGroup = bindGroup
+
+            GPUCache.materialBindGroupMap.set(bindGroupHash, {
+                bindGroup,
+                primitives: new Set(Array.from(material.primitives).map(p => p.id))
+            })
+        } else {
+            for (let i = 0; i < material.primitives.size; i++) {
+                bindgroupAlreadyExists.primitives.add(Array.from(material.primitives)[i].id)
+            }
+        }
+
+
+        const shaderCodeHash = GPUCache.hasher.hashShaderModule(material.shaderCode!)
+        material.setHashes("shader", shaderCodeHash)
+        this.appendShaderModule(material.shaderCode!, shaderCodeHash, Array.from(material.primitives))
+
+        material.primitives.forEach(primitive => {
+            primitive.sides.forEach(side => {
+                const hashes = primitive.primitiveHashes.get(side)!;
+                const pipelineDescriptor = primitive.pipelineDescriptors.get(side)!
+                primitive.setPrimitiveHashes({
+                    shader: shaderCodeHash,
+                    pipelineLayout: hashes.pipelineLayout,
+                    samplerHash: primitive.material.hashes.sampler.new,
+                    materialBindGroupLayout: primitive.material.hashes.bindGroupLayout.new!,
+                    materialBindGroup: bindGroupHash,
+                    pipeline: hashes.pipeline,
+                }, side)
+                this.appendPipeline(pipelineDescriptor, hashes.pipeline, hashes.pipelineLayout, shaderCodeHash, primitive)
+                const pipeline = GPUCache.pipelineMap.get(`${hashes.pipelineLayout}${shaderCodeHash}${hashes.pipeline}`)?.pipeline!
+                primitive.setPipeline(side, pipeline)
+            })
+        })
+    }
+
     changePipeline(primitive: Primitive) {
         primitive.primitiveHashes.forEach((hashes, side) => {
             this.removeResource(hashes.pipeline as never, new Set<number>([primitive.id]), "pipelineMap")
@@ -91,7 +203,7 @@ export class GPUCache extends BaseLayer {
                     primitive: primitive
                 }]]),
             ))[0][1]
-            primitive.pipelines.set(side, GPUCache.pipelineMap.get(`${hashes.pipelineLayout}${pipelineHash}`)?.pipeline!)
+            primitive.pipelines.set(side, GPUCache.pipelineMap.get(`${hashes.pipelineLayout}${hashes.shader}${pipelineHash}`)?.pipeline!)
         })
     }
 
@@ -110,12 +222,12 @@ export class GPUCache extends BaseLayer {
     }
 
     createSamplerHash(material: Material) {
-        const samplerHash = GPUCache.hasher.hashSampler(material.samplerInfo.descriptor!)
+        const samplerHash = GPUCache.hasher.hashSampler(material.descriptor.sampler!)
         material.setHashes("sampler", samplerHash)
-        this.appendSampler(material.samplerInfo.descriptor!, samplerHash, Array.from(material.primitives))
+        this.appendSampler(material.descriptor.sampler!, samplerHash, Array.from(material.primitives))
     }
 
-    async createMaterialHashes(materials: Material[]) {
+    async createMaterialHashes(materials: MaterialInstance[], layoutHash: number | undefined = undefined) {
         const materialHashes = new Map<number, {
             layout: number,
             bindGroup: number
@@ -125,7 +237,7 @@ export class GPUCache extends BaseLayer {
             if (!materialItem.descriptor.hashEntries) throw new Error(`${materialItem.name} material has no descriptor for hash entries`)
             if (!materialItem.descriptor.layout) throw new Error(`${materialItem.name} material has no descriptor for layout`)
             const materialHash = GPUCache.hasher.hashBindGroup(materialItem.descriptor.hashEntries);
-            const materialLayoutHash = GPUCache.hasher.hashBindGroupLayout(materialItem.descriptor.layout)
+            const materialLayoutHash = layoutHash ?? GPUCache.hasher.hashBindGroupLayout(materialItem.descriptor.layout)
 
 
             materialItem.setHashes("bindGroupLayout", materialLayoutHash)
@@ -145,7 +257,7 @@ export class GPUCache extends BaseLayer {
                     primitive
                 );
             })
-            if (materialItem.samplerInfo.descriptor) {
+            if (materialItem.descriptor.sampler) {
                 this.createSamplerHash(materialItem)
             }
             await this.appendMaterialBindGroup(
@@ -167,25 +279,25 @@ export class GPUCache extends BaseLayer {
 
             shaderCodesHashes.set(item.id, hash)
             item.material.setHashes("shader", hash)
-            this.appendShaderModule(item.material.shaderCode, hash, item)
+            this.appendShaderModule(item.material.shaderCode, hash, [item])
         }
 
         return shaderCodesHashes
     }
 
-    createPipelineLayoutHashes(pipelineDescriptors: PipelineEntry, materialLayoutHashes: Map<number, {
+    createPipelineLayoutHashes(primitives: Primitive[], materialLayoutHashes: Map<number, {
         layout: number,
         bindGroup: number
     }>, geometryLayoutHashes: Map<number, number>) {
         const pipelineLayoutsHashes = new Map<number, PipelineLayoutHashItem>();
 
-        for (let i = 0; i < pipelineDescriptors.length; i++) {
-            const item = pipelineDescriptors[i];
+        for (let i = 0; i < primitives.length; i++) {
+            const primitive = primitives[i];
 
-            let materialLayout = materialLayoutHashes.get(item.primitive.id)?.layout
-            let geometryLayout = geometryLayoutHashes.get(item.primitive.id)
-            if (!materialLayoutHashes) throw new Error(`primitive with id ${item.primitive.id}  has no layout hash set on material`)
-            if (!geometryLayout) throw new Error(`primitive with id ${item.primitive.id}  has no layout hash set on geometry`)
+            let materialLayout = materialLayoutHashes.get(primitive.id)?.layout
+            let geometryLayout = geometryLayoutHashes.get(primitive.id)
+            if (!materialLayoutHashes) throw new Error(`primitive with id ${primitive.id}  has no layout hash set on material`)
+            if (!geometryLayout) throw new Error(`primitive with id ${primitive.id}  has no layout hash set on geometry`)
 
             const hash = GPUCache.hasher.hashPipelineLayout(
                 materialLayout!,
@@ -195,10 +307,10 @@ export class GPUCache extends BaseLayer {
                 hash,
                 materialLayout!,
                 geometryLayout!,
-                item.primitive
+                primitive
             )
-            pipelineLayoutsHashes.set(item.primitive.id, {
-                ...item,
+            pipelineLayoutsHashes.set(primitive.id, {
+                primitive: primitive,
                 hash
             });
         }
@@ -261,11 +373,12 @@ export class GPUCache extends BaseLayer {
         shaderModuleHash: number,
         primitive: Primitive
     ) {
-        const alreadyExists = GPUCache.pipelineMap.get(`${pipelineLayoutHash}${pipelineHash}`);
+        const alreadyExists = GPUCache.pipelineMap.get(`${pipelineLayoutHash}${shaderModuleHash}${pipelineHash}`);
         if (!alreadyExists) {
             const pipelineLayout = GPUCache.pipelineLayoutMap.get(pipelineLayoutHash)?.layout as GPUPipelineLayout;
             const shaderModule = GPUCache.shaderModuleMap.get(shaderModuleHash)?.module as GPUShaderModule;
-            GPUCache.pipelineMap.set(`${pipelineLayoutHash}${pipelineHash}`, {
+
+            GPUCache.pipelineMap.set(`${pipelineLayoutHash}${shaderModuleHash}${pipelineHash}`, {
                 pipeline: BaseLayer.device.createRenderPipeline({
                     primitive: renderState.primitive,
                     vertex: {
@@ -287,9 +400,7 @@ export class GPUCache extends BaseLayer {
             });
         } else {
             alreadyExists.primitives.add(primitive.id)
-
         }
-
     }
 
     public appendPipelineLayout(pipelineLayoutHash: number, materialLayoutHash: number, geometryLayoutHash: number, primitive: Primitive) {
@@ -311,7 +422,7 @@ export class GPUCache extends BaseLayer {
         }
     }
 
-    public appendShaderModule(code: string, shaderHash: number, primitive: Primitive) {
+    public appendShaderModule(code: string, shaderHash: number, primitive: Primitive[]) {
         const alreadyExists = GPUCache.shaderModuleMap.get(shaderHash);
         if (!alreadyExists) {
             GPUCache.shaderModuleMap.set(shaderHash, {
@@ -319,10 +430,12 @@ export class GPUCache extends BaseLayer {
                     label: `module ${shaderHash}`,
                     code
                 }),
-                primitives: new Set([primitive.id])
+                primitives: new Set(primitive.map(prim => prim.id))
             })
         } else {
-            alreadyExists.primitives.add(primitive.id)
+            primitive.forEach(prim => {
+                alreadyExists.primitives.add(prim.id)
+            })
         }
     }
 
@@ -349,19 +462,17 @@ export class GPUCache extends BaseLayer {
         }
     }
 
-    protected async getEntries(material: Material) {
+    protected async getEntries(material: MaterialInstance) {
         if (!material.descriptor.entries) throw new Error(`${material.name} has no descriptor for entries`)
         const entries: GPUBindGroupEntry[] = await Promise.all(material.descriptor.entries.map(async (entry) => {
-
             if (entry.textureDescriptor) {
-                material.resources.set(entry.materialKey, entry.textureDescriptor.texture)
+
                 return {
                     binding: entry.bindingPoint,
                     resource: entry.textureDescriptor.texture.createView(entry.textureDescriptor.viewDescriptor),
                 }
             } else if (entry.buffer) {
 
-                material.resources.set(entry.materialKey, entry.buffer)
                 return {
                     binding: entry.bindingPoint,
                     resource: {
@@ -383,9 +494,10 @@ export class GPUCache extends BaseLayer {
                 } else {
                     throw new Error(`Unknown conversionType`);
                 }
-                material.resources.set(entry.materialKey, convertedData)
+                entry.materialResourcesKey ? material.resources.set(entry.materialResourcesKey, convertedData) : ""
 
                 if (convertedData instanceof GPUTexture) {
+                    "renderFlag" in entry.typedArray ? material.resources.set(RenderFlag[entry.typedArray.renderFlag], convertedData) : ""
                     return {
                         binding: entry.bindingPoint,
                         resource: convertedData.createView()
@@ -403,10 +515,10 @@ export class GPUCache extends BaseLayer {
             }
         }))
         if (material.hashes.sampler.new) {
-            material.resources.set("Sampler", GPUCache.samplerMap.get(material.hashes.sampler.new)?.sampler!)
+            material.resources.set(StandardMaterialBindPoint[StandardMaterialBindPoint.SAMPLER], GPUCache.samplerMap.get(material.hashes.sampler.new)?.sampler!)
 
             entries.push({
-                binding: material.samplerInfo.bindPoint!,
+                binding: StandardMaterialBindPoint.SAMPLER,
                 resource: GPUCache.samplerMap.get(material.hashes.sampler.new)?.sampler!
             })
         }
@@ -421,7 +533,7 @@ export class GPUCache extends BaseLayer {
                                     }: CreateBindGroupEntry) {
         const layout = layoutList.get(layoutHash)?.layout;
         const entries = await this.getEntries(material);
-
+        console.log(entries)
         if (!layout) throw new Error(`${material.name} material has no layout descriptor`)
         return BaseLayer.device.createBindGroup({
             label: `bindGroup ${bindGroupHash}`,
@@ -431,7 +543,7 @@ export class GPUCache extends BaseLayer {
     }
 
     public async appendMaterialBindGroup(
-        material: Material,
+        material: MaterialInstance,
         primitives: Primitive[]
     ) {
         const alreadyExists = GPUCache.materialBindGroupMap.get(material.hashes.bindGroup.new!);
@@ -453,13 +565,9 @@ export class GPUCache extends BaseLayer {
         }
     }
 
-    public getMaterialBindGroup(materialBindGroupHash: number) {
-        return (GPUCache.materialBindGroupMap.get(materialBindGroupHash))?.bindGroup;
-    }
-
     public getRenderSetup(pipelineHash: number, pipelineLayout: number, materialBindGroupHash: number, geometryBindGroupLayoutHash: number, shaderCodeHash: number) {
         return {
-            pipeline: GPUCache.pipelineMap.get(`${pipelineLayout}${pipelineHash}`)?.pipeline!,
+            pipeline: GPUCache.pipelineMap.get(`${pipelineLayout}${shaderCodeHash}${pipelineHash}`)?.pipeline!,
             pipelineLayout: (GPUCache.pipelineLayoutMap.get(pipelineLayout))?.layout!,
             materialBindGroup: (GPUCache.materialBindGroupMap.get(materialBindGroupHash))?.bindGroup!,
             geometryBindGroupLayout: (GPUCache.bindGroupLayoutMap.get(geometryBindGroupLayoutHash))?.layout!,

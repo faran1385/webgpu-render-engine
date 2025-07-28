@@ -8,20 +8,12 @@ import {Material as MaterialClass} from "../Material/Material.ts";
 import {Primitive} from "../primitive/Primitive.ts";
 import {Geometry} from "../geometry/Geometry.ts";
 import {Scene} from "../scene/Scene.ts";
+import {StandardMaterial} from "../Material/StandardMaterial.ts";
 
 const io = new WebIO().registerExtensions(ALL_EXTENSIONS);
 
 /** A GLTF/GLB loader class with optional caching and progress reporting. */
 export class GLTFLoader {
-    private device: GPUDevice;
-    private canvas: HTMLCanvasElement;
-    private ctx: GPUCanvasContext;
-
-    constructor(device: GPUDevice, canvas: HTMLCanvasElement, ctx: GPUCanvasContext) {
-        this.device = device;
-        this.canvas = canvas;
-        this.ctx = ctx;
-    }
 
     /**
      * Loads a model from URL and returns document, meshes, buffers, and animations.
@@ -34,7 +26,7 @@ export class GLTFLoader {
         const sceneObjects: Set<SceneObject> = new Set();
         const nodeMap: Map<Node, SceneObject> = new Map();
         const nodeToSceneObject = new Map<Node, SceneObject>();
-        const materialMap = new Map<Material | null, MaterialClass>()
+        const materialMap = new Map<Material | null, StandardMaterial>()
         for (const node of root.listNodes()) {
             const translation = node.getTranslation();
             const rotation = node.getRotation();
@@ -143,8 +135,9 @@ export class GLTFLoader {
             const primitive = new Primitive();
             primitive.setGeometry(geometry)
             const alreadyExists = materialMap.get(prim.getMaterial())
+
             if (!alreadyExists) {
-                materialMap.set(prim.getMaterial(), new MaterialClass(this.device, this.canvas, this.ctx, prim.getMaterial()))
+                materialMap.set(prim.getMaterial(), new StandardMaterial(prim.getMaterial()))
             }
 
             prims.push([primitive, prim.getMaterial()])

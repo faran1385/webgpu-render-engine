@@ -6,8 +6,6 @@ import {HashGenerator} from "./engine/GPURenderSystem/Hasher/HashGenerator.ts";
 import {GPUCache} from "./engine/GPURenderSystem/GPUCache/GPUCache.ts";
 import {ModelRenderer} from "./renderers/modelRenderer.ts";
 
-import {vec3} from "gl-matrix";
-import {RenderFlag} from "./engine/GPURenderSystem/MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
 import {Camera} from "./engine/camera/Camera.ts";
 import {Scene} from "./engine/scene/Scene.ts";
 import {OrbitControls} from "./engine/camera/controls.ts";
@@ -36,30 +34,23 @@ await hasher.init()
 const gpuCache = new GPUCache(device, canvas, ctx, hasher);
 
 const mainLayer = new RenderLayer(device, canvas, ctx, gpuCache)
-const loader = new GLTFLoader(device, canvas, ctx)
+const loader = new GLTFLoader()
+const {sceneObjects, nodeMap} = await loader.load("/a.glb", scene)
 
-const {sceneObjects, nodeMap} = await loader.load("/s.glb", scene)
 const hdrLoader = new HDRLoader(device);
-
 const cubeMap = await hdrLoader.load("/e.hdr")
+
 scene.setToneMapping = ToneMapping.ACES
-// await scene.backgroundManager.setBackground(gpuCache, [1], cubeMap, 2)
-// await scene.environmentManager.setEnvironment(cubeMap, 1024, 64, 32)
-scene.environmentManager.initBRDFLUT()
-scene.lightManager.addDirectional({
-    intensity: 1,
-    color: [1, 1, 1],
-    position: [3, 4, 10]
-})
+await scene.backgroundManager.setBackground(gpuCache, [1], cubeMap, 1)
+await scene.environmentManager.setEnvironment(cubeMap, 1024, 64, 32)
+
 scene.lightManager.addAmbient({
-    intensity:0.3,
+    intensity: 0.3,
     color: [1, 1, 1],
 })
 
 const modelRenderer = new ModelRenderer({
     gpuCache,
-    device,
-    format: baseLayer.format,
     scene
 });
 
@@ -68,13 +59,13 @@ window.addEventListener("resize", () => {
     camera.updateProjectionMatrix()
 })
 
+
 modelRenderer.setSceneObjects(sceneObjects)
-modelRenderer.setNodeMap(nodeMap)
 modelRenderer.enableFrustumCulling()
-modelRenderer.fillInitEntry(RenderFlag.PBR)
+modelRenderer.setNodeMap(nodeMap)
+modelRenderer.fillInitEntry()
 await modelRenderer.init()
-modelRenderer.setScale(vec3.fromValues(7, 7, 7))
-const primitive = sceneObjects.entries().next().value.entries().next().value![1].primitives.entries().next().value![1]
+// const primitive = sceneObjects.entries().next().value.entries().next().value![1].primitives.entries().next().value![1]
 
 const pane = new Pane();
 const paneElement = pane.element;
@@ -102,21 +93,21 @@ pane.addBinding(params, "exposure", {
 }).on("change", (T) => {
     scene.environmentManager.setExposure(T.value)
 })
-pane.addBinding(params, "roughness", {
-    min: 0, max: 1,
-}).on("change", (T) => {
-    primitive.material.setRoughnessFactor(T.value)
-})
-
-pane.addBinding(params, "metallic", {
-    min: 0, max: 1,
-}).on("change", (T) => {
-    primitive.material.setMetallicFactor(T.value)
-})
-
-pane.addBinding(params, "albedo").on("change", (T) => {
-    primitive.material.setBaseColorFactor([T.value.r / 255, T.value.g / 255, T.value.b / 255, 1]);
-})
+// pane.addBinding(params, "roughness", {
+//     min: 0, max: 1,
+// }).on("change", (T) => {
+//     primitive.material.setRoughnessFactor(T.value)
+// })
+//
+// pane.addBinding(params, "metallic", {
+//     min: 0, max: 1,
+// }).on("change", (T) => {
+//     primitive.material.setMetallicFactor(T.value)
+// })
+//
+// pane.addBinding(params, "albedo").on("change", (T) => {
+//     primitive.material.setBaseColorFactor([T.value.r / 255, T.value.g / 255, T.value.b / 255, 1]);
+// })
 
 
 const render = () => {

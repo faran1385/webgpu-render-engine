@@ -47,16 +47,21 @@ export class RenderLayer extends BaseLayer {
 
     private checkForUpdate() {
 
-        RenderLayer.activeScene._sceneObjectUpdateQueue.forEach(sceneObject => {
+        BaseLayer.activeScene._sceneObjectUpdateQueue.forEach(sceneObject => {
             if (sceneObject.needsUpdate) {
                 sceneObject.updateWorldMatrix(RenderLayer.device)
             }
+        })
+
+        RenderLayer.materialUpdateQueue.forEach(mat => {
+            this.gpuCache.changeMaterial(mat);
         })
 
         RenderLayer.activeScene.pipelineUpdateQueue.forEach(prim => {
             this.gpuCache.changePipeline(prim);
         })
 
+        BaseLayer.materialUpdateQueue.clear()
         RenderLayer.activeScene.pipelineUpdateQueue.clear()
         RenderLayer.activeScene._sceneObjectUpdateQueue.clear()
     }

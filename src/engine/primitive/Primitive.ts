@@ -3,12 +3,12 @@ import {TypedArray} from "@gltf-transform/core";
 import {RenderState} from "../GPURenderSystem/GPUCache/GPUCacheTypes.ts";
 import {mat3, mat4} from "gl-matrix";
 import {Geometry} from "../geometry/Geometry.ts";
-import {Material} from "../Material/Material.ts";
 import {generateID} from "../../helpers/global.helper.ts";
 import {SceneObject} from "../sceneObject/sceneObject.ts";
 import {GPUCache} from "../GPURenderSystem/GPUCache/GPUCache.ts";
 import {ToneMapping} from "../../helpers/postProcessUtils/postProcessUtilsTypes.ts";
 import {Scene} from "../scene/Scene.ts";
+import {MaterialInstance} from "../Material/Material.ts";
 
 export type Side = "front" | "back" | "none"
 
@@ -20,6 +20,7 @@ export type PrimitiveHashes = {
     pipelineLayout: number,
     samplerHash: number | null
 }
+
 
 export class Primitive {
     id!: number;
@@ -36,7 +37,7 @@ export class Primitive {
     indexBufferStartIndex!: number;
     indirectBufferStartIndex!: number;
     geometry!: Geometry
-    material!: Material
+    material!: MaterialInstance
     sceneObject!: SceneObject
     primitiveHashes = new Map<Side, PrimitiveHashes>();
 
@@ -50,7 +51,7 @@ export class Primitive {
         this.primitiveHashes.set(side, hashes);
     }
 
-    setMaterial(material: Material) {
+    setMaterial(material: MaterialInstance) {
         this.material = material
     }
 
@@ -58,14 +59,14 @@ export class Primitive {
         this.geometry = geometry;
     }
 
-    updateExposure(exposure: number,scene:Scene) {
+    updateExposure(exposure: number, scene: Scene) {
         this.pipelineDescriptors.forEach(descriptor => {
             descriptor.fragmentConstants ? descriptor.fragmentConstants.EXPOSURE = exposure : null
         })
         scene.pipelineUpdateQueue.add(this)
     }
 
-    updateToneMapping(toneMapping: ToneMapping,scene:Scene) {
+    updateToneMapping(toneMapping: ToneMapping, scene: Scene) {
         this.pipelineDescriptors.forEach(descriptor => {
             descriptor.fragmentConstants ? descriptor.fragmentConstants.TONE_MAPPING_NUMBER = toneMapping : null
         })
@@ -108,27 +109,17 @@ export class Primitive {
         this.sceneObject = sceneObject;
     }
 
-    setRenderSetup(geometryBindGroup: GPUBindGroup, gpuCache: GPUCache) {
-        this.sides.forEach(side => {
-            const hashes = this.primitiveHashes.get(side)!;
-            const setup = gpuCache.getRenderSetup(
-                hashes.pipeline,
-                hashes.pipelineLayout,
-                hashes.materialBindGroup,
-                this.geometry.hashes.bindGroupLayout!,
-                hashes.shader
-            )
-            this.setPipeline(side, setup.pipeline)
-            this.material.bindGroup = setup.materialBindGroup;
-            this.geometry.bindGroup = geometryBindGroup;
-        })
-    }
-
-    setModelMatrix(modelMatrix: mat4) {
-        this.modelMatrix = modelMatrix
-    }
-
-    setNormal(normalMatrix: mat3) {
-        this.normalMatrix = normalMatrix
+    setRenderSetup(geometryBindGroup: GPUBindGroup, gpuCache: GPUCache, side: Side) {
+        const hashes = this.primitiveHashes.get(side)!;
+        const setup = gpuCache.getRenderSetup(
+            hashes.pipeline,
+            hashes.pipelineLayout,
+            hashes.materialBindGroup,
+            this.geometry.hashes.bindGroupLayout!,
+            hashes.shader
+        )
+        this.setPipeline(side, setup.pipeline)
+        this.material.bindGroup = setup.materialBindGroup;
+        this.geometry.bindGroup = geometryBindGroup;
     }
 }

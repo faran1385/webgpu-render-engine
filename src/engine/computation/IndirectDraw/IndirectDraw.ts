@@ -90,7 +90,6 @@ export class IndirectDraw {
             environment.sides.forEach((side) => {
                 const pipeline = environment.pipelines.get(side);
                 if (!pipeline) throw new Error("pipeline not found");
-
                 pass.setPipeline(pipeline)
                 pass.setBindGroup(0, this.scene.globalBindGroup)
                 pass.setBindGroup(1,environment.material.bindGroup)
@@ -114,7 +113,6 @@ export class IndirectDraw {
         primitives.forEach((item) => {
             item.sides.forEach((side) => {
                 const pipeline = item.pipelines.get(side)!;
-
                 pass.setPipeline(pipeline)
                 pass.setBindGroup(0, this.scene.globalBindGroup)
                 pass.setBindGroup(1,item.material.bindGroup)

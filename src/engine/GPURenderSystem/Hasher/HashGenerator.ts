@@ -2,13 +2,13 @@ import xxhash, {XXHashAPI} from 'xxhash-wasm';
 import {RenderState} from "../GPUCache/GPUCacheTypes.ts";
 import {TypedArray} from "@gltf-transform/core";
 
-export type HashCreationBindGroupEntry = TypedArray[];
+export type HashCreationBindGroupEntry = (TypedArray | GPUBuffer | GPUTexture)[];
 
 export class HashGenerator {
     private static hasher: XXHashAPI;
     private static textEncoder: TextEncoder;
 
-    private bindGroupEntriesHashCache = new WeakMap<TypedArray, number>();
+    private bindGroupEntriesHashCache = new WeakMap<TypedArray | GPUBuffer | GPUTexture, number>();
     private bindGroupHashCache = new Map<string, number>();
     private shaderHashCache = new Map<string, number>();
     private bindGroupLayoutHashCache = new Map<string, number>();

@@ -1,9 +1,9 @@
 import {Material as MaterialClass} from "./Material.ts";
 import {extractMaterial} from "../../helpers/global.helper.ts";
 import {
+    RenderFlag,
     StandardMaterialBindPoint,
-    StandardMaterialFactorsStartPoint,
-    RenderFlag
+    StandardMaterialFactorsStartPoint
 } from "../GPURenderSystem/MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
 import {Material} from "@gltf-transform/core";
 import {
@@ -19,6 +19,7 @@ export class StandardMaterial extends MaterialClass {
         this.name = material?.getName() ?? "Default"
         if (material) {
             this.textureDataMap = extractMaterial(material)
+            this.workFlow = Boolean(this.textureDataMap.get(RenderFlag.PBR_SPECULAR)) ? "specular_glossiness" : "metallic_roughness"
             this.alpha = {
                 mode: material.getAlphaMode(),
                 cutoff: material.getAlphaCutoff()

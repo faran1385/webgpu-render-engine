@@ -13,6 +13,9 @@ export enum StandardMaterialBindPoint {
     SPECULAR,
     SPECULAR_COLOR,
     TRANSMISSION,
+    PBR_SPECULAR=13,
+    PBR_GLOSSINESS=13,
+    DIFFUSE,
 }
 
 export enum RenderFlag {
@@ -29,8 +32,12 @@ export enum RenderFlag {
     CLEARCOAT,
     CLEARCOAT_NORMAL,
     CLEARCOAT_ROUGHNESS,
-    ANISOTROPY
+    PBR_SPECULAR,
+    PBR_GLOSSINESS,
+    DIFFUSE,
 }
+
+
 
 export enum StandardMaterialFactorsStartPoint {
     BASE_COLOR = 0,
@@ -45,7 +52,9 @@ export enum StandardMaterialFactorsStartPoint {
     CLEARCOAT = 16,
     CLEARCOAT_ROUGHNESS = 17,
     CLEARCOAT_NORMAL = 18,
-    ANISOTROPY = 19,
+    PBR_SPECULAR = 19,
+    PBR_GLOSSINESS = 22,
+    DIFFUSE=23
 }
 
 export enum PipelineShaderLocations {

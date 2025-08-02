@@ -6,7 +6,7 @@ import {ShaderGenerator} from "../ShaderGenerator/ShaderGenerator.ts";
 import {MaterialDescriptorGenerator} from "../MaterialDescriptorGenerator/MaterialDescriptorGenerator.ts";
 import {
     GeometryBindingPoint,
-    PipelineShaderLocations
+    PipelineShaderLocations,
 } from "../MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
 import {StandardMaterial} from "../../Material/StandardMaterial.ts";
 import {isLightDependentMaterial} from "../../../helpers/global.helper.ts";
@@ -75,22 +75,26 @@ export class SmartRender {
                     name: "model"
                 })
             }
+            const anyPrimHasNormal = Array.from(sceneObject.primitives!).some(([_, prim]) => {
+                return prim.geometry.dataList.get('NORMAL')
+            })
+
+            if (anyPrimHasNormal) {
+                sceneObject.createNormalBuffer(SmartRender.device)
+                layoutEntries.push({
+                    binding: GeometryBindingPoint.NORMAL_MATRIX,
+                    buffer: {type: "uniform"},
+                    visibility: GPUShaderStage.VERTEX
+                })
+                entries.push({
+                    binding: GeometryBindingPoint.NORMAL_MATRIX,
+                    resource: {
+                        buffer: sceneObject.normalBuffer as GPUBuffer
+                    }
+                })
+            }
 
             sceneObject.primitives?.forEach(primitive => {
-                if (primitive.geometry.dataList.get('NORMAL')) {
-                    sceneObject.createNormalBuffer(SmartRender.device)
-                    layoutEntries.push({
-                        binding: GeometryBindingPoint.NORMAL_MATRIX,
-                        buffer: {type: "uniform"},
-                        visibility: GPUShaderStage.VERTEX
-                    })
-                    entries.push({
-                        binding: GeometryBindingPoint.NORMAL_MATRIX,
-                        resource: {
-                            buffer: sceneObject.normalBuffer as GPUBuffer
-                        }
-                    })
-                }
                 primitive.geometry.descriptors.bindGroup = entries
                 primitive.geometry.descriptors.layout = layoutEntries
             })
@@ -178,6 +182,7 @@ export class SmartRender {
                         fragmentConstant.TONE_MAPPING_NUMBER = primitive.sceneObject.scene.getToneMapping(primitive)
                         fragmentConstant.EXPOSURE = primitive.sceneObject.scene.environmentManager.getExposure()
                     }
+
 
                     if (isTransparent && isDoubleSided) {
                         primitive.setSide("back")

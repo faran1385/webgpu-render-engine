@@ -3,7 +3,7 @@ import {mat3, mat4, vec3} from "gl-matrix";
 import Stats from 'stats-js';
 import {MaterialInstance, TextureData} from "../engine/Material/Material.ts"
 import {Material, TypedArray, vec2} from "@gltf-transform/core";
-import {Anisotropy, Clearcoat, Specular, Transmission} from "@gltf-transform/extensions";
+import {Anisotropy, Clearcoat, PBRSpecularGlossiness, Specular, Transmission} from "@gltf-transform/extensions";
 import {
     RenderFlag,
     StandardMaterialBindPoint,
@@ -157,7 +157,43 @@ export function extractExtensions(material: Material) {
     }>();
 
     material.listExtensions().forEach((extension) => {
-        if (extension instanceof Specular) {
+
+        if (extension instanceof PBRSpecularGlossiness) {
+            const diffuseTexture = extension.getDiffuseTexture();
+            const specularGlossinessTexture = extension.getSpecularGlossinessTexture();
+
+            extensionMap.set(RenderFlag.DIFFUSE, {
+                texture: diffuseTexture ? {
+                    size: diffuseTexture.getSize()!,
+                    data: diffuseTexture.getImage()!
+                } : null,
+                factor: extension.getDiffuseFactor(),
+                bindPoint: StandardMaterialBindPoint.DIFFUSE,
+                factorStartPoint: StandardMaterialFactorsStartPoint.DIFFUSE,
+            })
+
+            extensionMap.set(RenderFlag.PBR_GLOSSINESS, {
+                texture: specularGlossinessTexture ? {
+                    size: specularGlossinessTexture.getSize()!,
+                    data: specularGlossinessTexture.getImage()!
+                } : null,
+                factor: extension.getGlossinessFactor(),
+                bindPoint: StandardMaterialBindPoint.PBR_GLOSSINESS,
+                factorStartPoint: StandardMaterialFactorsStartPoint.PBR_GLOSSINESS,
+            })
+
+            extensionMap.set(RenderFlag.PBR_SPECULAR, {
+                texture: specularGlossinessTexture ? {
+                    size: specularGlossinessTexture.getSize()!,
+                    data: specularGlossinessTexture.getImage()!
+                } : null,
+                factor: extension.getSpecularFactor(),
+                bindPoint: StandardMaterialBindPoint.PBR_SPECULAR,
+                factorStartPoint: StandardMaterialFactorsStartPoint.PBR_SPECULAR,
+            })
+
+        } else if (extension instanceof Specular) {
+            console.log(extension)
             const specularTexture = extension.getSpecularTexture();
             const specularColorTexture = extension.getSpecularColorTexture();
 
@@ -231,14 +267,14 @@ export function extractExtensions(material: Material) {
                 bindPoint: StandardMaterialBindPoint.CLEARCOAT_NORMAL,
                 factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT_NORMAL,
             })
-        }else if(extension instanceof Anisotropy){
+        } else if (extension instanceof Anisotropy) {
             const anisotropyTexture = extension.getAnisotropyTexture();
             extensionMap.set(RenderFlag.CLEARCOAT_NORMAL, {
                 texture: anisotropyTexture ? {
                     size: anisotropyTexture.getSize()!,
                     data: anisotropyTexture.getImage()!
                 } : null,
-                factor: [extension.getAnisotropyStrength(),extension.getAnisotropyRotation()],
+                factor: [extension.getAnisotropyStrength(), extension.getAnisotropyRotation()],
                 bindPoint: StandardMaterialBindPoint.CLEARCOAT_NORMAL,
                 factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT_NORMAL,
             })
@@ -384,7 +420,6 @@ export function extractMaterial(material: Material) {
         bindPoint: StandardMaterialBindPoint.CLEARCOAT_NORMAL,
         factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT_NORMAL
     });
-
     const extensions = extractExtensions(material)
     extensions.forEach((value, key) => {
         dataMap.set(key, value);

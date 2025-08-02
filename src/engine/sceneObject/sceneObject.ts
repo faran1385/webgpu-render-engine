@@ -81,7 +81,6 @@ export class SceneObject {
         this.worldMatrix = mat4.create()
         this.normalMatrix = mat3.normalFromMat4(mat3.create(), this.worldMatrix);
 
-        console.log()
         this.skin = config.skin;
         this.parent = config.parent;
         this.scene = config.scene;

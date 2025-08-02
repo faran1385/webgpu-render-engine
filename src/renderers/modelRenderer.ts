@@ -125,10 +125,11 @@ export class ModelRenderer {
         this.sceneObjects.forEach(sceneObject => {
             sceneObject.primitives?.forEach(p => primitives.push(p))
         })
+
         await hashAndCreateRenderSetup(this.scene.computeManager, this.gpuCache, Array.from(this.materials), primitives)
         primitives.forEach(primitive => this.scene.appendDrawCall = primitive)
         this.materials.forEach(material => {
-            material.textureDataMap.clear()
+            // material.textureDataMap.clear()
             material.descriptor = {
                 entries: null,
                 hashEntries: null,

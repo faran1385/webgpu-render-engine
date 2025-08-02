@@ -234,7 +234,6 @@ export class GPUCache extends BaseLayer {
             const materialHash = GPUCache.hasher.hashBindGroup(materialItem.descriptor.hashEntries);
             const materialLayoutHash = layoutHash ?? GPUCache.hasher.hashBindGroupLayout(materialItem.descriptor.layout)
 
-
             materialItem.setHashes("bindGroupLayout", materialLayoutHash)
             materialItem.setHashes("bindGroup", materialHash)
             const materialPrimitives: Primitive[] = [];

@@ -99,7 +99,6 @@ export class MaterialDescriptorGenerator {
                 pushedIndices.set(value.bindPoint, true)
             }
         })
-
         return layoutEntries
     }
 
@@ -165,7 +164,6 @@ export class MaterialDescriptorGenerator {
                     factorsArray[item.factorStartPoint + i] = factor
                 })
             })
-
             const factorsTypedArray = new Float32Array(factorsArray);
             entries.push({
                 bindingPoint: StandardMaterialBindPoint.FACTORS,
@@ -179,7 +177,6 @@ export class MaterialDescriptorGenerator {
                 materialResourcesKey: StandardMaterialBindPoint[StandardMaterialBindPoint.FACTORS]
             })
             hashEntries.push(factorsTypedArray)
-            console.log(factorsArray)
             return {
                 entries,
                 hashEntries,

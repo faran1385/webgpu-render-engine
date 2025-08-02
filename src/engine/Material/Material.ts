@@ -53,6 +53,7 @@ export class Material {
     isDoubleSided: boolean = false
     shaderCode: string | null = null
     isTransparent: boolean = false;
+    workFlow:'metallic_roughness' | "specular_glossiness" = "metallic_roughness"
 
 
 

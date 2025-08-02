@@ -4,7 +4,10 @@ import {Node} from "@gltf-transform/core";
 import {SceneObject} from "../../sceneObject/sceneObject.ts";
 import {ShaderGenerator} from "../ShaderGenerator/ShaderGenerator.ts";
 import {MaterialDescriptorGenerator} from "../MaterialDescriptorGenerator/MaterialDescriptorGenerator.ts";
-import {PipelineShaderLocations} from "../MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
+import {
+    GeometryBindingPoint,
+    PipelineShaderLocations
+} from "../MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
 import {StandardMaterial} from "../../Material/StandardMaterial.ts";
 import {isLightDependentMaterial} from "../../../helpers/global.helper.ts";
 
@@ -36,26 +39,36 @@ export class SmartRender {
         }])
     }
 
-    getGeometryBindGroups(sceneObjects: SceneObject[], nodeMap: undefined | Map<Node, SceneObject>) {
+    setGeometryBindGroups(sceneObjects: SceneObject[], nodeMap: undefined | Map<Node, SceneObject>) {
 
         sceneObjects.forEach(sceneObject => {
             const entries: (GPUBindGroupEntry & { name?: "model" | "normal" })[] = []
-
+            const layoutEntries: GPUBindGroupLayoutEntry[] = []
             if (sceneObject.skin) {
                 if (!nodeMap) throw new Error("in order to have skin u need to set the nodeMap on modelRenderer")
                 const skinBuffer = sceneObject.scene.skinManager.getSkin(sceneObject.skin) ?? sceneObject.scene.skinManager.addSkin(sceneObject.skin, nodeMap)
 
                 entries.push({
-                    binding: 1,
+                    binding: GeometryBindingPoint.SKIN,
                     resource: {
                         buffer: skinBuffer?.buffer
                     }
                 })
+                layoutEntries.push({
+                    binding: GeometryBindingPoint.SKIN,
+                    buffer: {type: "read-only-storage"},
+                    visibility: GPUShaderStage.VERTEX
+                })
                 sceneObject.skinBuffer = skinBuffer?.buffer;
             } else {
-                sceneObject.createModelBuffer(SmartRender.device, sceneObject.worldMatrix)
+                sceneObject.createModelBuffer(SmartRender.device)
+                layoutEntries.push({
+                    binding: GeometryBindingPoint.MODEL_MATRIX,
+                    buffer: {type: "uniform"},
+                    visibility: GPUShaderStage.VERTEX
+                })
                 entries.push({
-                    binding: 0,
+                    binding: GeometryBindingPoint.MODEL_MATRIX,
                     resource: {
                         buffer: sceneObject.modelBuffer as GPUBuffer
                     },
@@ -64,16 +77,32 @@ export class SmartRender {
             }
 
             sceneObject.primitives?.forEach(primitive => {
+                if (primitive.geometry.dataList.get('NORMAL')) {
+                    sceneObject.createNormalBuffer(SmartRender.device)
+                    layoutEntries.push({
+                        binding: GeometryBindingPoint.NORMAL_MATRIX,
+                        buffer: {type: "uniform"},
+                        visibility: GPUShaderStage.VERTEX
+                    })
+                    entries.push({
+                        binding: GeometryBindingPoint.NORMAL_MATRIX,
+                        resource: {
+                            buffer: sceneObject.normalBuffer as GPUBuffer
+                        }
+                    })
+                }
                 primitive.geometry.descriptors.bindGroup = entries
+                primitive.geometry.descriptors.layout = layoutEntries
             })
         })
     }
 
-    getPipelineDescriptors(sceneObjects: SceneObject[]) {
+    setPipelineDescriptors(sceneObjects: SceneObject[]) {
         sceneObjects.forEach(sceneObject => {
             if (sceneObject.primitives && sceneObject.primitives.size > 0) {
                 sceneObject.primitives.forEach((primitive) => {
                     primitive.pipelineDescriptors.clear()
+                    primitive.sides = []
 
                     const geometry = primitive.geometry;
                     const buffers: (GPUVertexBufferLayout & { name: string; })[] = [{
@@ -139,7 +168,7 @@ export class SmartRender {
                         })
                     }
                     const isDoubleSided = primitive.material.isDoubleSided
-                    const isTransparent = primitive.material.alpha.mode === "BLEND"
+                    const isTransparent = primitive.material.isTransparent
                     const fragmentConstant: any = {
                         ALPHA_MODE: primitive.material.alpha.mode === "OPAQUE" ? 0 : primitive.material.alpha.mode === "BLEND" ? 1 : 2,
                         ALPHA_CUTOFF: primitive.material.alpha.cutoff
@@ -243,7 +272,7 @@ export class SmartRender {
                         })
                     }
 
-                    primitive.setIsTransparent(isTransparent)
+                    primitive.material.isDoubleSided = isTransparent
                     primitive.setVertexBufferDescriptors(buffers)
                 })
             }
@@ -262,26 +291,18 @@ export class SmartRender {
                 primitive.material.initDescriptor(SmartRender.materialBindGroupGenerator)
             })
         })
-        this.getPipelineDescriptors(sceneObjects)
-        this.getGeometryBindGroups(sceneObjects, nodeMap)
+        this.setPipelineDescriptors(sceneObjects)
+        this.setGeometryBindGroups(sceneObjects, nodeMap)
 
 
         sceneObjects.forEach((sceneObject) => {
             if (sceneObject.primitives && sceneObject.primitives.size > 0) {
                 sceneObject.primitives.forEach((primitive) => {
-                    const geometry = primitive.geometry
-                    const hasBoneData = Boolean(geometry.dataList.get('JOINTS_0') && geometry.dataList.get("WEIGHTS_0"))
-
-                    if (hasBoneData) {
-                        primitive.geometry.descriptors.layout = SmartRender.defaultGeometryBindGroupLayout[1]
-                    } else {
-                        primitive.geometry.descriptors.layout = SmartRender.defaultGeometryBindGroupLayout[0]
-                    }
-
                     let code = '';
                     if (primitive.material instanceof StandardMaterial) {
                         code = SmartRender.shaderGenerator.getStandardCode(primitive)
                     }
+
                     primitive.material.shaderCode = code
                 })
             }

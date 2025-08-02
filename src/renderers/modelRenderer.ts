@@ -64,29 +64,29 @@ export class ModelRenderer {
         })
     }
 
-    public setTranslation(t: vec3) {
+    public setTranslation(x: number, y: number, z: number) {
         if (this.sceneObjects.size === 0) throw new Error("sceneObjects is not set");
         for (const sceneObject of this.sceneObjects) {
             if (!sceneObject.parent) {
-                sceneObject.setTranslation(sceneObject.transformMatrix, t);
+                sceneObject.setTranslation(sceneObject.transformMatrix, vec3.fromValues(x, y, z));
             }
         }
     }
 
-    public setRotation(r: quat) {
+    public setRotation(x: number, y: number, z: number, w: number) {
         if (this.sceneObjects.size === 0) throw new Error("sceneObjects is not set");
         for (const sceneObject of this.sceneObjects) {
             if (!sceneObject.parent) {
-                sceneObject.setRotation(sceneObject.transformMatrix, r);
+                sceneObject.setRotation(sceneObject.transformMatrix, quat.fromValues(x, y, z, w));
             }
         }
     }
 
-    public setScale(s: vec3) {
+    public setScale(x: number, y: number, z: number) {
         if (this.sceneObjects.size === 0) throw new Error("sceneObjects is not set");
         for (const sceneObject of this.sceneObjects) {
             if (!sceneObject.parent) {
-                sceneObject.setScale(sceneObject.transformMatrix, s);
+                sceneObject.setScale(sceneObject.transformMatrix, vec3.fromValues(x, y, z));
             }
         }
     }

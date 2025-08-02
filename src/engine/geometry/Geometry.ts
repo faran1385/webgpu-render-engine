@@ -30,10 +30,6 @@ export class Geometry {
         this.lodRanges = geometryData.lodRanges;
     }
 
-    setBindGroup(bindGroup: GPUBindGroup) {
-        this.bindGroup = bindGroup;
-    }
-
     setBindGroupLayoutHash(layout: number) {
         this.hashes.bindGroupLayout = layout;
     }

@@ -14,7 +14,6 @@ import {
     RenderFlag, StandardMaterialBindPoint,
 } from "../MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
 import {SmartRender} from "../SmartRender/SmartRender.ts";
-import {SceneObject} from "../../sceneObject/sceneObject.ts";
 import {StandardMaterial} from "../../Material/StandardMaterial.ts";
 
 export class GPUCache extends BaseLayer {
@@ -89,7 +88,6 @@ export class GPUCache extends BaseLayer {
     }
 
     changeMaterial(material: MaterialInstance) {
-        const sceneObjects: SceneObject[] = []
 
         material.primitives?.forEach(p => {
             const pSet = new Set<number>([p.id]);
@@ -100,24 +98,14 @@ export class GPUCache extends BaseLayer {
                 this.removeResource(hashes.materialBindGroup as never, pSet, "materialBindGroupMap")
             })
             p.material.initDescriptor(SmartRender.materialBindGroupGenerator)
-            sceneObjects.push(p.sceneObject)
         })
 
         material.primitives.forEach(primitive => {
-            const geometry = primitive.geometry
-            const hasBoneData = Boolean(geometry.dataList.get('JOINTS_0') && geometry.dataList.get("WEIGHTS_0"))
-
-            if (hasBoneData) {
-                primitive.geometry.descriptors.layout = SmartRender.defaultGeometryBindGroupLayout[1]
-            } else {
-                primitive.geometry.descriptors.layout = SmartRender.defaultGeometryBindGroupLayout[0]
-            }
-
             let code = '';
             if (primitive.material instanceof StandardMaterial) {
                 code = SmartRender.shaderGenerator.getStandardCode(primitive)
             }
-            primitive.material.shaderCode=code
+            primitive.material.shaderCode = code
         })
 
         const bindGroupHash = GPUCache.hasher.hashBindGroup(material.descriptor.hashEntries!)
@@ -193,6 +181,13 @@ export class GPUCache extends BaseLayer {
     }
 
     changePipeline(primitive: Primitive) {
+        let hashes = Array.from(primitive.primitiveHashes.entries())[0][1]
+        GPUCache.smartRenderer.setPipelineDescriptors([primitive.sceneObject])
+        primitive.primitiveHashes.clear()
+        primitive.sides.forEach(side => {
+            primitive.setPrimitiveHashes(hashes, side)
+        })
+
         primitive.primitiveHashes.forEach((hashes, side) => {
             this.removeResource(hashes.pipeline as never, new Set<number>([primitive.id]), "pipelineMap")
             const pipelineHash = Array.from(this.createPipelineHashes(
@@ -533,7 +528,7 @@ export class GPUCache extends BaseLayer {
                                     }: CreateBindGroupEntry) {
         const layout = layoutList.get(layoutHash)?.layout;
         const entries = await this.getEntries(material);
-        console.log(entries)
+
         if (!layout) throw new Error(`${material.name} material has no layout descriptor`)
         return BaseLayer.device.createBindGroup({
             label: `bindGroup ${bindGroupHash}`,
@@ -563,6 +558,10 @@ export class GPUCache extends BaseLayer {
                 alreadyExists.primitives.add(primitives[i].id)
             }
         }
+    }
+
+    public getResource(hash: number | string, targetMap: "shaderModuleMap" | "pipelineMap" | "materialBindGroupMap" | "bindGroupLayoutMap" | "pipelineLayoutMap" | "samplerMap") {
+        return GPUCache[targetMap].get(hash as never);
     }
 
     public getRenderSetup(pipelineHash: number, pipelineLayout: number, materialBindGroupHash: number, geometryBindGroupLayoutHash: number, shaderCodeHash: number) {

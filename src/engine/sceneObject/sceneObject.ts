@@ -63,20 +63,20 @@ export class SceneObject {
         this.id = generateID();
         this.name = config.name;
 
-        const configTransformation = {
+
+        this.animationMatrix = {
             scale: config.scale,
             translation: config.translation,
             rotation: config.rotation,
             matrix: mat4.fromRotationTranslationScale(mat4.create(), config.rotation, config.translation, config.scale)
         }
-        const rawTransformation = {
+        this.transformMatrix = {
             matrix: mat4.create(),
             scale: vec3.create(),
             translation: vec3.create(),
             rotation: quat.create()
         }
-        this.animationMatrix = config.skin ? configTransformation : rawTransformation
-        this.transformMatrix = config.skin ? rawTransformation : configTransformation
+
         this.localMatrix = mat4.create()
         this.worldMatrix = mat4.create()
         this.normalMatrix = mat3.normalFromMat4(mat3.create(), this.worldMatrix);
@@ -99,8 +99,21 @@ export class SceneObject {
         }
     }
 
-    createModelBuffer(device: GPUDevice, matrix: mat4) {
-        this.modelBuffer = createGPUBuffer(device, new Float32Array(matrix), GPUBufferUsage.UNIFORM, `${this.name} model buffer`);
+    createModelBuffer(device: GPUDevice) {
+        if (!this.modelBuffer) {
+            this.modelBuffer = createGPUBuffer(device, new Float32Array(this.worldMatrix), GPUBufferUsage.UNIFORM, `${this.name} model buffer`);
+        }
+    }
+
+    createNormalBuffer(device: GPUDevice) {
+        if (!this.normalBuffer) {
+            this.normalBuffer = createGPUBuffer(device, new Float32Array([
+                this.normalMatrix[0], this.normalMatrix[1], this.normalMatrix[2], 0,
+                this.normalMatrix[3], this.normalMatrix[4], this.normalMatrix[5], 0,
+                this.normalMatrix[6], this.normalMatrix[7], this.normalMatrix[8], 0,
+                0, 0, 0, 0
+            ]), GPUBufferUsage.UNIFORM, `${this.name} normal buffer`);
+        }
     }
 
     setTranslation(matrix: SceneObjectMatrix, pos: vec3) {
@@ -160,7 +173,12 @@ export class SceneObject {
     updateBuffers(device: GPUDevice) {
         mat3.normalFromMat4(this.normalMatrix, this.worldMatrix);
         if (this.normalBuffer && device) {
-            updateBuffer(device, this.normalBuffer, new Float32Array(this.normalMatrix))
+            updateBuffer(device, this.normalBuffer, new Float32Array([
+                this.normalMatrix[0], this.normalMatrix[1], this.normalMatrix[2], 0,
+                this.normalMatrix[3], this.normalMatrix[4], this.normalMatrix[5], 0,
+                this.normalMatrix[6], this.normalMatrix[7], this.normalMatrix[8], 0,
+                0, 0, 0, 0
+            ]))
         }
         if (this.modelBuffer && device) {
             updateBuffer(device, this.modelBuffer, new Float32Array(this.worldMatrix))

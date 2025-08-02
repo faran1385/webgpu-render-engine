@@ -22,7 +22,6 @@ export class GLTFLoader {
         let document = await io.read(url);
 
         const root = document.getRoot();
-
         const sceneObjects: Set<SceneObject> = new Set();
         const nodeMap: Map<Node, SceneObject> = new Map();
         const nodeToSceneObject = new Map<Node, SceneObject>();
@@ -135,7 +134,6 @@ export class GLTFLoader {
             const primitive = new Primitive();
             primitive.setGeometry(geometry)
             const alreadyExists = materialMap.get(prim.getMaterial())
-
             if (!alreadyExists) {
                 materialMap.set(prim.getMaterial(), new StandardMaterial(prim.getMaterial()))
             }

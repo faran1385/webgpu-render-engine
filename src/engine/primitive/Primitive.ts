@@ -7,8 +7,8 @@ import {generateID} from "../../helpers/global.helper.ts";
 import {SceneObject} from "../sceneObject/sceneObject.ts";
 import {GPUCache} from "../GPURenderSystem/GPUCache/GPUCache.ts";
 import {ToneMapping} from "../../helpers/postProcessUtils/postProcessUtilsTypes.ts";
-import {Scene} from "../scene/Scene.ts";
 import {MaterialInstance} from "../Material/Material.ts";
+import {BaseLayer} from "../../layers/baseLayer.ts";
 
 export type Side = "front" | "back" | "none"
 
@@ -29,7 +29,6 @@ export class Primitive {
     lodRanges: LODRange[] | undefined = undefined;
     indexData: TypedArray | undefined = undefined;
     sides: (Side)[] = [];
-    isTransparent: boolean = false;
     vertexBufferDescriptors: (GPUVertexBufferLayout & { name: string; })[] = []
     pipelineDescriptors = new Map<Side, RenderState>();
     modelMatrix!: mat4;
@@ -59,26 +58,22 @@ export class Primitive {
         this.geometry = geometry;
     }
 
-    updateExposure(exposure: number, scene: Scene) {
+    updateExposure(exposure: number) {
         this.pipelineDescriptors.forEach(descriptor => {
             descriptor.fragmentConstants ? descriptor.fragmentConstants.EXPOSURE = exposure : null
         })
-        scene.pipelineUpdateQueue.add(this)
+        BaseLayer.pipelineUpdateQueue.add(this)
     }
 
-    updateToneMapping(toneMapping: ToneMapping, scene: Scene) {
+    updateToneMapping(toneMapping: ToneMapping) {
         this.pipelineDescriptors.forEach(descriptor => {
             descriptor.fragmentConstants ? descriptor.fragmentConstants.TONE_MAPPING_NUMBER = toneMapping : null
         })
-        scene.pipelineUpdateQueue.add(this)
+        BaseLayer.pipelineUpdateQueue.add(this)
     }
 
     setVertexBufferDescriptors(descriptors: (GPUVertexBufferLayout & { name: string; })[]) {
         this.vertexBufferDescriptors = descriptors;
-    }
-
-    setIsTransparent(transparent: boolean) {
-        this.isTransparent = transparent;
     }
 
     setLodRanges(lodRanges: LODRange[] | undefined) {
@@ -109,7 +104,7 @@ export class Primitive {
         this.sceneObject = sceneObject;
     }
 
-    setRenderSetup(geometryBindGroup: GPUBindGroup, gpuCache: GPUCache, side: Side) {
+    setRenderSetup(gpuCache: GPUCache, side: Side) {
         const hashes = this.primitiveHashes.get(side)!;
         const setup = gpuCache.getRenderSetup(
             hashes.pipeline,
@@ -120,6 +115,5 @@ export class Primitive {
         )
         this.setPipeline(side, setup.pipeline)
         this.material.bindGroup = setup.materialBindGroup;
-        this.geometry.bindGroup = geometryBindGroup;
     }
 }

@@ -172,7 +172,7 @@ export class Background extends BaseLayer {
         })
 
         sceneObject.setScale(sceneObject.transformMatrix, vec3.fromValues(100, 100, 100))
-        sceneObject.createModelBuffer(Background.device, sceneObject.worldMatrix)
+        sceneObject.createModelBuffer(Background.device)
         primitive.sceneObject = sceneObject
         geometry.descriptors.bindGroup = [{
             name: "model",
@@ -208,7 +208,7 @@ export class Background extends BaseLayer {
             desc.fragmentConstants ? desc.fragmentConstants.EXPOSURE = exposure : ""
         })
 
-        this.scene.pipelineUpdateQueue.add(primitive)
+        BaseLayer.pipelineUpdateQueue.add(primitive)
     }
 
     async setBackground(gpuCache: GPUCache, hashArray: number[], cubeMap: GPUTexture, exposure: number | undefined = undefined) {

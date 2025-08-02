@@ -52,6 +52,9 @@ export class Material {
     resources: Map<string, GPUBuffer | GPUTexture | GPUSampler> = new Map();
     isDoubleSided: boolean = false
     shaderCode: string | null = null
+    isTransparent: boolean = false;
+
+
 
     setHashes(key: keyof Hashes, value: number | null) {
         const oldVal = this.hashes[key].new;

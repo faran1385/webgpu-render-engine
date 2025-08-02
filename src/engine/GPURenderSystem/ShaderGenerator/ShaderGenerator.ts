@@ -1,7 +1,7 @@
 import {
     StandardMaterialBindPoint,
     PipelineShaderLocations,
-    RenderFlag
+    RenderFlag, GeometryBindingPoint
 } from "../MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
 import {Primitive} from "../../primitive/Primitive.ts";
 import {
@@ -19,11 +19,12 @@ import {
 
 export class ShaderGenerator {
 
-    baseVertex(hasBoneData: boolean, hasTexture: boolean, hasNormal: boolean, useNormalMap: boolean): string {
+    baseVertex(hasBoneData: boolean, hasUV: boolean, hasNormal: boolean, useNormalMap: boolean): string {
+
         return `
 struct vsIn {
     @location(${PipelineShaderLocations.POSITION}) pos: vec3f,
-    ${hasTexture ? `@location(${PipelineShaderLocations.UV}) uv: vec2f,` : ""}
+    ${hasUV ? `@location(${PipelineShaderLocations.UV}) uv: vec2f,` : ""}
     ${hasBoneData ? `
     @location(${PipelineShaderLocations.JOINTS}) joints: vec4<u32>,
     @location(${PipelineShaderLocations.WEIGHTS}) weights: vec4f,
@@ -38,75 +39,92 @@ struct vsIn {
 
 struct vsOut {
     @builtin(position) clipPos: vec4f,
-    ${hasTexture ? `@location(0) uv: vec2f,` : ""}
-    ${hasTexture ? `@location(2) normal: vec3f,` : ""}
+    ${hasUV ? `@location(0) uv: vec2f,` : ""}
+    ${hasNormal ? `@location(2) normal: vec3f,` : ""}
     ${useNormalMap ?
-            `@location(3) TBN0: vec3f,
-             @location(4) TBN1: vec3f,
-             @location(5) TBN2: vec3f,`
+            `@location(3) T: vec3f,
+             @location(4) N: vec3f,
+             @location(5) B: vec3f,`
             : ""}
     @location(1) worldPos:vec3f,
 };
 
 @group(0) @binding(0) var<uniform> projectionMatrix: mat4x4<f32>;
 @group(0) @binding(1) var<uniform> viewMatrix: mat4x4<f32>;
-${!hasBoneData ? "@group(2) @binding(0) var<uniform> modelMatrix:mat4x4<f32>;" : ""}
-
-${hasBoneData ? `@group(2) @binding(1) var<storage, read> jointsMatrices: array<mat4x4<f32>>;` : ""}
+${!hasBoneData ? `@group(2) @binding(${GeometryBindingPoint.MODEL_MATRIX}) var<uniform> modelMatrix:mat4x4<f32>;` : ""}
+${hasBoneData ? `@group(2) @binding(${GeometryBindingPoint.SKIN}) var<storage, read> jointMatrices: array<mat4x4<f32>>;` : ""}
+${hasNormal ? `@group(2) @binding(${GeometryBindingPoint.NORMAL_MATRIX}) var<uniform> normalMatrix4: mat4x4<f32>;` : ""}
 
 ${hasBoneData ? `
-fn skinMat(pos : vec4<f32>) -> vec4<f32> {
-  return jointMats[0] * pos * in.weights.x +
-         jointMats[1] * pos * in.weights.y +
-         jointMats[2] * pos * in.weights.z +
-         jointMats[3] * pos * in.weights.w;
+fn skinMat(mats: array<mat4x4<f32>,4>, w: vec4<f32>, p: vec4<f32>) -> vec4<f32> {
+    let ws = w / (w.x + w.y + w.z + w.w);
+    return mats[0] * p * ws.x +
+           mats[1] * p * ws.y +
+           mats[2] * p * ws.z +
+           mats[3] * p * ws.w;
+}
+
+fn skinNormal(
+    mats: array<mat4x4<f32>, 4>,
+    w: vec4<f32>,
+    n: vec3<f32>
+) -> vec3<f32> {
+    let skinned4 = skinMat(mats, w, vec4<f32>(n, 0.0));
+    return normalize(skinned4.xyz);
 }
 ` : ''}
 @vertex
 fn vs(in: vsIn) -> vsOut {
     var output: vsOut;
+    ${hasNormal ? `let normalMatrix =mat3x3<f32>(
+    normalMatrix4[0].xyz,
+    normalMatrix4[1].xyz,
+    normalMatrix4[2].xyz
+);` : ""}
 
     ${hasBoneData ? `
-        let joint0 = jointsMatrices[in.joints.x];
-        let joint1 = jointsMatrices[in.joints.y];
-        let joint2 = jointsMatrices[in.joints.z];
-        let joint3 = jointsMatrices[in.joints.w];
+    let mats = array<mat4x4<f32>,4>(
+            jointMatrices[in.joints.x],
+            jointMatrices[in.joints.y],
+            jointMatrices[in.joints.z],
+            jointMatrices[in.joints.w]
+        );
     ` : ""}
 
     let pos = vec4f(in.pos, 1.0);
 
-    ${hasBoneData ? `let skinnedPos : vec4<f32> = skinMat(vec4<f32>(in.position, 1.0));` : ""}
+    ${hasBoneData ? `let skPos = skinMat(mats, in.weights, vec4<f32>(in.pos, 1.0));` : ""}
     ${!hasBoneData ? `var worldPos = modelMatrix * pos;` : ""}
-    ${hasBoneData ? `
-        output.clipPos = projectionMatrix * viewMatrix * skinnedPos;
     
-    ` : `
+    ${hasBoneData ? `
+        output.clipPos = projectionMatrix * viewMatrix * skPos;` : `
         output.clipPos = projectionMatrix * viewMatrix * worldPos;
     `}
-    ${hasTexture ? `output.uv = in.uv;` : ""}
-    ${hasNormal ? `output.normal = in.normal;` : ""}
+    ${hasUV ? `output.uv = in.uv;` : ""}
+    
     ${useNormalMap ? hasBoneData ? `
-        let skinnedN : vec3<f32> = (skinMat(vec4<f32>(in.normal, 0.0))).xyz;
-        let skinnedT : vec3<f32> = (skinMat(vec4<f32>(in.tangent.xyz, 0.0))).xyz;
-        let handedness : f32    = in.tangent.w;
-        let N = normalize(skinnedN);
-        let T = normalize(skinnedT);
+        let N = skinNormal(mats, in.weights, in.normal);
+        var T = skinNormal(mats, in.weights, in.tangent.xyz);
         
-        let B = cross(N, T) * handedness;
+        T = normalize(T - N * dot(N, T));
         
-        output.TBN0 = T;
-        output.TBN1 = B;
-        output.TBN2 = N;
+        var B = cross(N, T) * in.tangent.w;
+        B = normalize(B);
+        
+        output.normal = N;
+        output.T      = T;
+        output.B      = B;
     ` : `
-        let T = normalize((modelMatrix * vec4(in.tangent.xyz, 0.0)).xyz);
-        let N = normalize((modelMatrix * vec4(in.normal, 0.0)).xyz);
+        let T = normalize(normalMatrix * in.tangent.xyz);
+        let N = normalize(normalMatrix * in.normal);
         let B = cross(N, T) * in.tangent.w;
-        output.TBN0 = T;
-        output.TBN1 = B;
-        output.TBN2 = N;
-    ` : ""}
+        
+        output.normal = N;
+        output.T = T;
+        output.B = B;
+    ` : hasNormal ? `output.normal = normalize(normalMatrix * in.normal);` : ''}
     ${hasBoneData ? `
-        output.worldPos = skinned.xyz;
+        output.worldPos = skPos.xyz;
     ` : `
         output.worldPos = worldPos.xyz;
     `}
@@ -115,12 +133,12 @@ fn vs(in: vsIn) -> vsOut {
     }
 
     getStandardCode(primitive: Primitive) {
+
         const dataMap = primitive.material.textureDataMap
         const hasBoneData = Boolean(primitive.geometry.dataList.get('JOINTS_0') && primitive.geometry.dataList.get("WEIGHTS_0"))
         const hasNormal = Boolean(primitive.geometry.dataList.get('NORMAL'))
         const canNormalMap = Boolean(primitive.material.textureDataMap.get(RenderFlag.NORMAL)?.texture && primitive.geometry.dataList.has("NORMAL") && primitive.geometry.dataList.has("TANGENT"))
-
-        const generatedVertexCode = this.baseVertex(hasBoneData, true, hasNormal, canNormalMap)
+        const generatedVertexCode = this.baseVertex(hasBoneData, Boolean(primitive.geometry.dataList.get('TEXCOORD_0')), hasNormal, canNormalMap)
 
         return generatedVertexCode + '\n' + `
             struct DLight {
@@ -181,7 +199,7 @@ fn vs(in: vsIn) -> vsOut {
             override TONE_MAPPING_NUMBER = 0;
             override EXPOSURE = 0.;
             override ALPHA_MODE = 0;
-            override ALPHA_CUTOFF = 0;
+            override ALPHA_CUTOFF = 0.;
             
             
             fn getIBL(NoV:f32,f0:vec3f,roughness:f32,metallic:f32,n:vec3f,v:vec3f,r:vec3f,albedo:vec3f,ao:f32)->vec3f{
@@ -194,17 +212,19 @@ fn vs(in: vsIn) -> vsOut {
                 kD *= 1.0 - metallic;
             
                 let diffuse=irradiance * albedo.xyz * kD;
-                let specular = prefilteredColor * (F * envBRDF.x + envBRDF.y);
+                let specular = (prefilteredColor) * (F * envBRDF.x + envBRDF.y);
                 
                 return (diffuse + specular) * ao;
             }
             
             @fragment fn fs(in: vsOut) -> @location(0) vec4f {
                 var ao  = ${dataMap.get(RenderFlag.OCCLUSION)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.OCCLUSION]) ? `textureSample(occlusionTexture,textureSampler,in.uv).r * factors[10];` : `factors[10];`}
+                var specularF0  =${dataMap.get(RenderFlag.SPECULAR)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.SPECULAR]) ? `textureSample(specularTexture,textureSampler,in.uv).a * factors[11];` : `factors[11];`}
+                var specularColor   =${dataMap.get(RenderFlag.SPECULAR_COLOR)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.SPECULAR_COLOR]) ? `textureSample(specularColorTexture,textureSampler,in.uv).xyz * vec3f(factors[12],factors[13],factors[14]);` : `vec3f(factors[12],factors[13],factors[14]);`};
                 var emissive  = ${dataMap.get(RenderFlag.EMISSIVE)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.EMISSIVE]) ? `textureSample(emissiveTexture,textureSampler,in.uv).rgb * vec3f(factors[4],factors[5],factors[6]);` : `vec3f(factors[4],factors[5],factors[6]);`}
-                var albedo = ${dataMap.get(RenderFlag.BASE_COLOR)?.texture  || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.BASE_COLOR])? `textureSample(baseColorTexture, textureSampler, in.uv) * vec4f(factors[0], factors[1], factors[2], factors[3])` : "vec4f(factors[0], factors[1], factors[2], factors[3])"};
-                ${dataMap.get(RenderFlag.METALLIC)?.texture  || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.METALLIC])? `let metallicRoughness = textureSample(metallicRoughnessTexture, textureSampler, in.uv);` : ``}
-                var metallic  = ${dataMap.get(RenderFlag.METALLIC)?.texture  || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.METALLIC])? `metallicRoughness.b * factors[7];` : `factors[7];`}
+                var albedo = ${dataMap.get(RenderFlag.BASE_COLOR)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.BASE_COLOR]) ? `textureSample(baseColorTexture, textureSampler, in.uv) * vec4f(factors[0], factors[1], factors[2], factors[3])` : "vec4f(factors[0], factors[1], factors[2], factors[3])"};
+                ${dataMap.get(RenderFlag.METALLIC)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.METALLIC]) ? `let metallicRoughness = textureSample(metallicRoughnessTexture, textureSampler, in.uv);` : ``}
+                var metallic  = ${dataMap.get(RenderFlag.METALLIC)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.METALLIC]) ? `metallicRoughness.b * factors[7];` : `factors[7];`}
                 var roughness  = ${dataMap.get(RenderFlag.ROUGHNESS)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.ROUGHNESS]) ? `metallicRoughness.g * factors[8];` : `factors[8];`}
                 metallic = clamp(metallic, 0.0, 1.0);
                 roughness = clamp(roughness, 0.04, 1.0);
@@ -213,20 +233,20 @@ fn vs(in: vsIn) -> vsOut {
                 let v=normalize(cameraPosition - worldPosition);
                 var n=normalize(in.normal);
                 ${canNormalMap ? `
-                    let TBN = mat3x3<f32>(in.TBN0, in.TBN1, in.TBN2);
+                    let TBN = mat3x3<f32>(in.T, in.B, in.normal);
                     let mapNormal = textureSample(normalTexture, textureSampler, in.uv) * 2.0 - 1.0;
                     n = normalize(TBN * mapNormal.xyz);
                 ` : ""}           
-                var f0 = vec3(0.04); 
+                var f0 = specularColor * specularF0; 
                 f0 = mix(f0, albedo.xyz, metallic); 
                 let r = reflect(-v, n);  
                 var Lo = vec3(0.0);
-                let NoV=max(dot(n,v),0.);
+                let NoV=clamp(dot(n,v),0.,1.);
                 for (var i:u32 = 0; i < lightCounts.directional; i++) {
                     let l = normalize(dLights[i].position - worldPosition);
                     let h = normalize(v + l);
-                    let HoV=max(dot(h,v),0.);
-                    let NoL=max(dot(n,l),0.);
+                    let HoV=clamp(dot(h,v),0.,1.);
+                    let NoL=clamp(dot(n,l),0.,1.);
                     
                     let radiance = dLights[i].color * dLights[i].intensity;
 
@@ -258,12 +278,14 @@ fn vs(in: vsIn) -> vsOut {
                 Lo+=getIBL(NoV,f0,roughness,metallic,n,v,r,albedo.xyz,ao);
                 
                 var color=Lo;
+                color +=emissive.xyz;
+                
                 color=applyExposure(color,EXPOSURE);
                 ${TONE_MAPPING_CALL}
                 color = applyGamma(color,2.2); 
-                return vec4f(vec3f(color),1.);
-            }
 
+                return vec4f(vec3f(textureSample(normalTexture, textureSampler, in.uv).xyz),1.);
+            }
         `
     }
 

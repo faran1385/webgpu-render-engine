@@ -35,19 +35,20 @@ const gpuCache = new GPUCache(device, canvas, ctx, hasher);
 
 const mainLayer = new RenderLayer(device, canvas, ctx, gpuCache)
 const loader = new GLTFLoader()
-const {sceneObjects, nodeMap} = await loader.load("/a.glb", scene)
+const {sceneObjects, nodeMap} = await loader.load("/e.glb", scene)
 
 const hdrLoader = new HDRLoader(device);
 const cubeMap = await hdrLoader.load("/e.hdr")
 
 scene.setToneMapping = ToneMapping.ACES
 await scene.backgroundManager.setBackground(gpuCache, [1], cubeMap, 1)
-await scene.environmentManager.setEnvironment(cubeMap, 1024, 64, 32)
+await scene.environmentManager.setEnvironment(cubeMap, 1024, 128, 32)
 
-scene.lightManager.addAmbient({
-    intensity: 0.3,
-    color: [1, 1, 1],
-})
+// scene.lightManager.addDirectional({
+//     intensity: 5,
+//     color: [1, 1, 1],
+//     position: [5, 5, 3]
+// })
 
 const modelRenderer = new ModelRenderer({
     gpuCache,
@@ -58,14 +59,12 @@ window.addEventListener("resize", () => {
     camera.setAspect(canvas.width / canvas.height)
     camera.updateProjectionMatrix()
 })
-
-
 modelRenderer.setSceneObjects(sceneObjects)
-modelRenderer.enableFrustumCulling()
+modelRenderer.setScale(1,1,1)
+modelRenderer.setTranslation(0,0,0)
 modelRenderer.setNodeMap(nodeMap)
 modelRenderer.fillInitEntry()
 await modelRenderer.init()
-// const primitive = sceneObjects.entries().next().value.entries().next().value![1].primitives.entries().next().value![1]
 
 const pane = new Pane();
 const paneElement = pane.element;
@@ -82,34 +81,6 @@ pane.element.addEventListener("mouseover", () => {
 pane.element.addEventListener("mouseleave", () => {
     controls.enable()
 })
-const params = {
-    exposure: 1,
-    roughness: 0.5,
-    metallic: 0.5,
-    albedo: {r: 1, g: 1, b: 1}
-}
-pane.addBinding(params, "exposure", {
-    min: 0, max: 10,
-}).on("change", (T) => {
-    scene.environmentManager.setExposure(T.value)
-})
-// pane.addBinding(params, "roughness", {
-//     min: 0, max: 1,
-// }).on("change", (T) => {
-//     primitive.material.setRoughnessFactor(T.value)
-// })
-//
-// pane.addBinding(params, "metallic", {
-//     min: 0, max: 1,
-// }).on("change", (T) => {
-//     primitive.material.setMetallicFactor(T.value)
-// })
-//
-// pane.addBinding(params, "albedo").on("change", (T) => {
-//     primitive.material.setBaseColorFactor([T.value.r / 255, T.value.g / 255, T.value.b / 255, 1]);
-// })
-
-
 const render = () => {
     const commandEncoder = device.createCommandEncoder()
     mainLayer.render(commandEncoder);

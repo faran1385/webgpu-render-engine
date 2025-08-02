@@ -45,7 +45,7 @@ export class Scene extends BaseLayer {
 
     set setToneMapping(value: ToneMapping) {
         this._TONE_MAPPING = value;
-        this._TONE_MAPPING_DEPENDENT.forEach(primitive => primitive.updateToneMapping(value, this))
+        this._TONE_MAPPING_DEPENDENT.forEach(primitive => primitive.updateToneMapping(value))
     }
 
     getToneMapping(primitive: Primitive): ToneMapping {
@@ -66,7 +66,7 @@ export class Scene extends BaseLayer {
     }
 
     updateExposure(exposure: number) {
-        this._ENV_EXPOSURE_DEPENDENT.forEach(primitive => primitive.updateExposure(exposure, this))
+        this._ENV_EXPOSURE_DEPENDENT.forEach(primitive => primitive.updateExposure(exposure))
     }
 
     constructor(device: GPUDevice, canvas: HTMLCanvasElement, ctx: GPUCanvasContext, camera: Camera) {

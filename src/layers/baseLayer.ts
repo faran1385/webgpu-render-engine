@@ -45,7 +45,7 @@ export class BaseLayer {
 
     private static _baseLayerInitialized: boolean = false;
     public static materialUpdateQueue = new Set<MaterialInstance>();
-    public pipelineUpdateQueue = new Set<Primitive>()
+    public static pipelineUpdateQueue = new Set<Primitive>()
 
     public get brdfLut() {
         return BaseLayer._brdfLUTTexture

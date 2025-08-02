@@ -21,7 +21,7 @@ export class RenderLayer extends BaseLayer {
         for (const primitive of RenderLayer.activeScene.drawCalls()) {
             if (primitive.sides.length === 0) continue;
 
-            if (primitive.isTransparent) {
+            if (primitive.material.isTransparent) {
                 const model = primitive.modelMatrix;
                 const worldPos: vec3 = [model[12], model[13], model[14]];
                 const viewPos = vec3.transformMat4(vec3.create(), worldPos, viewMatrix);
@@ -33,7 +33,6 @@ export class RenderLayer extends BaseLayer {
         }
 
         transparentWithDepth.sort((a, b) => b.depth - a.depth);
-
         const finalQueue = [...opaque, ...transparentWithDepth.map(d => d.primitive)];
 
         RenderLayer.activeScene.renderQueue = {
@@ -57,12 +56,12 @@ export class RenderLayer extends BaseLayer {
             this.gpuCache.changeMaterial(mat);
         })
 
-        RenderLayer.activeScene.pipelineUpdateQueue.forEach(prim => {
+        RenderLayer.pipelineUpdateQueue.forEach(prim => {
             this.gpuCache.changePipeline(prim);
         })
 
         BaseLayer.materialUpdateQueue.clear()
-        RenderLayer.activeScene.pipelineUpdateQueue.clear()
+        RenderLayer.pipelineUpdateQueue.clear()
         RenderLayer.activeScene._sceneObjectUpdateQueue.clear()
     }
 

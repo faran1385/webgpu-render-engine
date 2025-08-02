@@ -78,6 +78,7 @@ export class IndirectDraw {
                 }
             });
         })
+
         indexLargeBuffer.needsUpdate = false
         this.resizeBuffer("Index")
     }
@@ -117,10 +118,7 @@ export class IndirectDraw {
                 pass.setBindGroup(0, this.scene.globalBindGroup)
                 pass.setBindGroup(1,item.material.bindGroup)
                 pass.setBindGroup(2,item.geometry.bindGroup)
-
                 item.vertexBuffers.forEach((buffer, i) => {
-
-
                     pass.setVertexBuffer(i, buffer)
                 })
                 const indirectOffset = item.indirectBufferStartIndex * 4;

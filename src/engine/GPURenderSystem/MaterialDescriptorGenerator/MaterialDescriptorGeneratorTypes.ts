@@ -29,6 +29,7 @@ export enum RenderFlag {
     CLEARCOAT,
     CLEARCOAT_NORMAL,
     CLEARCOAT_ROUGHNESS,
+    ANISOTROPY
 }
 
 export enum StandardMaterialFactorsStartPoint {
@@ -44,6 +45,7 @@ export enum StandardMaterialFactorsStartPoint {
     CLEARCOAT = 16,
     CLEARCOAT_ROUGHNESS = 17,
     CLEARCOAT_NORMAL = 18,
+    ANISOTROPY = 19,
 }
 
 export enum PipelineShaderLocations {
@@ -53,4 +55,10 @@ export enum PipelineShaderLocations {
     JOINTS,
     WEIGHTS,
     TANGENT
+}
+
+export enum GeometryBindingPoint {
+    MODEL_MATRIX,
+    NORMAL_MATRIX,
+    SKIN
 }

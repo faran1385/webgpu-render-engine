@@ -146,7 +146,6 @@ export class MaterialDescriptorGenerator {
             const pushedIndices = new Map<number, boolean>();
             material.textureDataMap.forEach((item, renderFlag) => {
                 if (item.texture && !pushedIndices.has(item.bindPoint)) {
-
                     entries.push({
                         bindingPoint: item.bindPoint,
                         typedArray: {
@@ -180,18 +179,18 @@ export class MaterialDescriptorGenerator {
                 materialResourcesKey: StandardMaterialBindPoint[StandardMaterialBindPoint.FACTORS]
             })
             hashEntries.push(factorsTypedArray)
-
+            console.log(factorsArray)
             return {
                 entries,
                 hashEntries,
                 layout: this.getTechniqueBindGroupLayout(material.textureDataMap),
                 sampler: bindSampler ? {
                     label: "default sampler",
-                    addressModeW: "repeat",
-                    addressModeV: "repeat",
-                    addressModeU: "repeat",
+                    magFilter: "linear",
                     minFilter: "linear",
-                    magFilter: "linear"
+                    mipmapFilter: "linear",
+                    addressModeU: "repeat",
+                    addressModeV: "repeat",
                 } : null
             }
         }

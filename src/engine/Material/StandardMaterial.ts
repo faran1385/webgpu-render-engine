@@ -24,6 +24,7 @@ export class StandardMaterial extends MaterialClass {
                 cutoff: material.getAlphaCutoff()
             }
             this.isDoubleSided = material.getDoubleSided()
+            this.isTransparent = material.getAlphaMode() === "BLEND"
         } else {
             this.textureDataMap.set(RenderFlag.BASE_COLOR, {
                 texture: null,
@@ -55,7 +56,7 @@ export class StandardMaterial extends MaterialClass {
     }
 
     setBaseColorFactor(newValue: [number, number, number, number]) {
-        const factors = this.resources.get('Factors') as (GPUBuffer | undefined)
+        const factors = this.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.FACTORS]) as (GPUBuffer | undefined)
         if (!factors) throw new Error("factors does not exist on resources");
 
 
@@ -63,7 +64,7 @@ export class StandardMaterial extends MaterialClass {
     }
 
     setMetallicFactor(newValue: number) {
-        const factors = this.resources.get('Factors') as (GPUBuffer | undefined)
+        const factors = this.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.FACTORS]) as (GPUBuffer | undefined)
         if (!factors) throw new Error("factors does not exist on resources");
 
 
@@ -73,7 +74,7 @@ export class StandardMaterial extends MaterialClass {
     }
 
     setRoughnessFactor(newValue: number) {
-        const factors = this.resources.get('Factors') as (GPUBuffer | undefined)
+        const factors = this.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.FACTORS]) as (GPUBuffer | undefined)
         if (!factors) throw new Error("factors does not exist on resources");
 
 

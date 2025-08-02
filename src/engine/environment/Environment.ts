@@ -8,7 +8,6 @@ import {
 } from "./cubeData.ts";
 import {
     distributionGGX,
-    geometrySmith,
     hammersley,
     importanceSampleGGX,
     radicalInverseVdC
@@ -49,42 +48,43 @@ export class Environment {
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 
+        const phiSamples = 180;     // azimuth steps
+        const thetaSamples = 64;    // polar steps
+
+        const deltaPhi = (2 * Math.PI) / phiSamples;
+        const deltaTheta = (0.5 * Math.PI) / thetaSamples;
+
         const fragmentShader = /* wgsl */ `
           @group(0) @binding(1) var environmentMap: texture_cube<f32>;
-          @group(0) @binding(2) var ourSampler: sampler;
+          @group(0) @binding(2) var samplerEnv: sampler;
         
           const PI = 3.14159265359;
-        
+          const TWO_PI = PI * 2.0;
+          const HALF_PI = PI * 0.5;
+          
+          override DELTA_PHI=0.;
+          override DELTA_THETA=0.;
+          
           @fragment
           fn main(@location(0) worldPosition: vec3f) -> @location(0) vec4f {
-            let normal = normalize(vec3f(worldPosition.x,-worldPosition.y,worldPosition.z));
+            let N = normalize(vec3f(worldPosition.x,-worldPosition.y,worldPosition.z));
             var irradiance = vec3f(0.0, 0.0, 0.0);
-        
-            var up = select(vec3f(0,1,0), vec3f(1,0,0),abs(normal.y) > 0.99);
-            let right = normalize(cross(up, normal));
-            up = normalize(cross(normal, right));
+            var up = vec3f(0.0, 1.0, 0.0);
 
-        
-            var sampleDelta = 0.025;
-            var nrSamples = 0.0;
-            for(var phi: f32 = 0.0; phi < 2.0 * PI; phi = phi + sampleDelta) {
-              for(var theta : f32 = 0.0; theta < 0.5 * PI; theta = theta + sampleDelta) {
-                // spherical to cartesian (in tangent space)
-                let tangentSample: vec3f = vec3f(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
-                // tangent space to world
-                let sampleVec = tangentSample.x * right + tangentSample.y * up + tangentSample.z * normal;
-        
-                irradiance = irradiance + textureSample(environmentMap, ourSampler, sampleVec).rgb * cos(theta) * sin(theta);
-                nrSamples = nrSamples + 1.0;
-              }
+            let right = normalize(cross(up, N));
+            up = normalize(cross(N, right));
+
+            var color = vec3(0.0);
+            var sampleCount = 0u;
+            for (var phi = 0.0; phi < TWO_PI; phi += DELTA_PHI) {
+                for (var theta = 0.0; theta < HALF_PI; theta += DELTA_THETA) {
+                    let tempVec = cos(phi) * right + sin(phi) * up;
+                    let sampleVector = cos(theta) * N + sin(theta) * tempVec;
+                    color += textureSample(environmentMap,samplerEnv, sampleVector).rgb * cos(theta) * sin(theta);
+                    sampleCount++;
+                }
             }
-            let dTheta = sampleDelta;
-            let dPhi = sampleDelta;
-            irradiance = irradiance * dTheta * dPhi;
-
-            
-        
-            return vec4f(irradiance, 1.0);
+            return vec4(PI * color / f32(sampleCount), 1.0);
           }
         `;
 
@@ -117,6 +117,10 @@ export class Environment {
             fragment: {
                 module: this.device.createShaderModule({code: fragmentShader}),
                 entryPoint: "main",
+                constants: {
+                    DELTA_PHI: deltaPhi,
+                    DELTA_THETA: deltaTheta
+                },
                 targets: [{format: "rgba8unorm"}],
             },
             primitive: {
@@ -255,6 +259,8 @@ export class Environment {
         ${radicalInverseVdC}
         ${hammersley}
         ${importanceSampleGGX}
+        override SAMPLE_COUNT= 1024u;
+        override TEXTURE_RESOLUTION= 1024f;
         
         @fragment
         fn main(@location(0) worldPosition: vec3f) -> @location(0) vec4f {
@@ -264,7 +270,6 @@ export class Environment {
           let r = n;
           let v = r;
         
-          let SAMPLE_COUNT: u32 = ${SAMPLE_COUNT};
           var prefilteredColor = vec3f(0.0, 0.0, 0.0);
           var totalWeight = 0.0;
         
@@ -275,7 +280,7 @@ export class Environment {
             let h = importanceSampleGGX(xi, n, uniforms.roughness);
             let l = normalize(2.0 * dot(v, h) * h - v);
         
-            let nDotL = max(dot(n, l), 0.0);
+            let nDotL = clamp(dot(n, l), 0.0,1.);
         
             if(nDotL > 0.0) {
               // sample from the environment's mip level based on roughness/pdf
@@ -284,11 +289,10 @@ export class Environment {
               let hDotV = max(dot(h, v), 0.0);
               let pdf = d * nDotH / (4.0 * hDotV) + 0.0001;
         
-              let resolution = ${TEXTURE_RESOLUTION}.0; // resolution of source cubemap (per face)
-              let saTexel = 4.0 * PI / (6.0 * resolution * resolution);
+              let saTexel = 4.0 * PI / (6.0 * TEXTURE_RESOLUTION * TEXTURE_RESOLUTION);
               let saSample = 1.0 / (f32(SAMPLE_COUNT) * pdf + 0.0001);
         
-              let mipLevel = select(0.5 * log2(saSample / saTexel), 0.0, uniforms.roughness == 0.0);
+              let mipLevel = select(max(0.5 * log2(saSample / saTexel) + 1.0, 0.0), 0.0, uniforms.roughness == 0.0);
         
               prefilteredColor += textureSampleLevel(environmentMap, environmentSampler, l, mipLevel).rgb * nDotL;
               totalWeight += nDotL;
@@ -330,6 +334,10 @@ export class Environment {
                 ],
             },
             fragment: {
+                constants: {
+                    SAMPLE_COUNT,
+                    TEXTURE_RESOLUTION
+                },
                 module: this.device.createShaderModule({code: fragmentShader}),
                 entryPoint: "main",
                 targets: [{format: "rgba8unorm"}],
@@ -435,7 +443,9 @@ export class Environment {
         this.scene.updateExposure(this.exposure)
     }
 
-    getExposure(){return this.exposure}
+    getExposure() {
+        return this.exposure
+    }
 
     private initBRDFLUT() {
         if (this.scene.brdfLut) return;
@@ -472,17 +482,13 @@ export class Environment {
             ${radicalInverseVdC}
             ${hammersley}
             ${importanceSampleGGX}
-            ${geometrySmith}
             
             // This one is different
-            fn geometrySchlickGGX(nDotV: f32, roughness: f32) -> f32 {
-              let a = roughness;
-              let k = (a * a) / 2.0;
-            
-              let nom = nDotV;
-              let denom = nDotV * (1.0 - k) + k;
-            
-              return nom / denom;
+            fn G_SchlicksmithGGX(dotNL:f32, dotNV:f32, roughness:f32)->f32{
+                let k = (roughness * roughness) / 2.0;
+                let GL = dotNL / (dotNL * (1.0 - k) + k);
+                let GV = dotNV / (dotNV * (1.0 - k) + k);
+                return GL * GV;
             }
             
             fn integrateBRDF(NdotV: f32, roughness: f32) -> vec2f {
@@ -502,14 +508,15 @@ export class Environment {
                   let H: vec3f = importanceSampleGGX(Xi, N, roughness);
                   let L: vec3f = normalize(2.0 * dot(V, H) * H - V);
             
-                  let NdotL: f32 = max(L.z, 0.0);
-                  let NdotH: f32 = max(H.z, 0.0);
-                  let VdotH: f32 = max(dot(V, H), 0.0);
+                  let dotNL = max(dot(N, L), 0.0);
+                  let dotNV = max(dot(N, V), 0.0);
+                  let dotVH = max(dot(V, H), 0.0); 
+                  let dotNH = max(dot(H, N), 0.0);
             
-                  if(NdotL > 0.0) {
-                      let G: f32 = geometrySmith(N, V, L, roughness);
-                      let G_Vis: f32 = (G * VdotH) / (NdotH * NdotV);
-                      let Fc: f32 = pow(1.0 - VdotH, 5.0);
+                  if(dotNL > 0.0) {
+                      let G = G_SchlicksmithGGX(dotNL, dotNV, roughness);
+                      let G_Vis = (G * dotVH) / (dotNH * dotNV);
+                      let Fc = pow(1.0 - dotVH, 5.0);
             
                       A += (1.0 - Fc) * G_Vis;
                       B += Fc * G_Vis;

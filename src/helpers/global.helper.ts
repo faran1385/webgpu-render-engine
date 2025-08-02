@@ -1,15 +1,14 @@
 import {mat3, mat4, vec3} from "gl-matrix";
 // @ts-ignore
 import Stats from 'stats-js';
-import {MaterialInstance} from "../engine/Material/Material.ts"
+import {MaterialInstance, TextureData} from "../engine/Material/Material.ts"
 import {Material, TypedArray, vec2} from "@gltf-transform/core";
-import {Clearcoat, Specular, Transmission} from "@gltf-transform/extensions";
+import {Anisotropy, Clearcoat, Specular, Transmission} from "@gltf-transform/extensions";
 import {
+    RenderFlag,
     StandardMaterialBindPoint,
-    StandardMaterialFactorsStartPoint,
-    RenderFlag
+    StandardMaterialFactorsStartPoint
 } from "../engine/GPURenderSystem/MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
-import {TextureData} from "../engine/Material/Material.ts";
 import {Primitive, PrimitiveHashes} from "../engine/primitive/Primitive.ts";
 import {GPUCache} from "../engine/GPURenderSystem/GPUCache/GPUCache.ts";
 import {BaseLayer} from "../layers/baseLayer.ts";
@@ -232,7 +231,19 @@ export function extractExtensions(material: Material) {
                 bindPoint: StandardMaterialBindPoint.CLEARCOAT_NORMAL,
                 factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT_NORMAL,
             })
+        }else if(extension instanceof Anisotropy){
+            const anisotropyTexture = extension.getAnisotropyTexture();
+            extensionMap.set(RenderFlag.CLEARCOAT_NORMAL, {
+                texture: anisotropyTexture ? {
+                    size: anisotropyTexture.getSize()!,
+                    data: anisotropyTexture.getImage()!
+                } : null,
+                factor: [extension.getAnisotropyStrength(),extension.getAnisotropyRotation()],
+                bindPoint: StandardMaterialBindPoint.CLEARCOAT_NORMAL,
+                factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT_NORMAL,
+            })
         }
+
     })
 
     return extensionMap;
@@ -251,6 +262,7 @@ export function extractMaterial(material: Material) {
     const dataMap = new Map<RenderFlag, TextureData>()
 
     const baseColor = material.getBaseColorTexture();
+
     const baseColorData = {
         texture: baseColor
             ? {
@@ -264,7 +276,6 @@ export function extractMaterial(material: Material) {
     }
     dataMap.set(RenderFlag.BASE_COLOR, baseColorData);
     dataMap.set(RenderFlag.OPACITY, baseColorData);
-
     const mrTexture = material.getMetallicRoughnessTexture();
 
     dataMap.set(RenderFlag.METALLIC, {
@@ -278,6 +289,7 @@ export function extractMaterial(material: Material) {
         bindPoint: StandardMaterialBindPoint.METALLIC,
         factorStartPoint: StandardMaterialFactorsStartPoint.METALLIC
     });
+
     dataMap.set(RenderFlag.ROUGHNESS, {
         texture: mrTexture
             ? {
@@ -329,6 +341,50 @@ export function extractMaterial(material: Material) {
         factorStartPoint: StandardMaterialFactorsStartPoint.EMISSIVE
     });
 
+    /// EXTENSION DEFAULT FACTORS
+    dataMap.set(RenderFlag.SPECULAR, {
+        texture: null,
+        factor: .04,
+        bindPoint: StandardMaterialBindPoint.SPECULAR,
+        factorStartPoint: StandardMaterialFactorsStartPoint.SPECULAR
+    });
+
+    dataMap.set(RenderFlag.SPECULAR_COLOR, {
+        texture: null,
+        factor: [1, 1, 1],
+        bindPoint: StandardMaterialBindPoint.SPECULAR_COLOR,
+        factorStartPoint: StandardMaterialFactorsStartPoint.SPECULAR_COLOR
+    });
+
+    dataMap.set(RenderFlag.TRANSMISSION, {
+        texture: null,
+        factor: 1,
+        bindPoint: StandardMaterialBindPoint.TRANSMISSION,
+        factorStartPoint: StandardMaterialFactorsStartPoint.TRANSMISSION
+    });
+
+    dataMap.set(RenderFlag.CLEARCOAT, {
+        texture: null,
+        factor: 1,
+        bindPoint: StandardMaterialBindPoint.CLEARCOAT,
+        factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT
+    });
+
+    dataMap.set(RenderFlag.CLEARCOAT_ROUGHNESS, {
+        texture: null,
+        factor: 1,
+        bindPoint: StandardMaterialBindPoint.CLEARCOAT_ROUGHNESS,
+        factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT_ROUGHNESS
+    });
+
+
+    dataMap.set(RenderFlag.CLEARCOAT_NORMAL, {
+        texture: null,
+        factor: 1,
+        bindPoint: StandardMaterialBindPoint.CLEARCOAT_NORMAL,
+        factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT_NORMAL
+    });
+
     const extensions = extractExtensions(material)
     extensions.forEach((value, key) => {
         dataMap.set(key, value);
@@ -343,35 +399,19 @@ export async function hashAndCreateRenderSetup(computeManager: ComputeManager, g
     const pipelineLayoutsHashes = gpuCache.createPipelineLayoutHashes(primitives, materialHashes, geometryLayoutHashes)
     const pipelineHashes = gpuCache.createPipelineHashes(shaderCodesHashes, pipelineLayoutsHashes)
     const geometryBindGroupMaps = gpuCache.createGeometryBindGroupMaps(primitives)
+    const primitiveMap = new Map<number, Primitive>();
     pipelineHashes.forEach((pipelineHash, key) => {
-
         const {side, id: primitiveId} = unpackPrimitiveKey(key)
-        const geometryEntries = geometryBindGroupMaps.get(primitiveId)
-        const geometryLayoutHash = geometryLayoutHashes.get(primitiveId)!
+        const pipelineLayout = pipelineLayoutsHashes.get(primitiveId)!
+        primitiveMap.set(primitiveId, pipelineLayout.primitive)
+
+
         const {bindGroup: materialBindGroupHash, layout: materialBindGroupLayoutHash} = materialHashes.get(primitiveId)!
 
         const shaderCodeHash = shaderCodesHashes.get(primitiveId)!
-
-        const pipelineLayout = pipelineLayoutsHashes.get(primitiveId)
         if (!pipelineLayout) throw new Error("pipelineLayout is not set")
         const primitive = pipelineLayout?.primitive!
-        const renderSetup = gpuCache.getRenderSetup(
-            pipelineHash,
-            pipelineLayout?.hash!,
-            materialBindGroupHash,
-            geometryLayoutHash,
-            shaderCodeHash
-        )
-        if (!geometryEntries) throw new Error(`Primitive with id ${primitive.id} has no bindGroup descriptor set on geometry`)
 
-        const geometryBindGroup = BaseLayer.device.createBindGroup({
-            entries: geometryEntries,
-            label: `${pipelineLayout?.primitive.sceneObject.name ?? ""} geometry bindGroup`,
-            layout: renderSetup.geometryBindGroupLayout
-        })
-
-        primitive.setLodRanges(primitive.geometry.lodRanges)
-        primitive.setIndexData(primitive.geometry.indices)
         const primitiveHashes: PrimitiveHashes = {
             shader: shaderCodeHash,
             materialBindGroup: materialBindGroupHash,
@@ -382,19 +422,36 @@ export async function hashAndCreateRenderSetup(computeManager: ComputeManager, g
         }
 
         primitive.setPrimitiveHashes(primitiveHashes, side!)
-        primitive.setRenderSetup(geometryBindGroup, gpuCache, side)
-        pipelineLayout?.primitive.vertexBufferDescriptors.forEach((item) => {
+    })
+
+    primitiveMap.forEach((primitive) => {
+        const geometryEntries = geometryBindGroupMaps.get(primitive.id)
+        const geometryLayoutHash = geometryLayoutHashes.get(primitive.id)!
+        if (!geometryEntries) throw new Error(`Primitive with id ${primitive.id} has no bindGroup descriptor set on geometry`)
+        let {layout: geometryBindGroupLayout} = gpuCache.getResource(geometryLayoutHash, "bindGroupLayoutMap") as any
+
+        primitive.geometry.bindGroup = BaseLayer.device.createBindGroup({
+            entries: geometryEntries,
+            label: `${primitive.sceneObject.name ?? ""} geometry bindGroup`,
+            layout: geometryBindGroupLayout
+        })
+        primitive.setLodRanges(primitive.geometry.lodRanges)
+        primitive.setIndexData(primitive.geometry.indices)
+        primitive.vertexBufferDescriptors.forEach((item) => {
             const dataArray = primitive.geometry.dataList.get(item.name)?.array;
-            if (!dataArray) throw new Error(`${item.name} not found in geometry datalist of primitive with id ${pipelineLayout.primitive.id}`)
-            primitive.setVertexBuffers(createGPUBuffer(BaseLayer.device, dataArray, GPUBufferUsage.VERTEX, `${pipelineLayout.primitive.sceneObject.name}  ${item.name}`))
+            if (!dataArray) throw new Error(`${item.name} not found in geometry datalist of primitive with id ${primitive.id}`)
+            primitive.setVertexBuffers(createGPUBuffer(BaseLayer.device, dataArray, GPUBufferUsage.VERTEX, `${primitive.sceneObject.name}  ${item.name}`))
         })
 
-        primitive.modelMatrix = (pipelineLayout?.primitive.sceneObject!).worldMatrix;
-        primitive.normalMatrix = (pipelineLayout?.primitive.sceneObject!).normalMatrix;
+        primitive.modelMatrix = (primitive.sceneObject).worldMatrix;
+        primitive.normalMatrix = (primitive.sceneObject).normalMatrix;
 
         if (primitive.geometry.indices) {
-            computeManager.setIndex(pipelineLayout.primitive.sceneObject)
+            computeManager.setIndex(primitive.sceneObject)
         }
-        computeManager.setIndirect(pipelineLayout.primitive.sceneObject)
+        computeManager.setIndirect(primitive.sceneObject)
+        primitive.sides.forEach((side) => {
+            primitive.setRenderSetup(gpuCache, side)
+        })
     })
 }

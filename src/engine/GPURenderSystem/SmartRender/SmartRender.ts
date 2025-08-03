@@ -7,6 +7,7 @@ import {MaterialDescriptorGenerator} from "../MaterialDescriptorGenerator/Materi
 import {
     GeometryBindingPoint,
     PipelineShaderLocations,
+    RenderFlag,
 } from "../MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
 import {StandardMaterial} from "../../Material/StandardMaterial.ts";
 import {isLightDependentMaterial} from "../../../helpers/global.helper.ts";

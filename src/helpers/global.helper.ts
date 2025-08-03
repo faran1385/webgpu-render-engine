@@ -157,7 +157,6 @@ export function extractExtensions(material: Material) {
     }>();
 
     material.listExtensions().forEach((extension) => {
-
         if (extension instanceof PBRSpecularGlossiness) {
             const diffuseTexture = extension.getDiffuseTexture();
             const specularGlossinessTexture = extension.getSpecularGlossinessTexture();
@@ -193,7 +192,6 @@ export function extractExtensions(material: Material) {
             })
 
         } else if (extension instanceof Specular) {
-            console.log(extension)
             const specularTexture = extension.getSpecularTexture();
             const specularColorTexture = extension.getSpecularColorTexture();
 
@@ -230,7 +228,7 @@ export function extractExtensions(material: Material) {
 
             })
 
-        } else if (extension instanceof Clearcoat) {
+        } else if (extension instanceof Clearcoat && extension.getClearcoatFactor() !== 0) {
             const clearcoatTexture = extension.getClearcoatTexture();
 
             extensionMap.set(RenderFlag.CLEARCOAT, {
@@ -401,14 +399,14 @@ export function extractMaterial(material: Material) {
 
     dataMap.set(RenderFlag.CLEARCOAT, {
         texture: null,
-        factor: 1,
+        factor: 0,
         bindPoint: StandardMaterialBindPoint.CLEARCOAT,
         factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT
     });
 
     dataMap.set(RenderFlag.CLEARCOAT_ROUGHNESS, {
         texture: null,
-        factor: 1,
+        factor: 0,
         bindPoint: StandardMaterialBindPoint.CLEARCOAT_ROUGHNESS,
         factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT_ROUGHNESS
     });
@@ -416,10 +414,11 @@ export function extractMaterial(material: Material) {
 
     dataMap.set(RenderFlag.CLEARCOAT_NORMAL, {
         texture: null,
-        factor: 1,
+        factor: 0,
         bindPoint: StandardMaterialBindPoint.CLEARCOAT_NORMAL,
         factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT_NORMAL
     });
+
     const extensions = extractExtensions(material)
     extensions.forEach((value, key) => {
         dataMap.set(key, value);

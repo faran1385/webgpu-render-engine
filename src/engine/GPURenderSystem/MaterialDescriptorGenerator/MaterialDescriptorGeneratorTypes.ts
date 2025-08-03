@@ -49,12 +49,12 @@ export enum StandardMaterialFactorsStartPoint {
     SPECULAR = 11,
     SPECULAR_COLOR = 12,
     TRANSMISSION = 15,
-    CLEARCOAT = 16,
-    CLEARCOAT_ROUGHNESS = 17,
-    CLEARCOAT_NORMAL = 18,
-    PBR_SPECULAR = 19,
-    PBR_GLOSSINESS = 22,
-    DIFFUSE=23
+    PBR_SPECULAR = 16,
+    PBR_GLOSSINESS = 19,
+    DIFFUSE=20,
+    CLEARCOAT = 21,
+    CLEARCOAT_ROUGHNESS = 22,
+    CLEARCOAT_NORMAL = 23
 }
 
 export enum PipelineShaderLocations {

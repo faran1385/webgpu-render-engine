@@ -36,6 +36,64 @@ fn fresnelSchlick(cosTheta:f32, F0:vec3f)->vec3f{
     return F0 + (1.0 - F0) * pow(1.0 - cosTheta, 5.0);
 }
 `;
+
+export const anisotropy = /* wgsl */ `
+// Schlick Fresnel approximation (assumed to be defined elsewhere)
+fn F_Schlick(f0: vec3<f32>, f90: vec3<f32>, VdotH: f32) -> vec3<f32> {
+    return f0 + (f90 - f0) * pow(1.0 - VdotH, 5.0);
+}
+
+// Anisotropic GGX normal distribution function
+fn D_GGX_anisotropic(NdotH: f32, TdotH: f32, BdotH: f32, at: f32, ab: f32) -> f32 {
+    let a2: f32 = at * ab;
+    let f: vec3<f32> = vec3<f32>(ab * TdotH, at * BdotH, a2 * NdotH);
+    let w2: f32 = a2 / dot(f, f);
+    return a2 * w2 * w2 / PI;
+}
+
+// Anisotropic GGX geometric visibility function
+fn V_GGX_anisotropic(
+    NdotL: f32, NdotV: f32,
+    BdotV: f32, TdotV: f32,
+    TdotL: f32, BdotL: f32,
+    at: f32, ab: f32
+) -> f32 {
+    let ggxV: f32 = NdotL * length(vec3<f32>(at * TdotV, ab * BdotV, NdotV));
+    let ggxL: f32 = NdotV * length(vec3<f32>(at * TdotL, ab * BdotL, NdotL));
+    let v: f32 = 0.5 / (ggxV + ggxL);
+    return clamp(v, 0.0, 1.0);
+}
+
+struct BRDF_specularAnisotropicGGX_Output{
+    F:vec3f,
+    V:f32,
+    D:f32
+}
+
+// Main anisotropic specular BRDF
+fn BRDF_specularAnisotropicGGX(
+    f0: vec3<f32>, f90: vec3<f32>,
+    roughness: f32,
+    VdotH: f32, NdotL: f32, NdotV: f32, NdotH: f32,
+    BdotV: f32, TdotV: f32, TdotL: f32, BdotL: f32,
+    TdotH: f32, BdotH: f32,
+    anisotropy: f32
+) -> BRDF_specularAnisotropicGGX_Output {
+    let alphaRoughness=roughness * roughness;
+    let at: f32 = mix(alphaRoughness, 1.0, anisotropy * anisotropy);
+    let ab: f32 = alphaRoughness;
+
+    let F: vec3<f32> = F_Schlick(f0, f90, VdotH);
+    let V: f32 = V_GGX_anisotropic(NdotL, NdotV, BdotV, TdotV, TdotL, BdotL, at, ab);
+    let D: f32 = D_GGX_anisotropic(NdotH, TdotH, BdotH, at, ab);
+    var out:BRDF_specularAnisotropicGGX_Output;
+    out.F=F;
+    out.V=V;
+    out.D=D;
+    
+    return out;
+}
+`;
 export const fresnelSchlickRoughness = /* wgsl */ `
 fn fresnelSchlickRoughness(cosTheta:f32, F0:vec3f,roughness:f32)->vec3f{
     return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);

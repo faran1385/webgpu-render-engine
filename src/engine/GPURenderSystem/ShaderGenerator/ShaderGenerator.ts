@@ -7,6 +7,7 @@ import {
 } from "../MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
 import {Primitive} from "../../primitive/Primitive.ts";
 import {
+    anisotropy,
     distributionGGX,
     fresnelSchlick,
     fresnelSchlickRoughness,
@@ -147,6 +148,7 @@ fn vs(in: vsIn) -> vsOut {
         const workFlow = primitive.material.workFlow;
         const hasClearcoat = Boolean(primitive.material.textureDataMap.get(RenderFlag.CLEARCOAT));
         const hasClearcoatNormal = Boolean(primitive.material.textureDataMap.get(RenderFlag.CLEARCOAT_NORMAL)?.texture);
+        const hasAnisotropy = Boolean(primitive.material.textureDataMap.get(RenderFlag.ANISOTROPY));
 
         return generatedVertexCode + '\n' + `
             struct DLight {
@@ -192,12 +194,10 @@ fn vs(in: vsIn) -> vsOut {
             ${dataMap.get(RenderFlag.SPECULAR_COLOR)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.SPECULAR_COLOR]) ? `@group(1) @binding(${StandardMaterialBindPoint.SPECULAR_COLOR})  var specularColorTexture:texture_2d<f32>;` : ""}
             ${dataMap.get(RenderFlag.TRANSMISSION)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.TRANSMISSION]) ? `@group(1) @binding(${StandardMaterialBindPoint.TRANSMISSION})  var transmissionTexture:texture_2d<f32>;` : ""}
             ${dataMap.get(RenderFlag.CLEARCOAT)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.CLEARCOAT]) ? `@group(1) @binding(${StandardMaterialBindPoint.CLEARCOAT}) var clearcoatTexture:texture_2d<f32>;` : ""}
-            ${dataMap.get(RenderFlag.CLEARCOAT_ROUGHNESS)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.CLEARCOAT_ROUGHNESS]) ? `@group(1) @binding(${StandardMaterialBindPoint.CLEARCOAT_ROUGHNESS}) var clearcoatRoughness:texture_2d<f32>;` : ""}
+            ${dataMap.get(RenderFlag.CLEARCOAT_ROUGHNESS)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.CLEARCOAT_ROUGHNESS]) ? `@group(1) @binding(${StandardMaterialBindPoint.CLEARCOAT_ROUGHNESS}) var clearcoatRoughnessTexture:texture_2d<f32>;` : ""}
             ${dataMap.get(RenderFlag.CLEARCOAT_NORMAL)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.CLEARCOAT_NORMAL]) ? `@group(1) @binding(${StandardMaterialBindPoint.CLEARCOAT_NORMAL}) var clearcoatNormalTexture:texture_2d<f32>;` : ""}
             ${dataMap.get(RenderFlag.PBR_SPECULAR)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.PBR_SPECULAR]) ? `@group(1) @binding(${StandardMaterialBindPoint.PBR_SPECULAR}) var specularGlossinessTexture:texture_2d<f32>;` : ""}
-            ${dataMap.get(RenderFlag.CLEARCOAT)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.CLEARCOAT]) ? `@group(1) @binding(${StandardMaterialBindPoint.CLEARCOAT}) var clearcoatTexture:texture_2d<f32>;` : ""}
-            ${dataMap.get(RenderFlag.CLEARCOAT_ROUGHNESS)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.CLEARCOAT_ROUGHNESS]) ? `@group(1) @binding(${StandardMaterialBindPoint.CLEARCOAT}) var clearcoatRoughnessTexture:texture_2d<f32>;` : ""}
-            ${dataMap.get(RenderFlag.CLEARCOAT_NORMAL)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.CLEARCOAT_NORMAL]) ? `@group(1) @binding(${StandardMaterialBindPoint.CLEARCOAT}) var clearcoatNormalTexture:texture_2d<f32>;` : ""}
+            ${dataMap.get(RenderFlag.ANISOTROPY)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.ANISOTROPY]) ? `@group(1) @binding(${StandardMaterialBindPoint.ANISOTROPY}) var anisotropyTexture:texture_2d<f32>;` : ""}
             
             @group(0) @binding(4) var<uniform> cameraPosition:vec3f;
             const MAX_REFLECTION_LOD = ${primitive.sceneObject.scene.ENV_MAX_LOD_COUNT ?? 0};
@@ -209,6 +209,7 @@ fn vs(in: vsIn) -> vsOut {
             ${GAMMA_CORRECTION}
             ${TONE_MAPPING}
             ${EXPOSURE}
+            ${hasAnisotropy ? anisotropy : ''}
             
             override TONE_MAPPING_NUMBER = 0;
             override EXPOSURE = 0.;
@@ -231,11 +232,53 @@ fn vs(in: vsIn) -> vsOut {
                 return (diffuse + specular) * ao;
             }            
             
+            
+            ${hasAnisotropy ? `
+                fn getAnisotropicIBL(
+                    NoV:       f32,
+                    f0:        vec3f,
+                    roughness: f32,
+                    metallic:  f32,
+                    n:         vec3f,
+                    v:         vec3f,
+                    R:         vec3f,
+                    albedo:    vec3f,
+                    ao:        f32,
+                    anisotropy:   f32,
+                    anisotropicT: vec3f,
+                    anisotropicB: vec3f
+                ) -> vec3f {
+                    let k = sqrt(1.0 - abs(anisotropy));
+                    let Rt = vec3f(
+                        R.x * mix(1.0, k, 1.0 - anisotropy),
+                        R.y * mix(1.0, k, 1.0 + anisotropy),
+                        R.z
+                    );
+                    let Rw = normalize(Rt.x * anisotropicT + Rt.y * anisotropicB + Rt.z * n);
+                
+                    let irradiance     = textureSample(irradianceMap, iblSampler, n).xyz;
+                    let envBRDF        = textureSample(brdfLUT,    iblSampler, vec2f(max(NoV, 0.0), roughness)).rg;
+                    let prefiltered    = textureSampleLevel(prefilterMap, iblSampler, Rw, roughness * MAX_REFLECTION_LOD).rgb;
+                
+                    let F              = fresnelSchlickRoughness(NoV, f0, roughness);
+                    let kS             = F;
+                    var kD             = 1.0 - kS;
+                        kD            *= 1.0 - metallic;
+                
+                    let diffuse        = irradiance * albedo * kD;
+                    let specular       = prefiltered * (F * envBRDF.x + envBRDF.y);
+                
+                    return (diffuse + specular) * ao;
+                }
+
+            ` : ``}
+            
+            
+            ${hasClearcoat ? `
             struct clearcoatIblOutput{
                 specular:vec3f,
                 emissionMultiplier:f32
             }
-            
             fn getClearcoatIBL(NoV:f32,f0:vec3f,roughness:f32,n:vec3f,v:vec3f,r:vec3f,clearcoatFactor:f32)->clearcoatIblOutput{
                 let envBRDF  = textureSample(brdfLUT,iblSampler, vec2f(max(dot(n, v), 0.0), roughness)).rg;
                 let prefilteredColor = textureSampleLevel(prefilterMap,iblSampler, r,  roughness * MAX_REFLECTION_LOD).rgb; 
@@ -244,33 +287,50 @@ fn vs(in: vsIn) -> vsOut {
                             
                 let specular = (prefilteredColor) * (F * envBRDF.x + envBRDF.y);
                 
-                out.specular=specular * clearcoatFactor;
+                out.specular=specular * clearcoatFactor * .25;
                 out.emissionMultiplier=1.0 - factors[${StandardMaterialFactorsStartPoint.CLEARCOAT}] * F.r;
                 
                 return out;
-            }
+            }`:''}
             
             @fragment fn fs(in: vsOut) -> @location(0) vec4f {
                 var ao  = ${dataMap.get(RenderFlag.OCCLUSION)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.OCCLUSION]) ? `textureSample(occlusionTexture,textureSampler,in.uv).r * factors[${StandardMaterialFactorsStartPoint.OCCLUSION}];` : `factors[${StandardMaterialFactorsStartPoint.OCCLUSION}];`}
                 var specularF0  =${dataMap.get(RenderFlag.SPECULAR)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.SPECULAR]) ? `textureSample(specularTexture,textureSampler,in.uv).a * factors[${StandardMaterialFactorsStartPoint.SPECULAR}];` : `factors[${StandardMaterialFactorsStartPoint.SPECULAR}];`}
                 var specularColor   =${dataMap.get(RenderFlag.SPECULAR_COLOR)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.SPECULAR_COLOR]) ? `textureSample(specularColorTexture,textureSampler,in.uv).xyz * vec3f(factors[${StandardMaterialFactorsStartPoint.SPECULAR_COLOR}],factors[${StandardMaterialFactorsStartPoint.SPECULAR_COLOR + 1}],factors[${StandardMaterialFactorsStartPoint.SPECULAR_COLOR + 2}]);` : `vec3f(factors[${StandardMaterialFactorsStartPoint.SPECULAR_COLOR}],factors[${StandardMaterialFactorsStartPoint.SPECULAR_COLOR + 1}],factors[${StandardMaterialFactorsStartPoint.SPECULAR_COLOR + 2}]);`};
                 var emissive  = ${dataMap.get(RenderFlag.EMISSIVE)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.EMISSIVE]) ? `textureSample(emissiveTexture,textureSampler,in.uv).rgb * vec3f(factors[${StandardMaterialFactorsStartPoint.EMISSIVE}],factors[${StandardMaterialFactorsStartPoint.EMISSIVE + 1}],factors[${StandardMaterialFactorsStartPoint.EMISSIVE + 2}]);` : `vec3f(factors[${StandardMaterialFactorsStartPoint.EMISSIVE}],factors[${StandardMaterialFactorsStartPoint.EMISSIVE + 1}],factors[${StandardMaterialFactorsStartPoint.EMISSIVE + 2}]);`}
+                ${hasAnisotropy ? `
+                var anisotropy = factors[${StandardMaterialFactorsStartPoint.ANISOTROPY}];
+                var direction = vec2f(
+                factors[${StandardMaterialFactorsStartPoint.ANISOTROPY + 1}],
+                factors[${StandardMaterialFactorsStartPoint.ANISOTROPY + 2}]
+                );
+                ${dataMap.get(RenderFlag.ANISOTROPY)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.ANISOTROPY]) ? `
+                let anisotropyTex = textureSample(anisotropyTexture,textureSampler,in.uv).rgb;
+                direction = anisotropyTex.rg * 2.0 - vec2(1.0);
+                direction = mat2x2f(
+                factors[${StandardMaterialFactorsStartPoint.ANISOTROPY + 1}],
+                factors[${StandardMaterialFactorsStartPoint.ANISOTROPY + 2}],
+                -factors[${StandardMaterialFactorsStartPoint.ANISOTROPY + 2}],
+                 factors[${StandardMaterialFactorsStartPoint.ANISOTROPY + 1}]
+                 ) * normalize(direction);
+                 anisotropy *= anisotropyTex.b;
+                ` : ``};    
+                ` : ``}
+                ${hasClearcoat ? `
                 let clearcoat=${dataMap.get(RenderFlag.CLEARCOAT)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.CLEARCOAT]) ? `textureSample(clearcoatTexture,textureSampler,in.uv).r * factors[${StandardMaterialFactorsStartPoint.CLEARCOAT}];` : `factors[${StandardMaterialFactorsStartPoint.CLEARCOAT}]`};
                 var clearcoatRoughness=${dataMap.get(RenderFlag.CLEARCOAT_ROUGHNESS)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.CLEARCOAT_ROUGHNESS]) ? `textureSample(clearcoatRoughnessTexture,textureSampler,in.uv).g * factors[${StandardMaterialFactorsStartPoint.CLEARCOAT_ROUGHNESS}];` : `factors[${StandardMaterialFactorsStartPoint.CLEARCOAT_ROUGHNESS}]`};
                 clearcoatRoughness = clamp(clearcoatRoughness, 0.04, 1.0);
                 let clearcoatNormal=${dataMap.get(RenderFlag.CLEARCOAT_NORMAL)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.CLEARCOAT_NORMAL]) ? `textureSample(clearcoatNormalTexture,textureSampler,in.uv).g * factors[${StandardMaterialFactorsStartPoint.CLEARCOAT_NORMAL}];` : `factors[${StandardMaterialFactorsStartPoint.CLEARCOAT_NORMAL}]`};
+                ` : ''}
                 var albedo = ${workFlow === "metallic_roughness" ? `
                     ${dataMap.get(RenderFlag.BASE_COLOR)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.BASE_COLOR]) ? `textureSample(baseColorTexture, textureSampler, in.uv) * vec4f(factors[${StandardMaterialFactorsStartPoint.BASE_COLOR}], factors[${StandardMaterialFactorsStartPoint.BASE_COLOR + 1}], factors[${StandardMaterialFactorsStartPoint.BASE_COLOR + 2}], factors[${StandardMaterialFactorsStartPoint.BASE_COLOR + 3}])` : `vec4f(factors[${StandardMaterialFactorsStartPoint.BASE_COLOR}], factors[${StandardMaterialFactorsStartPoint.BASE_COLOR + 1}], factors[${StandardMaterialFactorsStartPoint.BASE_COLOR + 2}], factors[${StandardMaterialFactorsStartPoint.BASE_COLOR + 3}])`}
                 ` : `
                     ${dataMap.get(RenderFlag.DIFFUSE)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.DIFFUSE]) ? `textureSample(diffuseTexture, textureSampler, in.uv) * vec4f(factors[${StandardMaterialFactorsStartPoint.DIFFUSE}], factors[${StandardMaterialFactorsStartPoint.DIFFUSE + 1}], factors[${StandardMaterialFactorsStartPoint.DIFFUSE + 2}], factors[${StandardMaterialFactorsStartPoint.DIFFUSE + 3}])` : `vec4f(factors[${StandardMaterialFactorsStartPoint.DIFFUSE}], factors[${StandardMaterialFactorsStartPoint.DIFFUSE + 1}], factors[${StandardMaterialFactorsStartPoint.DIFFUSE + 2}], factors[${StandardMaterialFactorsStartPoint.DIFFUSE + 3}])`}
                 `};
-                ${dataMap.get(RenderFlag.EMISSIVE)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.EMISSIVE]) ? `` : ``}
-                ${dataMap.get(RenderFlag.CLEARCOAT_NORMAL)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.CLEARCOAT_NORMAL]) ? `
-                    let clearcoatNormal=texture
-                ` : ``}
+
                 
                 var metallic  = 0.;
-                var roughness  = 0.;
+                var roughness = 0.;
                 ${workFlow === "metallic_roughness" ? `
                     ${dataMap.get(RenderFlag.METALLIC)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.METALLIC]) ? `let metallicRoughness = textureSample(metallicRoughnessTexture, textureSampler, in.uv);` : ``}
                     metallic  = ${dataMap.get(RenderFlag.METALLIC)?.texture || primitive.material.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.METALLIC]) ? `metallicRoughness.b * factors[${StandardMaterialFactorsStartPoint.METALLIC}];` : `factors[${StandardMaterialFactorsStartPoint.METALLIC}];`}
@@ -300,13 +360,17 @@ fn vs(in: vsIn) -> vsOut {
                 let r = reflect(-v, n);  
                 var Lo = vec3(0.0);
                 let NoV=clamp(dot(n,v),0.,1.);
-
+                ${hasAnisotropy ? `
+                ${canUseNormalMap ? ``:`let TBN = mat3x3<f32>(in.T, in.B, in.normal);`}
+                let anisotropicT = normalize(TBN * vec3(direction, 0.0));
+                let anisotropicB = normalize(cross(n, anisotropicT));
+                ` : ``}
                 ${hasClearcoat ? `
                     var Nc=n;
                     ${hasClearcoatNormal && canUseNormalMap ? `
                         let clearcoatNormalMap = textureSample(clearcoatNormalTexture, textureSampler, in.uv) * factors[${StandardMaterialFactorsStartPoint.CLEARCOAT_NORMAL}] * 2.0 - 1.0;
                         Nc = normalize(TBN * clearcoatNormalMap.xyz);
-                    `:''}    
+                    ` : ''}    
                     let NCdotV=clamp(dot(Nc,v),0.,1.);
                     let F0C=vec3(0.04);
                     let Rc=reflect(-v, Nc);
@@ -325,7 +389,7 @@ fn vs(in: vsIn) -> vsOut {
     
                         let neom=D*F*G;
                         let denom=4 * NoL * NCdotV + 0.0001;
-                        let specular=neom / denom * factors[${StandardMaterialFactorsStartPoint.CLEARCOAT}];
+                        let specular=neom / denom * factors[${StandardMaterialFactorsStartPoint.CLEARCOAT}] * .25;
                         
     
                         Lo += (specular) * radiance  * NoL; 
@@ -333,7 +397,7 @@ fn vs(in: vsIn) -> vsOut {
                     let clearcoatIbl=getClearcoatIBL(NCdotV,F0C,clearcoatRoughness,Nc,v,r,clearcoat);
                     Lo+=clearcoatIbl.specular;
                     emissive *=clearcoatIbl.emissionMultiplier;
-                `:''}
+                ` : ''}
                
                 for (var i:u32 = 0; i < lightCounts.directional; i++) {
                     let l = normalize(dLights[i].position - worldPosition);
@@ -343,7 +407,22 @@ fn vs(in: vsIn) -> vsOut {
                     
                     let radiance = dLights[i].color * dLights[i].intensity;
 
-                    
+                    ${hasAnisotropy ? `
+                    let NoH=dot(n,h);
+                    let NoV=dot(v,h);
+                    let ToL = dot(anisotropicT, l);
+                    let BoL = dot(anisotropicB, l);
+                    let ToH = dot(anisotropicT, h);
+                    let BoH = dot(anisotropicB, h);
+                    let BoV = dot(anisotropicB, v);
+                    let ToV = dot(anisotropicT, v);
+                    let specularAnisotropicOutput=BRDF_specularAnisotropicGGX(f0, vec3f(1.), roughness,HoV, NoL, NoV, NoH,BoV, ToV, ToL, BoL, ToH, BoH, anisotropy);
+                    let F=specularAnisotropicOutput.F;
+                    let specular=specularAnisotropicOutput.F * specularAnisotropicOutput.V * specularAnisotropicOutput.D;
+                    let Ks=F;
+                    var Kd=vec3f(1.) - metallic;
+                    Kd *= 1. - Ks;
+                    `: `               
                     let D=distributionGGX(n,h,roughness);
                     let G=geometrySmith(n,v,l,roughness);
                     let F=fresnelSchlick(HoV,f0);
@@ -355,6 +434,7 @@ fn vs(in: vsIn) -> vsOut {
                     let neom=D*F*G;
                     let denom=4 * NoL * NoV + 0.0001;
                     let specular=neom / denom;
+                    `}
                     
 
                     Lo += (Kd * albedo.xyz / PI + specular) * radiance  * NoL; 
@@ -368,8 +448,17 @@ fn vs(in: vsIn) -> vsOut {
                     Lo += kD * albedo.xyz / PI * Li;
                 }
                 
-                Lo+=getIBL(NoV,f0,roughness,metallic,n,v,r,albedo.xyz,ao);
-                
+                ${hasAnisotropy ? `
+                    var bentNormal = cross(anisotropicB, v);
+                    bentNormal = normalize(cross(bentNormal, anisotropicB));
+                    let a = pow(pow(1.0 - anisotropy * (1.0 - roughness),2),2);
+                    bentNormal = normalize(mix(bentNormal, n, a));
+                    var reflectVec = reflect(-v, bentNormal);
+                    reflectVec = normalize(mix(reflectVec, bentNormal, roughness * roughness));
+                    Lo += getIBL(NoV, f0, roughness,metallic,n,v,reflectVec,albedo.xyz,ao);
+                `:`
+                    Lo+=getIBL(NoV,f0,roughness,metallic,n,v,r,albedo.xyz,ao);
+                `}
                 var color=Lo;
                 color +=emissive.xyz;
                 

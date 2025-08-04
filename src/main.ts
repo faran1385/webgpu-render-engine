@@ -44,11 +44,11 @@ scene.setToneMapping = ToneMapping.ACES
 await scene.backgroundManager.setBackground(gpuCache, [1], cubeMap, 1)
 await scene.environmentManager.setEnvironment(cubeMap, 1024, 128, 32)
 
-// scene.lightManager.addDirectional({
-//     intensity: 5,
-//     color: [1, 1, 1],
-//     position: [5, 5, 3]
-// })
+scene.lightManager.addDirectional({
+    intensity: 5,
+    color: [1, 1, 1],
+    position: [5, 5, 3]
+})
 
 const modelRenderer = new ModelRenderer({
     gpuCache,
@@ -59,11 +59,9 @@ window.addEventListener("resize", () => {
     camera.setAspect(canvas.width / canvas.height)
     camera.updateProjectionMatrix()
 })
-
-
 modelRenderer.setSceneObjects(sceneObjects)
-modelRenderer.setScale(1,1,1)
-modelRenderer.setTranslation(0,0,0)
+modelRenderer.setScale(15, 15, 15)
+modelRenderer.setTranslation(0, 0, 0)
 modelRenderer.setNodeMap(nodeMap)
 modelRenderer.fillInitEntry()
 await modelRenderer.init()

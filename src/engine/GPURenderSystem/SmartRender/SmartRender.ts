@@ -7,7 +7,6 @@ import {MaterialDescriptorGenerator} from "../MaterialDescriptorGenerator/Materi
 import {
     GeometryBindingPoint,
     PipelineShaderLocations,
-    RenderFlag,
 } from "../MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
 import {StandardMaterial} from "../../Material/StandardMaterial.ts";
 import {isLightDependentMaterial} from "../../../helpers/global.helper.ts";
@@ -163,11 +162,11 @@ export class SmartRender {
                     }
                     if (geometry.dataList.get(`TANGENT`)) {
                         buffers.push({
-                            arrayStride: 3 * 4,
+                            arrayStride: 4 * 4,
                             attributes: [{
                                 offset: 0,
                                 shaderLocation: PipelineShaderLocations.TANGENT,
-                                format: "float32x3"
+                                format: "float32x4"
                             }],
                             name: `TANGENT`
                         })

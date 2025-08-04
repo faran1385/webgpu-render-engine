@@ -267,14 +267,14 @@ export function extractExtensions(material: Material) {
             })
         } else if (extension instanceof Anisotropy) {
             const anisotropyTexture = extension.getAnisotropyTexture();
-            extensionMap.set(RenderFlag.CLEARCOAT_NORMAL, {
+            extensionMap.set(RenderFlag.ANISOTROPY, {
                 texture: anisotropyTexture ? {
                     size: anisotropyTexture.getSize()!,
                     data: anisotropyTexture.getImage()!
                 } : null,
-                factor: [extension.getAnisotropyStrength(), extension.getAnisotropyRotation()],
-                bindPoint: StandardMaterialBindPoint.CLEARCOAT_NORMAL,
-                factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT_NORMAL,
+                factor: [extension.getAnisotropyStrength(),Math.cos(extension.getAnisotropyRotation()),Math.sin(extension.getAnisotropyRotation())],
+                bindPoint: StandardMaterialBindPoint.ANISOTROPY,
+                factorStartPoint: StandardMaterialFactorsStartPoint.ANISOTROPY,
             })
         }
 
@@ -388,35 +388,6 @@ export function extractMaterial(material: Material) {
         factor: [1, 1, 1],
         bindPoint: StandardMaterialBindPoint.SPECULAR_COLOR,
         factorStartPoint: StandardMaterialFactorsStartPoint.SPECULAR_COLOR
-    });
-
-    dataMap.set(RenderFlag.TRANSMISSION, {
-        texture: null,
-        factor: 1,
-        bindPoint: StandardMaterialBindPoint.TRANSMISSION,
-        factorStartPoint: StandardMaterialFactorsStartPoint.TRANSMISSION
-    });
-
-    dataMap.set(RenderFlag.CLEARCOAT, {
-        texture: null,
-        factor: 0,
-        bindPoint: StandardMaterialBindPoint.CLEARCOAT,
-        factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT
-    });
-
-    dataMap.set(RenderFlag.CLEARCOAT_ROUGHNESS, {
-        texture: null,
-        factor: 0,
-        bindPoint: StandardMaterialBindPoint.CLEARCOAT_ROUGHNESS,
-        factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT_ROUGHNESS
-    });
-
-
-    dataMap.set(RenderFlag.CLEARCOAT_NORMAL, {
-        texture: null,
-        factor: 0,
-        bindPoint: StandardMaterialBindPoint.CLEARCOAT_NORMAL,
-        factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT_NORMAL
     });
 
     const extensions = extractExtensions(material)

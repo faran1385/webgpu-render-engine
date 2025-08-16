@@ -1,7 +1,5 @@
 import {Animation, Node} from "@gltf-transform/core";
-import {HashCreationBindGroupEntry} from "../engine/GPURenderSystem/Hasher/HashGenerator.ts";
 import {GPUCache} from "../engine/GPURenderSystem/GPUCache/GPUCache.ts";
-import {BindGroupEntryCreationType} from "../engine/GPURenderSystem/GPUCache/GPUCacheTypes.ts";
 import {SceneObject} from "../engine/sceneObject/sceneObject.ts";
 import {hashAndCreateRenderSetup} from "../helpers/global.helper.ts";
 import {quat, vec3} from "gl-matrix";
@@ -10,26 +8,16 @@ import {MaterialInstance} from "../engine/Material/Material.ts";
 import {Primitive} from "../engine/primitive/Primitive.ts";
 import {Scene} from "../engine/scene/Scene.ts";
 
-
-export type MaterialBindGroupEntry = {
-    hashEntries: HashCreationBindGroupEntry,
-    entries: BindGroupEntryCreationType[],
-    layout: GPUBindGroupLayoutEntry[]
-    sampler: GPUSamplerDescriptor | null
-}
-
 export type PipelineLayoutHashItem = {
     primitive: Primitive
     hash: number
 }
 type modelRendererEntry = {
-    gpuCache: GPUCache,
     scene: Scene,
 }
 
 
 export class ModelRenderer {
-    private gpuCache: GPUCache;
     materials = new Set<MaterialInstance>();
     private sceneObjects: Set<SceneObject> = new Set();
     private modelAnimator: ModelAnimator;
@@ -37,17 +25,15 @@ export class ModelRenderer {
     private scene: Scene;
 
     constructor({
-                    gpuCache,
                     scene,
                 }: modelRendererEntry) {
-        this.gpuCache = gpuCache;
         this.modelAnimator = new ModelAnimator()
         this.scene = scene;
     }
 
     public fillInitEntry() {
         if (this.sceneObjects.size === 0) throw new Error("sceneObjects is not set");
-        GPUCache.smartRenderer.entryCreator(this.sceneObjects, this.nodeMap)
+        GPUCache.smartRenderer.entryCreator(this.sceneObjects, this.nodeMap, Array.from(this.materials))
     }
 
     public setNodeMap(map: Map<Node, SceneObject>) {
@@ -120,22 +106,16 @@ export class ModelRenderer {
 
 
     public async init() {
+        this.fillInitEntry()
 
         const primitives: Primitive[] = []
         this.sceneObjects.forEach(sceneObject => {
             sceneObject.primitives?.forEach(p => primitives.push(p))
         })
 
-        await hashAndCreateRenderSetup(this.scene.computeManager, this.gpuCache, Array.from(this.materials), primitives)
+        await hashAndCreateRenderSetup(this.scene.computeManager, Array.from(this.materials), primitives)
         primitives.forEach(primitive => this.scene.appendDrawCall = primitive)
         this.materials.forEach(material => {
-            // material.textureDataMap.clear()
-            material.descriptor = {
-                entries: null,
-                hashEntries: null,
-                layout: null,
-                sampler: null
-            }
             material.initialized = true
         })
     }

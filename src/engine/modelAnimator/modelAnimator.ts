@@ -51,7 +51,7 @@ export class ModelAnimator {
 
     public update(animation: Animation, time: number, mode: "loop" | "backAndForth" | undefined = undefined, nodeMap: Map<Node, SceneObject>) {
 
-        const channels = animation.listChannels()
+        const channels = animation?.listChannels() ?? []
 
         for (const channel of channels) {
             const times = channel.getSampler()?.getInput()?.getArray();

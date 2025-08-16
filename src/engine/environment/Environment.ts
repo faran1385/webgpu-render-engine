@@ -6,13 +6,11 @@ import {
     cubemapVertexShader,
     cubePositions, views,
 } from "./cubeData.ts";
-import {
-    distributionGGX,
-    hammersley,
-    importanceSampleGGX,
-    radicalInverseVdC
+import { ggxBRDFLUTCode,
+    ggxPrefilterCode,
 } from "../../helpers/pbrShaderFunctions.ts";
 import {quadVertices} from "./quadData.ts";
+import {BaseLayer} from "../../layers/baseLayer.ts";
 
 export class Environment {
     private device!: GPUDevice;
@@ -199,8 +197,13 @@ export class Environment {
         return irradiance
     }
 
-
-    private createPrefiltered(cubeMap: GPUTexture, SAMPLE_COUNT: number, TEXTURE_RESOLUTION: number) {
+    private createPrefiltered(
+        cubeMap: GPUTexture,
+        SAMPLE_COUNT: number,
+        TEXTURE_RESOLUTION: number,
+        vertexShader: string,
+        fragmentShader: string,
+    ) {
         const ROUGHNESS_LEVELS = Math.floor(Math.log2(TEXTURE_RESOLUTION));
         this.scene.ENV_MAX_LOD_COUNT = ROUGHNESS_LEVELS;
 
@@ -220,89 +223,6 @@ export class Environment {
             mipLevelCount: ROUGHNESS_LEVELS,
         });
 
-        const vertexShader = /* wgsl */ `
-        struct VSOut {
-          @builtin(position) Position: vec4f,
-          @location(0) worldPosition: vec3f,
-        };
-        
-        struct Uniforms {
-          modelViewProjectionMatrix: mat4x4f,
-          roughness: f32,
-        };
-
-        @group(0) @binding(0) var<uniform> uniforms: Uniforms;
-        
-        @vertex
-        fn main(@location(0) position: vec3f) -> VSOut {
-          var output: VSOut;
-          let worldPosition: vec4f=vec4f(position,1.);
-          output.Position = uniforms.modelViewProjectionMatrix * worldPosition;
-          output.worldPosition = worldPosition.xyz;
-          return output;
-        }
-        `;
-
-        const fragmentShader = /* wgsl */ `
-        struct Uniforms {
-          modelViewProjectionMatrix: mat4x4f,
-          roughness: f32,
-        };
-        
-        @group(0) @binding(0) var<uniform> uniforms: Uniforms;
-        @group(0) @binding(1) var environmentMap: texture_cube<f32>;
-        @group(0) @binding(2) var environmentSampler: sampler;
-        
-        const PI = 3.14159265359;
-        
-        ${distributionGGX}
-        ${radicalInverseVdC}
-        ${hammersley}
-        ${importanceSampleGGX}
-        override SAMPLE_COUNT= 1024u;
-        override TEXTURE_RESOLUTION= 1024f;
-        
-        @fragment
-        fn main(@location(0) worldPosition: vec3f) -> @location(0) vec4f {
-          var n = normalize(vec3f(worldPosition.x,-worldPosition.y,worldPosition.z));
-
-          // Make the simplifying assumption that V equals R equals the normal
-          let r = n;
-          let v = r;
-        
-          var prefilteredColor = vec3f(0.0, 0.0, 0.0);
-          var totalWeight = 0.0;
-        
-          for (var i: u32 = 0u; i < SAMPLE_COUNT; i = i + 1u) {
-            // Generates a sample vector that's biased towards the preferred alignment
-            // direction (importance sampling).
-            let xi = hammersley(i, SAMPLE_COUNT);
-            let h = importanceSampleGGX(xi, n, uniforms.roughness);
-            let l = normalize(2.0 * dot(v, h) * h - v);
-        
-            let nDotL = clamp(dot(n, l), 0.0,1.);
-        
-            if(nDotL > 0.0) {
-              // sample from the environment's mip level based on roughness/pdf
-              let d = distributionGGX(n, h, uniforms.roughness);
-              let nDotH = max(dot(n, h), 0.0);
-              let hDotV = max(dot(h, v), 0.0);
-              let pdf = d * nDotH / (4.0 * hDotV) + 0.0001;
-        
-              let saTexel = 4.0 * PI / (6.0 * TEXTURE_RESOLUTION * TEXTURE_RESOLUTION);
-              let saSample = 1.0 / (f32(SAMPLE_COUNT) * pdf + 0.0001);
-        
-              let mipLevel = select(max(0.5 * log2(saSample / saTexel) + 1.0, 0.0), 0.0, uniforms.roughness == 0.0);
-        
-              prefilteredColor += textureSampleLevel(environmentMap, environmentSampler, l, mipLevel).rgb * nDotL;
-              totalWeight += nDotL;
-            }
-          }
-        
-          prefilteredColor = prefilteredColor / totalWeight;
-          return vec4f(prefilteredColor, 1.0);
-        }
-        `;
         const verticesBuffer = createGPUBuffer(this.device, cubePositions, GPUBufferUsage.VERTEX, "prefiltered vertices buffer")
         const sampler = this.device.createSampler({
             label: "prefilter map",
@@ -447,8 +367,8 @@ export class Environment {
         return this.exposure
     }
 
-    private initBRDFLUT() {
-        if (this.scene.brdfLut) return;
+    private initBRDFLUT(vertexShader: string, fragmentShader: string, checkTexture: GPUTexture | null) {
+        if (checkTexture) return;
         const BRDF_LUT_SIZE = 64;
 
         const texture = this.device.createTexture({
@@ -461,78 +381,6 @@ export class Environment {
                 GPUTextureUsage.COPY_DST,
         });
 
-        const vertexShader = /* wgsl */ `
-            struct VertexOutput {
-              @builtin(position) Position: vec4f,
-              @location(0) uv: vec2f,
-            }
-            
-            @vertex
-            fn main(@location(0) position: vec2f, @location(1) uv: vec2f) -> VertexOutput {
-              var output: VertexOutput;
-              output.Position = vec4f(position,0., 1.0);
-              output.uv = uv;
-              return output;
-            }
-        `;
-
-        const fragmentShader = /* wgsl */ `
-            const PI: f32 = 3.14159265359;
-            
-            ${radicalInverseVdC}
-            ${hammersley}
-            ${importanceSampleGGX}
-            
-            // This one is different
-            fn G_SchlicksmithGGX(dotNL:f32, dotNV:f32, roughness:f32)->f32{
-                let k = (roughness * roughness) / 2.0;
-                let GL = dotNL / (dotNL * (1.0 - k) + k);
-                let GV = dotNV / (dotNV * (1.0 - k) + k);
-                return GL * GV;
-            }
-            
-            fn integrateBRDF(NdotV: f32, roughness: f32) -> vec2f {
-              var V: vec3f;
-              V.x = sqrt(1.0 - NdotV * NdotV);
-              V.y = 0.0;
-              V.z = NdotV;
-            
-              var A: f32 = 0.0;
-              var B: f32 = 0.0;
-            
-              let N = vec3f(0.0, 0.0, 1.0);
-            
-              let SAMPLE_COUNT: u32 = 1024u;
-              for(var i: u32 = 0u; i < SAMPLE_COUNT; i = i + 1u) {
-                  let Xi: vec2f = hammersley(i, SAMPLE_COUNT);
-                  let H: vec3f = importanceSampleGGX(Xi, N, roughness);
-                  let L: vec3f = normalize(2.0 * dot(V, H) * H - V);
-            
-                  let dotNL = max(dot(N, L), 0.0);
-                  let dotNV = max(dot(N, V), 0.0);
-                  let dotVH = max(dot(V, H), 0.0); 
-                  let dotNH = max(dot(H, N), 0.0);
-            
-                  if(dotNL > 0.0) {
-                      let G = G_SchlicksmithGGX(dotNL, dotNV, roughness);
-                      let G_Vis = (G * dotVH) / (dotNH * dotNV);
-                      let Fc = pow(1.0 - dotVH, 5.0);
-            
-                      A += (1.0 - Fc) * G_Vis;
-                      B += Fc * G_Vis;
-                  }
-              }
-              A /= f32(SAMPLE_COUNT);
-              B /= f32(SAMPLE_COUNT);
-              return vec2f(A, B);
-            }
-            
-            @fragment
-            fn main(@location(0) uv: vec2f) -> @location(0) vec2f {
-              let result = integrateBRDF(uv.x, 1 - uv.y);
-              return result;
-            }
-            `;
 
         const pipeline = this.device.createRenderPipeline({
             label: "BRDF convolution",
@@ -610,15 +458,27 @@ export class Environment {
         this.device.queue.submit([commandEncoder.finish()]);
         vertexBuffer.destroy();
         depthTexture.destroy();
-        this.scene.setBrdfLut = texture;
+        return texture
     }
 
     async setEnvironment(cubeMap: GPUTexture, prefilterSampleCount: number, prefilterTextureResolution: number, irradianceResolution: number) {
         const irradiance = this.createIrradiance(cubeMap, irradianceResolution)
-        const prefiltered = this.createPrefiltered(cubeMap, prefilterSampleCount, prefilterTextureResolution)
-        this.initBRDFLUT()
+        const prefiltered = this.createPrefiltered(cubeMap,
+            prefilterSampleCount,
+            prefilterTextureResolution,
+            ggxPrefilterCode.vertex,
+            ggxPrefilterCode.fragment)
+
+
+        const ggxBRDFLUT = this.initBRDFLUT(ggxBRDFLUTCode.vertex, ggxBRDFLUTCode.fragment, BaseLayer.ggxBRDFLUTTexture)
+        if (ggxBRDFLUT) BaseLayer.ggxBRDFLUTTexture = ggxBRDFLUT;
+
+        this.irradianceMap?.destroy()
+        this.prefilteredMap?.destroy()
+
         this.irradianceMap = irradiance;
         this.prefilteredMap = prefiltered;
+
         this.scene.setBindGroup()
     }
 }

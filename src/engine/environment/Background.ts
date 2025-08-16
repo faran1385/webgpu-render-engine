@@ -8,7 +8,6 @@ import {SceneObject} from "../sceneObject/sceneObject.ts";
 import {Primitive} from "../primitive/Primitive.ts";
 import {cubeIndices, cubePositions} from "./cubeData.ts";
 import {Scene} from "../scene/Scene.ts";
-import {GPUCache} from "../GPURenderSystem/GPUCache/GPUCache.ts";
 import {
     EXPOSURE,
     GAMMA_CORRECTION,
@@ -28,7 +27,7 @@ export class Background extends BaseLayer {
 
     initRenderClass(exposure: number) {
 
-        const material = new StandardMaterial(null)
+        const material = new StandardMaterial()
         const geometry = new Geometry({
             dataList: new Map([["POSITION", {
                 array: cubePositions,
@@ -46,45 +45,24 @@ export class Background extends BaseLayer {
             },
             visibility: GPUShaderStage.VERTEX
         }]
-        material.descriptor.sampler = {
-            addressModeW: "repeat",
-            addressModeV: "repeat",
-            addressModeU: "repeat",
-            magFilter: "linear",
-            mipmapFilter: "linear",
-            minFilter: "linear"
-        }
 
-        material.descriptor.layout = [{
-            texture: {
-                sampleType: "float",
-                viewDimension: "cube"
-            },
-            binding: 1,
-            visibility: GPUShaderStage.FRAGMENT
-        }, {
-            sampler: {
-                type: "filtering"
-            },
-            binding: 0,
-            visibility: GPUShaderStage.FRAGMENT
-        }]
+
+        material.bindGroupLayout = BaseLayer.bindGroupLayouts.background.layout
+        material.setHashes("bindGroupLayout", BaseLayer.bindGroupLayouts.background.hash)
 
         const primitive = new Primitive()
         const toneMapping = this.scene.getToneMapping(primitive);
 
-
-        material.shaderCode = `
-        struct vsInput{
-            @location(0) pos:vec3f,
-        }
-
+        geometry.shaderCode = `
         struct vsOutput{
             @builtin(position) clipPos:vec4f,
             @location(0) dir:vec3f,
             @location(1) uv:vec2f,
         }
-
+        struct vsInput{
+            @location(0) pos:vec3f,
+        }
+        
         @group(0) @binding(0) var<uniform> projectionMatrix:mat4x4<f32>;
         @group(0) @binding(1) var<uniform> viewMatrix:mat4x4<f32>;
         @group(2) @binding(0) var<uniform> modelMatrix:mat4x4<f32>;
@@ -96,16 +74,10 @@ export class Background extends BaseLayer {
                 vec4<f32>(view[1].xyz, 0.0),
                 vec4<f32>(view[2].xyz, 0.0),
                 vec4<f32>(0,0,0, 1.0)
-        );
-}
-
-        ${GAMMA_CORRECTION}
-        ${EXPOSURE}
-        ${TONE_MAPPING}
-        override TONE_MAPPING_NUMBER = 0;
-        override EXPOSURE = 1.;
-        @vertex
-        fn vs(in: vsInput) -> vsOutput {
+            );
+        }
+        
+        @vertex fn vs(in: vsInput) -> vsOutput {
             var output: vsOutput;
         
             let viewMatrixWithoutTranslation=getViewWithoutTranslation(viewMatrix);
@@ -118,6 +90,21 @@ export class Background extends BaseLayer {
             output.uv=in.pos.xy;
             return output;
         }
+        `
+        material.shaderCode = `
+        
+
+        struct vsOutput{
+            @builtin(position) clipPos:vec4f,
+            @location(0) dir:vec3f,
+            @location(1) uv:vec2f,
+        }
+
+        ${GAMMA_CORRECTION}
+        ${EXPOSURE}
+        ${TONE_MAPPING}
+        override TONE_MAPPING_NUMBER = 0;
+        override EXPOSURE = 1.;
 
         @group(1) @binding(1) var skyboxTexture: texture_cube<f32>;
         @group(1) @binding(0) var skyboxSampler: sampler;
@@ -137,7 +124,7 @@ export class Background extends BaseLayer {
         primitive.setGeometry(geometry)
         primitive.setMaterial(material)
         primitive.setSide("front")
-
+        material.init(null)
         primitive.setPipelineDescriptor("front", {
             primitive: {
                 cullMode: "front",
@@ -181,55 +168,50 @@ export class Background extends BaseLayer {
             },
             binding: 0
         }]
-
         sceneObject.appendPrimitive(primitive)
+
+        material.descriptor.bindGroupEntries.push({
+            bindingPoint: 0,
+            sampler: BaseLayer.samplers.default
+        })
         return {
             sceneObject,
             primitive
         }
     }
 
-    private deletePrevious(gpuCache: GPUCache) {
+    private deletePrevious() {
         if (this.lastSceneObject) {
             (this.lastSceneObject.scene.background?.material as any)?.descriptor?.entries[0]?.textureDescriptor.texture.destroy()
             this.lastSceneObject.scene.computeManager.indirectDraw.deleteIndirect(this.lastSceneObject)
             this.lastSceneObject.scene.computeManager.indirectDraw.deleteIndex(this.lastSceneObject)
         }
         if (this.scene.background) {
-            gpuCache.disposePrimitive(this.scene.background, this.scene.background.sides[0])
+            BaseLayer.gpuCache.disposePrimitive(this.scene.background, this.scene.background.sides[0])
         }
     }
 
-    setExposure(exposure: number) {
-        if (!this.lastSceneObject) throw new Error("There is no active Env");
-        const primitive = Array.from(this.lastSceneObject.primitives!)[0][1]
-        primitive.sides.forEach((side) => {
-            const desc = primitive.pipelineDescriptors.get(side)!
-            desc.fragmentConstants ? desc.fragmentConstants.EXPOSURE = exposure : ""
-        })
 
-        BaseLayer.pipelineUpdateQueue.add(primitive)
-    }
-
-    async setBackground(gpuCache: GPUCache, hashArray: number[], cubeMap: GPUTexture, exposure: number | undefined = undefined) {
+    async setBackground(cubeMap: GPUTexture, exposure: number | undefined = undefined) {
         const {primitive, sceneObject} = this.initRenderClass(exposure ?? 1)
 
 
-        primitive.material.descriptor.hashEntries = [new Float32Array(hashArray)]
-        primitive.material.descriptor.entries = [{
+        primitive.material.descriptor.bindGroupEntries.push({
+            additional: {
+                resourcesKey: `Cube_Texture`,
+            },
             textureDescriptor: {
                 texture: cubeMap,
                 viewDescriptor: {
                     dimension: "cube",
                 }
             },
-            materialResourcesKey: `Cube_Texture`,
             bindingPoint: 1
-        }]
+        })
 
-        await hashAndCreateRenderSetup(this.scene.computeManager, gpuCache, [primitive.material], [primitive])
+        await hashAndCreateRenderSetup(this.scene.computeManager, [primitive.material], [primitive], true)
 
-        this.deletePrevious(gpuCache)
+        this.deletePrevious()
 
         this.scene.setBackground = primitive
         this.lastSceneObject = sceneObject;

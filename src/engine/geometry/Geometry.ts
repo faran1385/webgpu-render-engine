@@ -1,6 +1,7 @@
 import {AttributeData, GeometryData, LODRange} from "../loader/loaderTypes.ts";
 import {TypedArray} from "@gltf-transform/core";
 import {generateID} from "../../helpers/global.helper.ts";
+import {Hashes, ShaderDescriptor} from "../Material/Material.ts";
 
 type Descriptors = {
     layout: GPUBindGroupLayoutEntry[] | null,
@@ -14,14 +15,25 @@ export class Geometry {
     indexType: 'uint16' | 'uint32' | 'Unknown';
     indexCount: number | undefined = undefined;
     lodRanges: LODRange[] | undefined = undefined
-    hashes: { bindGroupLayout: number | null } = {bindGroupLayout: null};
+    hashes: Hashes = {
+        bindGroupLayout: {old: null, new: null},
+    }
     descriptors: Descriptors = {
         layout: null,
         bindGroup: null,
     }
-    bindGroup!: GPUBindGroup
 
-    constructor( geometryData: GeometryData) {
+    bindGroup!: GPUBindGroup
+    shaderDescriptor: ShaderDescriptor = {
+        bindings: [],
+        compileHints: [],
+        overrides: []
+    }
+    shaderCode: null | string = null
+
+
+
+    constructor(geometryData: GeometryData) {
         this.id = generateID();
         this.dataList = geometryData.dataList;
         this.indices = geometryData.indices;
@@ -30,7 +42,21 @@ export class Geometry {
         this.lodRanges = geometryData.lodRanges;
     }
 
-    setBindGroupLayoutHash(layout: number) {
-        this.hashes.bindGroupLayout = layout;
+    compileShader() {
+        if (!this.shaderCode) throw new Error("There is no shader code set on material");
+        this.shaderDescriptor.compileHints.forEach(hint => {
+            this.shaderCode = (this.shaderCode as any).replaceAll(`[[${hint.searchKeyword}]]`, hint.replaceKeyword)
+        })
     }
+
+    setHashes(key: keyof Hashes, value: number | null) {
+        const oldVal = this.hashes[key].new;
+        if (value !== oldVal) {
+            this.hashes[key] = {
+                new: value,
+                old: oldVal
+            }
+        }
+    }
+
 }

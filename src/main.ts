@@ -1,9 +1,6 @@
 import {RenderLayer} from "./layers/renderLayer.ts";
 import {GLTFLoader} from "./engine/loader/loader.ts";
-import {BaseLayer} from "./layers/baseLayer.ts";
-import {getStats, initWebGPU,} from "./helpers/global.helper.ts";
-import {HashGenerator} from "./engine/GPURenderSystem/Hasher/HashGenerator.ts";
-import {GPUCache} from "./engine/GPURenderSystem/GPUCache/GPUCache.ts";
+import {getStats, initWebGPU} from "./helpers/global.helper.ts";
 import {ModelRenderer} from "./renderers/modelRenderer.ts";
 
 import {Camera} from "./engine/camera/Camera.ts";
@@ -12,9 +9,10 @@ import {OrbitControls} from "./engine/camera/controls.ts";
 import {HDRLoader} from "./engine/environment/HDRLoader.ts";
 import {Pane} from "tweakpane";
 import {ToneMapping} from "./helpers/postProcessUtils/postProcessUtilsTypes.ts";
+import {mat3, quat} from "gl-matrix";
 
 
-const {device, canvas, ctx} = await initWebGPU()
+const {device, canvas, ctx, baseLayer} = await initWebGPU()
 const camera = new Camera({
     aspect: canvas.width / canvas.height,
     device,
@@ -25,23 +23,19 @@ const camera = new Camera({
 const controls = new OrbitControls(camera, document.documentElement)
 
 const stats = getStats()
-const baseLayer = new BaseLayer(device, canvas, ctx);
 const scene = new Scene(device, canvas, ctx, camera);
 baseLayer.setActiveScene(scene)
 
-const hasher = new HashGenerator()
-await hasher.init()
-const gpuCache = new GPUCache(device, canvas, ctx, hasher);
 
-const mainLayer = new RenderLayer(device, canvas, ctx, gpuCache)
+const mainLayer = new RenderLayer(device, canvas, ctx)
 const loader = new GLTFLoader()
-const {sceneObjects, nodeMap} = await loader.load("/e.glb", scene)
+const {sceneObjects, nodeMap,animations} = await loader.load("/e.glb", scene)
 
 const hdrLoader = new HDRLoader(device);
 const cubeMap = await hdrLoader.load("/e.hdr")
 
 scene.setToneMapping = ToneMapping.ACES
-await scene.backgroundManager.setBackground(gpuCache, [1], cubeMap, 1)
+await scene.backgroundManager.setBackground(cubeMap, 1)
 await scene.environmentManager.setEnvironment(cubeMap, 1024, 128, 32)
 
 scene.lightManager.addDirectional({
@@ -51,21 +45,19 @@ scene.lightManager.addDirectional({
 })
 
 const modelRenderer = new ModelRenderer({
-    gpuCache,
     scene
 });
-
+console.log(mat3.fromQuat(mat3.create(),quat.identity(quat.create())))
 window.addEventListener("resize", () => {
     camera.setAspect(canvas.width / canvas.height)
     camera.updateProjectionMatrix()
 })
 modelRenderer.setSceneObjects(sceneObjects)
-modelRenderer.setScale(15, 15, 15)
+modelRenderer.setScale(3,3,3)
 modelRenderer.setTranslation(0, 0, 0)
 modelRenderer.setNodeMap(nodeMap)
-modelRenderer.fillInitEntry()
 await modelRenderer.init()
-
+modelRenderer.animate(animations[0])
 const pane = new Pane();
 const paneElement = pane.element;
 paneElement.style.zIndex = "103";
@@ -81,6 +73,8 @@ pane.element.addEventListener("mouseover", () => {
 pane.element.addEventListener("mouseleave", () => {
     controls.enable()
 })
+
+
 const render = () => {
     const commandEncoder = device.createCommandEncoder()
     mainLayer.render(commandEncoder);

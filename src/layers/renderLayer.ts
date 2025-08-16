@@ -2,19 +2,16 @@ import {BaseLayer} from "./baseLayer.ts";
 // @ts-ignore
 import lodShader from "../shaders/builtin/lod.wgsl?raw"
 import {mat4, vec3} from "gl-matrix";
-import {GPUCache} from "../engine/GPURenderSystem/GPUCache/GPUCache.ts";
 import {Primitive} from "../engine/primitive/Primitive.ts";
 
 
 export class RenderLayer extends BaseLayer {
-    private gpuCache: GPUCache;
 
-    constructor(device: GPUDevice, canvas: HTMLCanvasElement, ctx: GPUCanvasContext, gpuCache: GPUCache) {
+    constructor(device: GPUDevice, canvas: HTMLCanvasElement, ctx: GPUCanvasContext) {
         super(device, canvas, ctx);
-        this.gpuCache = gpuCache;
     }
 
-    private buildRenderQueue(viewMatrix: mat4): Primitive[] {
+    private buildRenderQueue(viewMatrix: mat4) {
         const opaque: Primitive[] = [];
         const transparentWithDepth: { primitive: Primitive; depth: number }[] = [];
 
@@ -37,10 +34,10 @@ export class RenderLayer extends BaseLayer {
 
         RenderLayer.activeScene.renderQueue = {
             queue: finalQueue,
+            opaqueOnly: opaque,
             needsUpdate: false
         };
 
-        return finalQueue;
     }
 
 
@@ -52,12 +49,9 @@ export class RenderLayer extends BaseLayer {
             }
         })
 
-        RenderLayer.materialUpdateQueue.forEach(mat => {
-            this.gpuCache.changeMaterial(mat);
-        })
 
         RenderLayer.pipelineUpdateQueue.forEach(prim => {
-            this.gpuCache.changePipeline(prim);
+            BaseLayer.gpuCache.changePipeline(prim);
         })
 
         BaseLayer.materialUpdateQueue.clear()
@@ -74,11 +68,9 @@ export class RenderLayer extends BaseLayer {
 
         const sceneActiveCamera = RenderLayer.activeScene.getActiveCamera()
         const viewMatrix = sceneActiveCamera.getViewMatrix();
+        if (RenderLayer.activeScene.renderQueue.needsUpdate) this.buildRenderQueue(viewMatrix);
+        const primitives: Primitive[] = RenderLayer.activeScene.renderQueue.queue
 
-        const primitives: Primitive[] = RenderLayer.activeScene.renderQueue.needsUpdate ?
-            this.buildRenderQueue(viewMatrix) :
-            RenderLayer.activeScene.renderQueue.queue
-
-        RenderLayer.activeScene.update(commandEncoder, primitives)
+        RenderLayer.activeScene.update(commandEncoder, primitives, this.ctx.getCurrentTexture().createView(), BaseLayer.depthTexture.createView())
     }
 }

@@ -1,18 +1,25 @@
 import xxhash, {XXHashAPI} from 'xxhash-wasm';
 import {RenderState} from "../GPUCache/GPUCacheTypes.ts";
-import {TypedArray} from "@gltf-transform/core";
+import {MaterialInstance} from "../../Material/Material.ts";
+import {StandardMaterial, standardMaterialTextureInfo} from "../../Material/StandardMaterial.ts";
 
-export type HashCreationBindGroupEntry = (TypedArray | GPUBuffer | GPUTexture)[];
+type MatInfo = {
+    material: StandardMaterial,
+    textureKey: keyof standardMaterialTextureInfo,
+    data: Uint8Array,
+    dimensions: [number, number]
+}
 
 export class HashGenerator {
     private static hasher: XXHashAPI;
     private static textEncoder: TextEncoder;
-
-    private bindGroupEntriesHashCache = new WeakMap<TypedArray | GPUBuffer | GPUTexture, number>();
-    private bindGroupHashCache = new Map<string, number>();
+    private textureId = 0;
+    textureHashCache = new WeakMap<Uint8Array, number>();
+    textureHashToData = new Map<number, Uint8Array>();
+    hashToRequests = new Map<number, Set<MaterialInstance>>();
+    sharedTextureHashes = new Map<string, Set<number>[]>()
     private shaderHashCache = new Map<string, number>();
     private bindGroupLayoutHashCache = new Map<string, number>();
-    private samplerHashCache = new Map<string, number>();
     private pipelineLayoutHashCache = new Map<string, number>();
     private pipelineHashCache = new Map<string, number>();
 
@@ -22,33 +29,54 @@ export class HashGenerator {
         HashGenerator.textEncoder = new TextEncoder();
     }
 
-    private encodeSampler(desc: GPUSamplerDescriptor): string {
-        return [
-            desc?.addressModeU ?? "none",
-            desc?.addressModeV ?? "none",
-            desc?.addressModeW ?? "none",
-            desc?.magFilter ?? "none",
-            desc?.minFilter ?? "none",
-            desc?.mipmapFilter ?? "none",
-            desc?.lodMinClamp?.toFixed(4) ?? "0.0000",
-            desc?.lodMaxClamp?.toFixed(4) ?? "32.0000",
-            desc?.compare ?? "none",
-            desc?.maxAnisotropy ?? 1
-        ].join("-");
-    }
-
-
-    public hashSampler(desc: GPUSamplerDescriptor) {
-        const key = this.encodeSampler(desc);
-
-        if (this.samplerHashCache.has(key)) {
-            return this.samplerHashCache.get(key)!;
+    hashTexture(data: Uint8Array) {
+        if (!this.textureHashCache.has(data)) {
+            this.textureId++
+            this.textureHashCache.set(data,this.textureId)
+            this.textureHashToData.set(this.textureId, data)
+            return this.textureId
         }
 
-        const hash = HashGenerator.hasher.h32(key);
-        this.samplerHashCache.set(key, hash);
-        return hash;
+        return this.textureHashCache.get(data)!;
     }
+
+    setTextureHashGraph(matInfo: MatInfo) {
+        const hash = this.hashTexture(matInfo.data);
+        matInfo.material.textureInfo[matInfo.textureKey].hash = hash;
+        if (this.hashToRequests.has(hash)) {
+            const item = this.hashToRequests.get(hash)!;
+            item.add(matInfo.material)
+            if (item.size > 1) {
+
+                const sharedTexturesCategory = this.sharedTextureHashes.get(`${matInfo.dimensions[0]}_${matInfo.dimensions[1]}`)
+                if (sharedTexturesCategory) {
+                    if (sharedTexturesCategory[sharedTexturesCategory.length - 1].size < 50) {
+
+                        item.forEach(mat => mat.textureInfo[matInfo.textureKey].shareInfo = {
+                            arrayIndex: sharedTexturesCategory.length - 1,
+                            dimension: `${matInfo.dimensions[0]}_${matInfo.dimensions[1]}`,
+                        })
+                        sharedTexturesCategory[sharedTexturesCategory.length - 1].add(hash)
+                    } else {
+                        item.forEach(mat => mat.textureInfo[matInfo.textureKey].shareInfo = {
+                            arrayIndex: 0,
+                            dimension: `${matInfo.dimensions[0]}_${matInfo.dimensions[1]}`,
+                        })
+                        sharedTexturesCategory.push(new Set<number>([hash]))
+                    }
+                } else {
+                    this.sharedTextureHashes.set(`${matInfo.dimensions[0]}_${matInfo.dimensions[1]}`, [new Set<number>([hash])])
+                    item.forEach(mat => mat.textureInfo[matInfo.textureKey].shareInfo = {
+                        arrayIndex: 0,
+                        dimension: `${matInfo.dimensions[0]}_${matInfo.dimensions[1]}`,
+                    })
+                }
+            }
+        } else {
+            this.hashToRequests.set(hash, new Set<MaterialInstance>([matInfo.material]))
+        }
+    }
+
 
     public hashShaderModule(shaderCode: string): number {
         if (this.shaderHashCache.has(shaderCode)) {
@@ -58,20 +86,6 @@ export class HashGenerator {
         const encoded = HashGenerator.textEncoder.encode(shaderCode);
         const hash = HashGenerator.hasher.h32Raw(encoded);
         this.shaderHashCache.set(shaderCode, hash);
-        return hash;
-    }
-
-    public hashBindGroup(entries: HashCreationBindGroupEntry): number {
-        const key = entries.map(entry => {
-            const hash = Math.random()
-            this.bindGroupEntriesHashCache.set(entry, hash)
-            return hash
-        }).join("|");
-        if (this.bindGroupHashCache.has(key)) {
-            return this.bindGroupHashCache.get(key)!;
-        }
-        const hash = HashGenerator.hasher.h32(key);
-        this.bindGroupHashCache.set(key, hash);
         return hash;
     }
 

@@ -1,96 +1,74 @@
 import {Material as MaterialClass} from "./Material.ts";
-import {extractMaterial} from "../../helpers/global.helper.ts";
-import {
-    RenderFlag,
-    StandardMaterialBindPoint,
-    StandardMaterialFactorsStartPoint
-} from "../GPURenderSystem/MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
 import {Material} from "@gltf-transform/core";
-import {
-    MaterialDescriptorGenerator
-} from "../GPURenderSystem/MaterialDescriptorGenerator/MaterialDescriptorGenerator.ts";
-import {BaseLayer} from "../../layers/baseLayer.ts";
+import {StandardMaterialExtractor} from "./standardMaterialExtractor.ts";
+import {BaseBindGroupEntryCreationType} from "../GPURenderSystem/GPUCache/GPUCacheTypes.ts";
+
+
+export type matTextureInfo = {
+    hash: number | null,
+    dimension: [number, number] | null,
+    shareInfo: {
+        arrayIndex: number,
+        dimension: string,
+    } | null,
+    textureReference: GPUTexture | null
+}
+export type standardMaterialTextureInfo = {
+    albedo: matTextureInfo,
+    emissive: matTextureInfo,
+    ambient_occlusion: matTextureInfo,
+    metallic_roughness: matTextureInfo,
+    normal: matTextureInfo,
+    sheen_color: matTextureInfo,
+    sheen_roughness: matTextureInfo,
+    clearcoat: matTextureInfo,
+    clearcoat_normal: matTextureInfo,
+    clearcoat_roughness: matTextureInfo,
+    transmission: matTextureInfo,
+    specular: matTextureInfo,
+    specular_color: matTextureInfo,
+    thickness: matTextureInfo,
+    iridescence: matTextureInfo,
+    iridescence_thickness: matTextureInfo,
+    diffuse_transmission: matTextureInfo,
+    diffuse_transmission_color: matTextureInfo,
+    anisotropy: matTextureInfo,
+}
 
 export class StandardMaterial extends MaterialClass {
+    descriptor: {
+        bindGroupEntries: BaseBindGroupEntryCreationType[],
+        layoutEntries: GPUBindGroupLayoutEntry[]
+    } = {bindGroupEntries: [], layoutEntries: []}
+
+    textureInfo: standardMaterialTextureInfo = {
+        albedo: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        emissive: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        ambient_occlusion: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        metallic_roughness: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        normal: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        clearcoat_roughness: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        clearcoat_normal: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        clearcoat: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        sheen_roughness: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        sheen_color: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        specular: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        specular_color: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        thickness: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        transmission: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        iridescence: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        iridescence_thickness: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        diffuse_transmission: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        diffuse_transmission_color: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        anisotropy: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+    }
 
 
-    constructor(material: Material | null) {
-        super();
+    init(material: Material | null) {
         this.name = material?.getName() ?? "Default"
+
         if (material) {
-            this.textureDataMap = extractMaterial(material)
-            this.workFlow = Boolean(this.textureDataMap.get(RenderFlag.PBR_SPECULAR)) ? "specular_glossiness" : "metallic_roughness"
-            this.alpha = {
-                mode: material.getAlphaMode(),
-                cutoff: material.getAlphaCutoff()
-            }
-            this.isDoubleSided = material.getDoubleSided()
-            this.isTransparent = material.getAlphaMode() === "BLEND"
-        } else {
-            this.textureDataMap.set(RenderFlag.BASE_COLOR, {
-                texture: null,
-                factor: [1, 1, 1, 1],
-                factorStartPoint: StandardMaterialFactorsStartPoint.BASE_COLOR,
-                bindPoint: StandardMaterialBindPoint.BASE_COLOR
-            })
-            const metallicRoughness = {
-                texture: null,
-                factor: [0, 0],
-                factorStartPoint: StandardMaterialFactorsStartPoint.METALLIC,
-                bindPoint: StandardMaterialBindPoint.METALLIC
-            }
-            this.textureDataMap.set(RenderFlag.METALLIC, metallicRoughness)
-            this.textureDataMap.set(RenderFlag.ROUGHNESS, metallicRoughness)
-            this.textureDataMap.set(RenderFlag.OCCLUSION, {
-                texture: null,
-                factor: 1,
-                factorStartPoint: StandardMaterialFactorsStartPoint.OCCLUSION,
-                bindPoint: StandardMaterialBindPoint.OCCLUSION
-            })
-            this.textureDataMap.set(RenderFlag.EMISSIVE, {
-                texture: null,
-                factor: [0, 0, 0],
-                bindPoint: StandardMaterialBindPoint.EMISSIVE,
-                factorStartPoint: StandardMaterialFactorsStartPoint.EMISSIVE
-            })
-        }
-    }
-
-    setBaseColorFactor(newValue: [number, number, number, number]) {
-        const factors = this.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.FACTORS]) as (GPUBuffer | undefined)
-        if (!factors) throw new Error("factors does not exist on resources");
-
-
-        BaseLayer.device.queue.writeBuffer(factors, StandardMaterialFactorsStartPoint.BASE_COLOR * 4, new Float32Array(newValue));
-    }
-
-    setMetallicFactor(newValue: number) {
-        const factors = this.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.FACTORS]) as (GPUBuffer | undefined)
-        if (!factors) throw new Error("factors does not exist on resources");
-
-
-        const singleFloat = new Float32Array([newValue]);
-
-        BaseLayer.device.queue.writeBuffer(factors, StandardMaterialFactorsStartPoint.METALLIC * 4, singleFloat);
-    }
-
-    setRoughnessFactor(newValue: number) {
-        const factors = this.resources.get(StandardMaterialBindPoint[StandardMaterialBindPoint.FACTORS]) as (GPUBuffer | undefined)
-        if (!factors) throw new Error("factors does not exist on resources");
-
-
-        const singleFloat = new Float32Array([newValue]);
-
-        BaseLayer.device.queue.writeBuffer(factors, (StandardMaterialFactorsStartPoint.ROUGHNESS) * 4, singleFloat);
-    }
-
-    initDescriptor(materialBindGroupGenerator: MaterialDescriptorGenerator) {
-        const {entries, hashEntries, layout, sampler} = materialBindGroupGenerator.getTechniqueBindGroup(this);
-        this.descriptor = {
-            entries,
-            hashEntries,
-            layout,
-            sampler
+            new StandardMaterialExtractor().extractMaterial(this, material)
         }
     }
 }

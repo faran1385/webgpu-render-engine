@@ -58,6 +58,7 @@ export class GLTFLoader {
             nodeToSceneObject.set(node, sceneObject);
             sceneObjects.add(sceneObject);
         }
+        materialMap.forEach((matClass,mat)=>matClass.init(mat))
 
         for (const node of root.listNodes()) {
             const sceneObject = nodeToSceneObject.get(node);
@@ -135,7 +136,7 @@ export class GLTFLoader {
             primitive.setGeometry(geometry)
             const alreadyExists = materialMap.get(prim.getMaterial())
             if (!alreadyExists) {
-                materialMap.set(prim.getMaterial(), new StandardMaterial(prim.getMaterial()))
+                materialMap.set(prim.getMaterial(), new StandardMaterial())
             }
 
             prims.push([primitive, prim.getMaterial()])

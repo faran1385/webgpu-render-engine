@@ -5,7 +5,6 @@ import {mat3, mat4} from "gl-matrix";
 import {Geometry} from "../geometry/Geometry.ts";
 import {generateID} from "../../helpers/global.helper.ts";
 import {SceneObject} from "../sceneObject/sceneObject.ts";
-import {GPUCache} from "../GPURenderSystem/GPUCache/GPUCache.ts";
 import {ToneMapping} from "../../helpers/postProcessUtils/postProcessUtilsTypes.ts";
 import {MaterialInstance} from "../Material/Material.ts";
 import {BaseLayer} from "../../layers/baseLayer.ts";
@@ -13,12 +12,12 @@ import {BaseLayer} from "../../layers/baseLayer.ts";
 export type Side = "front" | "back" | "none"
 
 export type PrimitiveHashes = {
-    shader: number,
-    materialBindGroup: number,
-    materialBindGroupLayout: number,
+    shader: {
+        vertex: number,
+        fragment: number,
+    },
     pipeline: number,
     pipelineLayout: number,
-    samplerHash: number | null
 }
 
 
@@ -84,7 +83,9 @@ export class Primitive {
         this.pipelineDescriptors.set(side, pipelineDescriptor);
     }
 
-    setPipeline(side: Side, pipeline: GPURenderPipeline) {
+    setPipeline(side: Side) {
+        const hashes=this.primitiveHashes.get(side)!
+        const pipeline = (BaseLayer.gpuCache.getResource(`${hashes.pipelineLayout}${hashes.shader.fragment}${hashes.shader.vertex}${hashes.pipeline}`, "pipelineMap") as any).pipeline as GPURenderPipeline
         this.pipelines.set(side, pipeline);
     }
 
@@ -104,16 +105,4 @@ export class Primitive {
         this.sceneObject = sceneObject;
     }
 
-    setRenderSetup(gpuCache: GPUCache, side: Side) {
-        const hashes = this.primitiveHashes.get(side)!;
-        const setup = gpuCache.getRenderSetup(
-            hashes.pipeline,
-            hashes.pipelineLayout,
-            hashes.materialBindGroup,
-            this.geometry.hashes.bindGroupLayout!,
-            hashes.shader
-        )
-        this.setPipeline(side, setup.pipeline)
-        this.material.bindGroup = setup.materialBindGroup;
-    }
 }

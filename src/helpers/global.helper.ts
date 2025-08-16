@@ -1,16 +1,9 @@
 import {mat3, mat4, vec3} from "gl-matrix";
 // @ts-ignore
 import Stats from 'stats-js';
-import {MaterialInstance, TextureData} from "../engine/Material/Material.ts"
-import {Material, TypedArray, vec2} from "@gltf-transform/core";
-import {Anisotropy, Clearcoat, PBRSpecularGlossiness, Specular, Transmission} from "@gltf-transform/extensions";
-import {
-    RenderFlag,
-    StandardMaterialBindPoint,
-    StandardMaterialFactorsStartPoint
-} from "../engine/GPURenderSystem/MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
+import {MaterialInstance} from "../engine/Material/Material.ts"
+import {TypedArray} from "@gltf-transform/core";
 import {Primitive, PrimitiveHashes} from "../engine/primitive/Primitive.ts";
-import {GPUCache} from "../engine/GPURenderSystem/GPUCache/GPUCache.ts";
 import {BaseLayer} from "../layers/baseLayer.ts";
 import {ComputeManager} from "../engine/computation/computeManager.ts";
 import {StandardMaterial} from "../engine/Material/StandardMaterial.ts";
@@ -19,11 +12,12 @@ export function createGPUBuffer(
     device: GPUDevice,
     data: TypedArray,
     usage: GPUBufferUsageFlags,
-    label: string
+    label: string,
+    sizeInBytes: number | undefined = undefined
 ): GPUBuffer {
 
     const buffer = device.createBuffer({
-        size: (data as TypedArray).byteLength,
+        size: sizeInBytes ?? (data as TypedArray).byteLength,
         label,
         usage: GPUBufferUsage.COPY_DST | usage,
     });
@@ -108,36 +102,15 @@ export const initWebGPU = async () => {
         format: navigator.gpu.getPreferredCanvasFormat(),
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
     })
-
-    return {ctx, device, canvas}
+    const baseLayer = new BaseLayer(device, canvas, ctx);
+    await baseLayer.initialize()
+    return {ctx, device, canvas, baseLayer}
 }
 
 export const updateBuffer = (device: GPUDevice, buffer: GPUBuffer, data: TypedArray | mat4 | vec3) => {
     device.queue.writeBuffer(buffer, 0, data as TypedArray)
 }
 
-export const getTextureFromData = async (device: GPUDevice, size: vec2 | vec3, data: TypedArray, format: GPUTextureFormat) => {
-
-    const imageBitmap = await createImageBitmap(new Blob([data]));
-    const texture = device.createTexture({
-        size: [...size],
-        usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
-        textureBindingViewDimension: "2d",
-        format: format,
-    })
-    device.queue.copyExternalImageToTexture(
-        {source: imageBitmap},
-        {texture: texture},
-        size
-    );
-
-
-    return texture;
-}
-
-export const convertAlphaMode = (mode: "BLEND" | "MASK" | "OPAQUE") => {
-    return mode === "OPAQUE" ? 0 : mode === "BLEND" ? 1 : 2
-}
 
 let nextID = 0;
 
@@ -145,265 +118,36 @@ export function generateID() {
     return nextID++;
 }
 
-export function extractExtensions(material: Material) {
-    const extensionMap = new Map<RenderFlag, {
-        texture: {
-            data: TypedArray,
-            size: vec2
-        } | null,
-        factor: number | number[],
-        bindPoint: number,
-        factorStartPoint: number,
-    }>();
-
-    material.listExtensions().forEach((extension) => {
-        if (extension instanceof PBRSpecularGlossiness) {
-            const diffuseTexture = extension.getDiffuseTexture();
-            const specularGlossinessTexture = extension.getSpecularGlossinessTexture();
-
-            extensionMap.set(RenderFlag.DIFFUSE, {
-                texture: diffuseTexture ? {
-                    size: diffuseTexture.getSize()!,
-                    data: diffuseTexture.getImage()!
-                } : null,
-                factor: extension.getDiffuseFactor(),
-                bindPoint: StandardMaterialBindPoint.DIFFUSE,
-                factorStartPoint: StandardMaterialFactorsStartPoint.DIFFUSE,
-            })
-
-            extensionMap.set(RenderFlag.PBR_GLOSSINESS, {
-                texture: specularGlossinessTexture ? {
-                    size: specularGlossinessTexture.getSize()!,
-                    data: specularGlossinessTexture.getImage()!
-                } : null,
-                factor: extension.getGlossinessFactor(),
-                bindPoint: StandardMaterialBindPoint.PBR_GLOSSINESS,
-                factorStartPoint: StandardMaterialFactorsStartPoint.PBR_GLOSSINESS,
-            })
-
-            extensionMap.set(RenderFlag.PBR_SPECULAR, {
-                texture: specularGlossinessTexture ? {
-                    size: specularGlossinessTexture.getSize()!,
-                    data: specularGlossinessTexture.getImage()!
-                } : null,
-                factor: extension.getSpecularFactor(),
-                bindPoint: StandardMaterialBindPoint.PBR_SPECULAR,
-                factorStartPoint: StandardMaterialFactorsStartPoint.PBR_SPECULAR,
-            })
-
-        } else if (extension instanceof Specular) {
-            const specularTexture = extension.getSpecularTexture();
-            const specularColorTexture = extension.getSpecularColorTexture();
-
-            extensionMap.set(RenderFlag.SPECULAR, {
-                texture: specularTexture ? {
-                    size: specularTexture.getSize()!,
-                    data: specularTexture.getImage()!
-                } : null,
-                factor: extension.getSpecularFactor(),
-                bindPoint: StandardMaterialBindPoint.SPECULAR,
-                factorStartPoint: StandardMaterialFactorsStartPoint.SPECULAR,
-            })
-
-            extensionMap.set(RenderFlag.SPECULAR_COLOR, {
-                texture: specularColorTexture ? {
-                    size: specularColorTexture.getSize()!,
-                    data: specularColorTexture.getImage()!
-                } : null,
-                factor: extension.getSpecularColorFactor(),
-                bindPoint: StandardMaterialBindPoint.SPECULAR_COLOR,
-                factorStartPoint: StandardMaterialFactorsStartPoint.SPECULAR_COLOR,
-            })
-        } else if (extension instanceof Transmission) {
-            const transmissionTexture = extension.getTransmissionTexture();
-
-            extensionMap.set(RenderFlag.TRANSMISSION, {
-                texture: transmissionTexture ? {
-                    size: transmissionTexture.getSize()!,
-                    data: transmissionTexture.getImage()!
-                } : null,
-                factor: extension.getTransmissionFactor(),
-                bindPoint: StandardMaterialBindPoint.TRANSMISSION,
-                factorStartPoint: StandardMaterialFactorsStartPoint.TRANSMISSION,
-
-            })
-
-        } else if (extension instanceof Clearcoat && extension.getClearcoatFactor() !== 0) {
-            const clearcoatTexture = extension.getClearcoatTexture();
-
-            extensionMap.set(RenderFlag.CLEARCOAT, {
-                texture: clearcoatTexture ? {
-                    size: clearcoatTexture.getSize()!,
-                    data: clearcoatTexture.getImage()!
-                } : null,
-                factor: extension.getClearcoatFactor(),
-                bindPoint: StandardMaterialBindPoint.CLEARCOAT,
-                factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT,
-            })
-
-
-            const clearcoatRoughnessTexture = extension.getClearcoatRoughnessTexture();
-
-            extensionMap.set(RenderFlag.CLEARCOAT_ROUGHNESS, {
-                texture: clearcoatRoughnessTexture ? {
-                    size: clearcoatRoughnessTexture.getSize()!,
-                    data: clearcoatRoughnessTexture.getImage()!
-                } : null,
-                factor: extension.getClearcoatRoughnessFactor(),
-                bindPoint: StandardMaterialBindPoint.CLEARCOAT_ROUGHNESS,
-                factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT_ROUGHNESS,
-            })
-
-            const clearcoatNormalTexture = extension.getClearcoatNormalTexture();
-
-            extensionMap.set(RenderFlag.CLEARCOAT_NORMAL, {
-                texture: clearcoatNormalTexture ? {
-                    size: clearcoatNormalTexture.getSize()!,
-                    data: clearcoatNormalTexture.getImage()!
-                } : null,
-                factor: extension.getClearcoatNormalScale(),
-                bindPoint: StandardMaterialBindPoint.CLEARCOAT_NORMAL,
-                factorStartPoint: StandardMaterialFactorsStartPoint.CLEARCOAT_NORMAL,
-            })
-        } else if (extension instanceof Anisotropy) {
-            const anisotropyTexture = extension.getAnisotropyTexture();
-            extensionMap.set(RenderFlag.ANISOTROPY, {
-                texture: anisotropyTexture ? {
-                    size: anisotropyTexture.getSize()!,
-                    data: anisotropyTexture.getImage()!
-                } : null,
-                factor: [extension.getAnisotropyStrength(),Math.cos(extension.getAnisotropyRotation()),Math.sin(extension.getAnisotropyRotation())],
-                bindPoint: StandardMaterialBindPoint.ANISOTROPY,
-                factorStartPoint: StandardMaterialFactorsStartPoint.ANISOTROPY,
-            })
-        }
-
-    })
-
-    return extensionMap;
-}
 
 export function isLightDependentMaterial(material: MaterialInstance) {
     return material instanceof StandardMaterial
 }
 
-export function needsSampler(map: Map<RenderFlag, TextureData>) {
-    return Array.from(map).some(([_, value]) => value.texture)
-}
 
-export function extractMaterial(material: Material) {
-
-    const dataMap = new Map<RenderFlag, TextureData>()
-
-    const baseColor = material.getBaseColorTexture();
-
-    const baseColorData = {
-        texture: baseColor
-            ? {
-                data: baseColor.getImage() as TypedArray,
-                size: baseColor.getSize() as [number, number]
-            }
-            : null,
-        factor: material.getBaseColorFactor(),
-        bindPoint: StandardMaterialBindPoint.BASE_COLOR,
-        factorStartPoint: StandardMaterialFactorsStartPoint.BASE_COLOR
+export async function hashAndCreateRenderSetup(
+    computeManager: ComputeManager,
+    materials: MaterialInstance[],
+    primitives: Primitive[],
+    isBindGroupLayoutAlreadySet: undefined | true = undefined
+) {
+    const geometryLayoutHashes = BaseLayer.gpuCache.createGeometryLayoutHashes(primitives)
+    if(!isBindGroupLayoutAlreadySet){
+        materials.forEach(mat => {
+            const hash = BaseLayer.hasher.hashBindGroupLayout(mat.descriptor.layoutEntries)
+            BaseLayer.gpuCache.appendBindGroupLayout(mat.descriptor.layoutEntries,
+                hash,
+                Array.from(mat.primitives)
+            )
+            mat.setHashes("bindGroupLayout", hash)
+            mat.bindGroupLayout = (BaseLayer.gpuCache.getResource(hash, "bindGroupLayoutMap") as any).layout as any
+        })
     }
-    dataMap.set(RenderFlag.BASE_COLOR, baseColorData);
-    dataMap.set(RenderFlag.OPACITY, baseColorData);
-    const mrTexture = material.getMetallicRoughnessTexture();
-
-    dataMap.set(RenderFlag.METALLIC, {
-        texture: mrTexture
-            ? {
-                data: mrTexture.getImage() as TypedArray,
-                size: mrTexture.getSize() as [number, number]
-            }
-            : null,
-        factor: [material.getMetallicFactor()],
-        bindPoint: StandardMaterialBindPoint.METALLIC,
-        factorStartPoint: StandardMaterialFactorsStartPoint.METALLIC
-    });
-
-    dataMap.set(RenderFlag.ROUGHNESS, {
-        texture: mrTexture
-            ? {
-                data: mrTexture.getImage() as TypedArray,
-                size: mrTexture.getSize() as [number, number]
-            }
-            : null,
-        factor: [material.getRoughnessFactor()],
-        bindPoint: StandardMaterialBindPoint.ROUGHNESS,
-        factorStartPoint: StandardMaterialFactorsStartPoint.ROUGHNESS
-    });
-
-    const normalTex = material.getNormalTexture();
-    dataMap.set(RenderFlag.NORMAL, {
-        texture: normalTex
-            ? {
-                data: normalTex.getImage() as TypedArray,
-                size: normalTex.getSize() as [number, number]
-            }
-            : null,
-        factor: material.getNormalScale(),
-        bindPoint: StandardMaterialBindPoint.NORMAL,
-        factorStartPoint: StandardMaterialFactorsStartPoint.NORMAL
-    });
-
-    const occTex = material.getOcclusionTexture();
-    dataMap.set(RenderFlag.OCCLUSION, {
-        texture: occTex
-            ? {
-                data: occTex.getImage() as TypedArray,
-                size: occTex.getSize() as [number, number]
-            }
-            : null,
-        factor: material.getOcclusionStrength(),
-        bindPoint: StandardMaterialBindPoint.OCCLUSION,
-        factorStartPoint: StandardMaterialFactorsStartPoint.OCCLUSION
-    });
-
-    const emissiveTex = material.getEmissiveTexture();
-    dataMap.set(RenderFlag.EMISSIVE, {
-        texture: emissiveTex
-            ? {
-                data: emissiveTex.getImage() as TypedArray,
-                size: emissiveTex.getSize() as [number, number]
-            }
-            : null,
-        factor: material.getEmissiveFactor(),
-        bindPoint: StandardMaterialBindPoint.EMISSIVE,
-        factorStartPoint: StandardMaterialFactorsStartPoint.EMISSIVE
-    });
-
-    /// EXTENSION DEFAULT FACTORS
-    dataMap.set(RenderFlag.SPECULAR, {
-        texture: null,
-        factor: .04,
-        bindPoint: StandardMaterialBindPoint.SPECULAR,
-        factorStartPoint: StandardMaterialFactorsStartPoint.SPECULAR
-    });
-
-    dataMap.set(RenderFlag.SPECULAR_COLOR, {
-        texture: null,
-        factor: [1, 1, 1],
-        bindPoint: StandardMaterialBindPoint.SPECULAR_COLOR,
-        factorStartPoint: StandardMaterialFactorsStartPoint.SPECULAR_COLOR
-    });
-
-    const extensions = extractExtensions(material)
-    extensions.forEach((value, key) => {
-        dataMap.set(key, value);
-    })
-    return dataMap
-}
-
-export async function hashAndCreateRenderSetup(computeManager: ComputeManager, gpuCache: GPUCache, materials: MaterialInstance[], primitives: Primitive[]) {
-    const geometryLayoutHashes = gpuCache.createGeometryLayoutHashes(primitives)
-    const materialHashes = await gpuCache.createMaterialHashes(materials)
-    const shaderCodesHashes = gpuCache.createShaderCodeHashes(primitives)
-    const pipelineLayoutsHashes = gpuCache.createPipelineLayoutHashes(primitives, materialHashes, geometryLayoutHashes)
-    const pipelineHashes = gpuCache.createPipelineHashes(shaderCodesHashes, pipelineLayoutsHashes)
-    const geometryBindGroupMaps = gpuCache.createGeometryBindGroupMaps(primitives)
+    await BaseLayer.gpuCache.createMaterialHashes(materials)
+    materials.forEach(mat => mat.compileShader())
+    const shaderCodesHashes = BaseLayer.gpuCache.createShaderCodeHashes(primitives)
+    const pipelineLayoutsHashes = BaseLayer.gpuCache.createPipelineLayoutHashes(primitives, geometryLayoutHashes)
+    const pipelineHashes = BaseLayer.gpuCache.createPipelineHashes(shaderCodesHashes, pipelineLayoutsHashes)
+    const geometryBindGroupMaps = BaseLayer.gpuCache.createGeometryBindGroupMaps(primitives)
     const primitiveMap = new Map<number, Primitive>();
     pipelineHashes.forEach((pipelineHash, key) => {
         const {side, id: primitiveId} = unpackPrimitiveKey(key)
@@ -411,19 +155,17 @@ export async function hashAndCreateRenderSetup(computeManager: ComputeManager, g
         primitiveMap.set(primitiveId, pipelineLayout.primitive)
 
 
-        const {bindGroup: materialBindGroupHash, layout: materialBindGroupLayoutHash} = materialHashes.get(primitiveId)!
-
         const shaderCodeHash = shaderCodesHashes.get(primitiveId)!
         if (!pipelineLayout) throw new Error("pipelineLayout is not set")
         const primitive = pipelineLayout?.primitive!
 
         const primitiveHashes: PrimitiveHashes = {
-            shader: shaderCodeHash,
-            materialBindGroup: materialBindGroupHash,
-            materialBindGroupLayout: materialBindGroupLayoutHash,
+            shader: {
+                vertex: shaderCodeHash[1],
+                fragment: shaderCodeHash[0],
+            },
             pipeline: pipelineHash,
             pipelineLayout: pipelineLayout.hash,
-            samplerHash: primitive.material.hashes.sampler.new
         }
 
         primitive.setPrimitiveHashes(primitiveHashes, side!)
@@ -433,7 +175,7 @@ export async function hashAndCreateRenderSetup(computeManager: ComputeManager, g
         const geometryEntries = geometryBindGroupMaps.get(primitive.id)
         const geometryLayoutHash = geometryLayoutHashes.get(primitive.id)!
         if (!geometryEntries) throw new Error(`Primitive with id ${primitive.id} has no bindGroup descriptor set on geometry`)
-        let {layout: geometryBindGroupLayout} = gpuCache.getResource(geometryLayoutHash, "bindGroupLayoutMap") as any
+        let {layout: geometryBindGroupLayout} = BaseLayer.gpuCache.getResource(geometryLayoutHash, "bindGroupLayoutMap") as any
 
         primitive.geometry.bindGroup = BaseLayer.device.createBindGroup({
             entries: geometryEntries,
@@ -456,7 +198,7 @@ export async function hashAndCreateRenderSetup(computeManager: ComputeManager, g
         }
         computeManager.setIndirect(primitive.sceneObject)
         primitive.sides.forEach((side) => {
-            primitive.setRenderSetup(gpuCache, side)
+            primitive.setPipeline(side)
         })
     })
 }

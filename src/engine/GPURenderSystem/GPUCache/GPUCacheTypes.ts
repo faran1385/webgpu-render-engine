@@ -1,47 +1,39 @@
-import {TypedArray, vec2} from "@gltf-transform/core";
-import {vec3} from "gl-matrix";
-import {MaterialInstance} from "../../Material/Material.ts"
-import {RenderFlag} from "../MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
+import {TypedArray,} from "@gltf-transform/core";
+import {standardMaterialTextureInfo} from "../../Material/StandardMaterial.ts";
 
-export type bufferConvertFunc = (device: GPUDevice, data: TypedArray, usage: GPUBufferUsageFlags, label: string) => GPUBuffer
-export type textureConvertFunc = (device: GPUDevice, size: vec2 | vec3, data: TypedArray, format: GPUTextureFormat) => Promise<GPUTexture>
 export type BaseBindGroupEntryCreationType = {
+    buffer?: GPUBuffer,
+    sampler?: GPUSampler,
+    bindingPoint: number,
     textureDescriptor?: {
         texture: GPUTexture,
         viewDescriptor: GPUTextureViewDescriptor
     },
-    buffer?: GPUBuffer,
-    sampler?: number,
-    bindingPoint: number,
-    materialResourcesKey?: string
+    additional?: {
+        textureArray?: {
+            textureMap: Map<number, (keyof standardMaterialTextureInfo)[]>
+            size: [number, number],
+        },
+        resourcesKey?: string
+        typedArray?: (TextureTypedArray | BufferTypedArray),
+        samplerDescriptor?: GPUSamplerDescriptor
+    }
 }
 
 
-export type BindGroupEntryCreationType = BaseBindGroupEntryCreationType & {
-    typedArray?: {
-        conversion: bufferConvertFunc | textureConvertFunc,
-        data: TypedArray,
-    } & ({
-        conversionType: "texture",
-        size: vec2 | vec3
-        format: GPUTextureFormat,
-        renderFlag: RenderFlag
-    } | {
-        conversionType: "buffer",
-        label: string,
-        usage: GPUBufferUsageFlags,
-    })
+export type TextureTypedArray = {
+    format: GPUTextureFormat,
+    size: { width: number; height: number; },
+    data: Uint8Array
+    convertType: "texture"
+}
+export type BufferTypedArray = {
+    data: TypedArray,
+    label: string,
+    usage: GPUBufferUsageFlags,
+    convertType: "buffer"
 }
 
-export type CreateBindGroupEntry = {
-    layoutList: Map<number, {
-        layout: GPUBindGroupLayout,
-        primitives: Set<number>
-    }>,
-    layoutHash: number,
-    bindGroupHash: number
-    material: MaterialInstance,
-}
 export type RenderState = {
     primitive: GPUPrimitiveState,
     targets: GPUColorTargetState[]

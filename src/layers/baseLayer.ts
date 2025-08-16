@@ -8,13 +8,18 @@ import {Scene} from "../engine/scene/Scene.ts";
 import frustumComputeShader from "../shaders/builtin/frustomCulling.wgsl?raw"
 import {MaterialInstance} from "../engine/Material/Material.ts";
 import {Primitive} from "../engine/primitive/Primitive.ts";
+import {HashGenerator} from "../engine/GPURenderSystem/Hasher/HashGenerator.ts";
+import {GPUCache} from "../engine/GPURenderSystem/GPUCache/GPUCache.ts";
 
 export class BaseLayer {
     // base
     public readonly ctx: GPUCanvasContext;
-    private static _format: GPUTextureFormat;
+    static format: GPUTextureFormat;
     public readonly canvas: HTMLCanvasElement;
     public static device: GPUDevice;
+    public static hasher: HashGenerator;
+    public static gpuCache: GPUCache;
+
 
     // global data
     private static _timeBuffer: GPUBuffer;
@@ -22,7 +27,6 @@ export class BaseLayer {
     private static _deltaBuffer: GPUBuffer;
     private static _lastFrameTime: number;
     private static _depthTexture: GPUTexture;
-    protected static globalBindGroupLayout: GPUBindGroupLayout;
     protected static activeScene: Scene;
     protected static frustumFixedComputeSetup: {
         shaderModule: GPUShaderModule,
@@ -34,45 +38,40 @@ export class BaseLayer {
         pipeline: GPUComputePipeline,
         bindGroupLayout: GPUBindGroupLayout
     }
-    // global textures
-    private static _brdfLUTTexture: GPUTexture | null = null;
-    private static _dummyEnvTextures: {
+    // global resources
+    static ggxBRDFLUTTexture: GPUTexture | null = null;
+    private static _dummyTextures: {
         irradiance: GPUTexture;
         prefiltered: GPUTexture;
         brdfLut: GPUTexture;
+        pbr: GPUTexture;
     }
-    private static _iblSampler: GPUSampler;
+    private static _samplers: {
+        ibl: GPUSampler,
+        default: GPUSampler
+    };
+    static bindGroupLayouts: {
+        globalBindGroupLayout: GPUBindGroupLayout;
+        background: {
+            layout: GPUBindGroupLayout,
+            hash: number
+        }
+    };
 
-    private static _baseLayerInitialized: boolean = false;
     public static materialUpdateQueue = new Set<MaterialInstance>();
     public static pipelineUpdateQueue = new Set<Primitive>()
-
-    public get brdfLut() {
-        return BaseLayer._brdfLUTTexture
-    }
-
-    public set setBrdfLut(brdfLut: GPUTexture) {
-        BaseLayer._brdfLUTTexture = brdfLut
-    }
-
-    public get format() {
-        return BaseLayer._format
-    }
 
     public setActiveScene(activeScene: Scene): void {
         BaseLayer.activeScene = activeScene;
     }
 
-    protected static get format(): GPUTextureFormat {
-        return BaseLayer._format
+
+    static get samplers() {
+        return BaseLayer._samplers
     }
 
-    protected static get iblSampler() {
-        return BaseLayer._iblSampler
-    }
-
-    protected static get dummyTextures() {
-        return BaseLayer._dummyEnvTextures
+    static get dummyTextures() {
+        return BaseLayer._dummyTextures
     }
 
     protected static get depthTexture(): GPUTexture {
@@ -97,15 +96,11 @@ export class BaseLayer {
         BaseLayer.device = device;
         this.canvas = canvas;
         this.ctx = ctx;
-        if (this.constructor === BaseLayer && !BaseLayer._baseLayerInitialized) {
-            this.initialize()
-            BaseLayer._baseLayerInitialized = true;
-        }
     }
 
 
-    private initialize() {
-        BaseLayer._format = navigator.gpu.getPreferredCanvasFormat()
+    async initialize() {
+        BaseLayer.format = navigator.gpu.getPreferredCanvasFormat()
 
         BaseLayer._depthTexture = BaseLayer.device.createTexture({
             size: {width: window.innerWidth, height: window.innerHeight, depthOrArrayLayers: 1},
@@ -115,33 +110,50 @@ export class BaseLayer {
         });
 
         this.windowResizeHandler()
-        BaseLayer._dummyEnvTextures = {
+        BaseLayer._dummyTextures = {
             irradiance: BaseLayer.device.createTexture({
                 size: [128, 128, 6],
-                format: this.format,
+                format: "r8unorm",
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
                 mipLevelCount: 8
             }),
             brdfLut: BaseLayer.device.createTexture({
                 size: [1, 1, 1],
-                format: this.format,
+                format: "r8unorm",
+                usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+                mipLevelCount: 1
+            }),
+            pbr: BaseLayer.device.createTexture({
+                size: [1, 1, 1],
+                format: "r8unorm",
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
                 mipLevelCount: 1
             }),
             prefiltered: BaseLayer.device.createTexture({
                 size: [1, 1, 6],
-                format: this.format,
+                format: "r8unorm",
                 usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
                 mipLevelCount: 1
             })
         }
-        BaseLayer._iblSampler = BaseLayer.device.createSampler({
-            magFilter: "linear",
-            addressModeU: "clamp-to-edge",
-            addressModeV: "clamp-to-edge",
-            minFilter: "linear",
-            mipmapFilter: "nearest"
-        });
+
+        BaseLayer._samplers = {
+            ibl: BaseLayer.device.createSampler({
+                magFilter: "linear",
+                addressModeU: "clamp-to-edge",
+                addressModeV: "clamp-to-edge",
+                minFilter: "linear",
+                mipmapFilter: "nearest"
+            }),
+            default: BaseLayer.device.createSampler({
+                magFilter: "linear",
+                addressModeU: "repeat",
+                addressModeV: "repeat",
+                minFilter: "linear",
+                mipmapFilter: "nearest"
+            })
+        };
+
         BaseLayer._lastFrameTime = performance.now();
         BaseLayer._timeBuffer = BaseLayer.device.createBuffer({
             size: 4,
@@ -156,112 +168,139 @@ export class BaseLayer {
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         })
 
+
         window.addEventListener("resize", () => {
             this.windowResizeHandler()
         })
 
-
-        BaseLayer.globalBindGroupLayout = BaseLayer.device.createBindGroupLayout({
-            label: "globalBindGroupLayout",
-            entries: [
-                {
-                    visibility: GPUShaderStage.VERTEX,
-                    binding: 0,
-                    buffer: {
-                        type: "uniform"
-                    }
-                },
-                {
-                    visibility: GPUShaderStage.VERTEX,
-                    binding: 1,
-                    buffer: {
-                        type: "uniform"
-                    }
-                },
-                {
-                    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE,
-                    binding: 2,
-                    buffer: {
-                        type: "uniform"
-                    }
-                }, {
-                    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-                    binding: 3,
-                    buffer: {
-                        type: "uniform"
-                    }
-                }, {
-                    visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
-                    binding: 4,
-                    buffer: {
-                        type: "uniform"
-                    }
-                },
-                {
-                    visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
-                    binding: 5,
-                    buffer: {
-                        type: "uniform"
-                    }
-                },
-                {
-                    visibility: GPUShaderStage.FRAGMENT,
-                    binding: 6,
-                    buffer: {
-                        type: "read-only-storage"
-                    }
-                },
-                {
-                    visibility: GPUShaderStage.FRAGMENT,
-                    binding: 7,
-                    buffer: {
-                        type: "read-only-storage"
-                    }
-                },
-                {
-                    visibility: GPUShaderStage.FRAGMENT,
-                    binding: 8,
-                    buffer: {
-                        type: "uniform"
-                    }
-                },
-                {
-                    visibility: GPUShaderStage.FRAGMENT,
-                    binding: 9,
-                    texture: {
-                        sampleType: "float"
-                    }
-                },
-                {
-                    visibility: GPUShaderStage.FRAGMENT,
-                    binding: 10,
-                    texture: {
-                        sampleType: "float",
-                        viewDimension: "cube"
-                    }
-                },
-                {
-                    visibility: GPUShaderStage.FRAGMENT,
-                    binding: 11,
-                    texture: {
-                        sampleType: "float",
-                        viewDimension: "cube"
-                    }
-                }, {
-                    visibility: GPUShaderStage.FRAGMENT,
-                    binding: 12,
-                    sampler: {
-                        type: "filtering"
-                    }
+        const globalBindGroupEntries: GPUBindGroupLayoutEntry[] = [
+            {
+                visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                binding: 0,
+                buffer: {
+                    type: "uniform"
                 }
-            ]
+            },
+            {
+                visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                binding: 1,
+                buffer: {
+                    type: "uniform"
+                }
+            },
+            {
+                visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE,
+                binding: 2,
+                buffer: {
+                    type: "uniform"
+                }
+            }, {
+                visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                binding: 3,
+                buffer: {
+                    type: "uniform"
+                }
+            }, {
+                visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+                binding: 4,
+                buffer: {
+                    type: "uniform"
+                }
+            },
+            {
+                visibility: GPUShaderStage.VERTEX | GPUShaderStage.COMPUTE,
+                binding: 5,
+                buffer: {
+                    type: "uniform"
+                }
+            },
+            {
+                visibility: GPUShaderStage.FRAGMENT,
+                binding: 6,
+                buffer: {
+                    type: "read-only-storage"
+                }
+            },
+            {
+                visibility: GPUShaderStage.FRAGMENT,
+                binding: 7,
+                buffer: {
+                    type: "read-only-storage"
+                }
+            },
+            {
+                visibility: GPUShaderStage.FRAGMENT,
+                binding: 8,
+                buffer: {
+                    type: "uniform"
+                }
+            },
+            {
+                visibility: GPUShaderStage.FRAGMENT,
+                binding: 9,
+                texture: {
+                    sampleType: "float"
+                }
+            },
+            {
+                visibility: GPUShaderStage.FRAGMENT,
+                binding: 10,
+                texture: {
+                    sampleType: "float",
+                    viewDimension: "cube"
+                }
+            },
+            {
+                visibility: GPUShaderStage.FRAGMENT,
+                binding: 11,
+                texture: {
+                    sampleType: "float",
+                    viewDimension: "cube"
+                }
+            }, {
+                visibility: GPUShaderStage.FRAGMENT,
+                binding: 12,
+                sampler: {
+                    type: "filtering"
+                }
+            }
+        ]
 
-        })
+        BaseLayer.bindGroupLayouts = {
+            background: {
+                layout: BaseLayer.device.createBindGroupLayout({
+                    entries: [{
+                        texture: {
+                            sampleType: "float",
+                            viewDimension: "cube"
+                        },
+                        binding: 1,
+                        visibility: GPUShaderStage.FRAGMENT
+                    }, {
+                        sampler: {
+                            type: "filtering"
+                        },
+                        binding: 0,
+                        visibility: GPUShaderStage.FRAGMENT
+                    }],
+                    label: 'global background layout'
+                }),
+                hash: 1.1
+            },
+            globalBindGroupLayout: BaseLayer.device.createBindGroupLayout({
+                label: "globalBindGroupLayout",
+                entries: globalBindGroupEntries
+            }),
+        }
         this.setLod()
         this.setFrustumCulling()
         this.updateGlobalBuffers()
         this.updateResolution()
+        BaseLayer.hasher = new HashGenerator();
+        await BaseLayer.hasher.init()
+        BaseLayer.gpuCache = new GPUCache();
     }
+
 
     private setFrustumCulling(): void {
         const layout = BaseLayer.device.createBindGroupLayout({

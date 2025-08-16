@@ -1,41 +1,34 @@
-import {TypedArray, vec2} from "@gltf-transform/core";
-import {
-    RenderFlag
-} from "../GPURenderSystem/MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
-import {BindGroupEntryCreationType} from "../GPURenderSystem/GPUCache/GPUCacheTypes.ts";
-import {HashCreationBindGroupEntry} from "../GPURenderSystem/Hasher/HashGenerator.ts";
 import {Primitive} from "../primitive/Primitive.ts";
 import {StandardMaterial} from "./StandardMaterial.ts";
 
-export type TextureData = {
-    texture: {
-        data: TypedArray,
-        size: vec2,
-    } | null,
-    factor: number | number[],
-    bindPoint: number,
-    factorStartPoint: number
-}
 
-type Hashes = {
+export type Hashes = {
     bindGroupLayout: { old: number | null, new: number | null },
-    bindGroup: { old: number | null, new: number | null }
-    sampler: { old: number | null, new: number | null }
-    shader: { old: number | null, new: number | null }
 }
 
 export type MaterialInstance = StandardMaterial;
+export type bindingType = {
+    group: number,
+    binding: number,
+    address: string,
+    name: string,
+    wgslType: string,
+}
 
+export type compileHintType = {
+    searchKeyword: string,
+    replaceKeyword: string,
+}
+
+
+export interface ShaderDescriptor {
+    bindings: bindingType[]
+    compileHints: compileHintType[]
+    overrides: Record<string, any>
+}
 
 export class Material {
     initialized = false
-    textureDataMap: Map<RenderFlag, TextureData> = new Map();
-    descriptor: {
-        layout: GPUBindGroupLayoutEntry[] | null,
-        entries: BindGroupEntryCreationType[] | null,
-        hashEntries: HashCreationBindGroupEntry | null,
-        sampler: GPUSamplerDescriptor | null,
-    } = {layout: null, entries: null, hashEntries: null, sampler: null}
     name!: string;
     alpha: {
         mode: "OPAQUE" | "MASK" | "BLEND",
@@ -43,23 +36,29 @@ export class Material {
     } = {mode: "OPAQUE", cutoff: 0}
     primitives: Set<Primitive> = new Set()
     hashes: Hashes = {
-        bindGroup: {old: null, new: null},
         bindGroupLayout: {old: null, new: null},
-        sampler: {old: null, new: null},
-        shader: {old: null, new: null}
     }
-    bindGroup!: GPUBindGroup
-    resources: Map<string, GPUBuffer | GPUTexture | GPUSampler> = new Map();
+    bindGroup!: GPUBindGroup;
+    bindGroupLayout!: GPUBindGroupLayout;
     isDoubleSided: boolean = false
     shaderCode: string | null = null
     isTransparent: boolean = false;
-    workFlow:'metallic_roughness' | "specular_glossiness" = "metallic_roughness"
+    shaderDescriptor: ShaderDescriptor = {
+        bindings: [],
+        compileHints: [],
+        overrides: []
+    }
+    bindingCounter = 0;
 
-
+    compileShader() {
+        if (!this.shaderCode) throw new Error("There is no shader code set on material");
+        this.shaderDescriptor.compileHints.forEach(hint => {
+            this.shaderCode = (this.shaderCode as any).replaceAll(`[[${hint.searchKeyword}]]`, hint.replaceKeyword)
+        })
+    }
 
     setHashes(key: keyof Hashes, value: number | null) {
         const oldVal = this.hashes[key].new;
-
         if (value !== oldVal) {
             this.hashes[key] = {
                 new: value,

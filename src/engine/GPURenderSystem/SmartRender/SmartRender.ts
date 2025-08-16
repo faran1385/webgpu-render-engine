@@ -3,26 +3,24 @@ import {Node} from "@gltf-transform/core";
 
 import {SceneObject} from "../../sceneObject/sceneObject.ts";
 import {ShaderGenerator} from "../ShaderGenerator/ShaderGenerator.ts";
-import {MaterialDescriptorGenerator} from "../MaterialDescriptorGenerator/MaterialDescriptorGenerator.ts";
 import {
     GeometryBindingPoint,
     PipelineShaderLocations,
-} from "../MaterialDescriptorGenerator/MaterialDescriptorGeneratorTypes.ts";
+} from "../../../helpers/Types.ts";
 import {StandardMaterial} from "../../Material/StandardMaterial.ts";
 import {isLightDependentMaterial} from "../../../helpers/global.helper.ts";
+import {BaseLayer} from "../../../layers/baseLayer.ts";
+import {MaterialLayoutGenerator} from "../MaterialLayoutGenerator/MaterialLayoutGenerator.ts";
+import {MaterialInstance} from "../../Material/Material.ts";
 
 export class SmartRender {
-    static device: GPUDevice;
-    static format: GPUTextureFormat;
     static defaultGeometryBindGroupLayout: GPUBindGroupLayoutEntry[][] = []
     static shaderGenerator: ShaderGenerator;
-    static materialBindGroupGenerator: MaterialDescriptorGenerator;
+    static materialBindGroupGenerator: MaterialLayoutGenerator;
 
-    constructor(device: GPUDevice, format: GPUTextureFormat) {
-        SmartRender.device = device;
-        SmartRender.format = format;
+    constructor() {
         SmartRender.shaderGenerator = new ShaderGenerator()
-        SmartRender.materialBindGroupGenerator = new MaterialDescriptorGenerator(device)
+        SmartRender.materialBindGroupGenerator = new MaterialLayoutGenerator()
 
         SmartRender.defaultGeometryBindGroupLayout.push([{
             binding: 0,
@@ -47,7 +45,9 @@ export class SmartRender {
             if (sceneObject.skin) {
                 if (!nodeMap) throw new Error("in order to have skin u need to set the nodeMap on modelRenderer")
                 const skinBuffer = sceneObject.scene.skinManager.getSkin(sceneObject.skin) ?? sceneObject.scene.skinManager.addSkin(sceneObject.skin, nodeMap)
-
+                sceneObject.primitives?.forEach(primitive => {
+                    primitive.geometry.shaderDescriptor.overrides.HAS_SKIN = true
+                })
                 entries.push({
                     binding: GeometryBindingPoint.SKIN,
                     resource: {
@@ -60,27 +60,28 @@ export class SmartRender {
                     visibility: GPUShaderStage.VERTEX
                 })
                 sceneObject.skinBuffer = skinBuffer?.buffer;
-            } else {
-                sceneObject.createModelBuffer(SmartRender.device)
-                layoutEntries.push({
-                    binding: GeometryBindingPoint.MODEL_MATRIX,
-                    buffer: {type: "uniform"},
-                    visibility: GPUShaderStage.VERTEX
-                })
-                entries.push({
-                    binding: GeometryBindingPoint.MODEL_MATRIX,
-                    resource: {
-                        buffer: sceneObject.modelBuffer as GPUBuffer
-                    },
-                    name: "model"
-                })
             }
+
+            sceneObject.createModelBuffer(BaseLayer.device)
+            layoutEntries.push({
+                binding: GeometryBindingPoint.MODEL_MATRIX,
+                buffer: {type: "uniform"},
+                visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT
+            })
+            entries.push({
+                binding: GeometryBindingPoint.MODEL_MATRIX,
+                resource: {
+                    buffer: sceneObject.modelBuffer as GPUBuffer
+                },
+                name: "model"
+            })
+
             const anyPrimHasNormal = Array.from(sceneObject.primitives!).some(([_, prim]) => {
                 return prim.geometry.dataList.get('NORMAL')
             })
 
             if (anyPrimHasNormal) {
-                sceneObject.createNormalBuffer(SmartRender.device)
+                sceneObject.createNormalBuffer(BaseLayer.device)
                 layoutEntries.push({
                     binding: GeometryBindingPoint.NORMAL_MATRIX,
                     buffer: {type: "uniform"},
@@ -119,6 +120,8 @@ export class SmartRender {
                         name: 'POSITION'
                     }]
                     if (geometry.dataList.get("JOINTS_0") && geometry.dataList.get("WEIGHTS_0")) {
+                        geometry.shaderDescriptor.overrides.HAS_JOINTS = true;
+                        geometry.shaderDescriptor.overrides.HAS_WEIGHTS = true;
                         buffers.push({
                             arrayStride: 4 * 4,
                             attributes: [{
@@ -139,6 +142,7 @@ export class SmartRender {
                         })
                     }
                     if (geometry.dataList.get(`TEXCOORD_0`)) {
+                        geometry.shaderDescriptor.overrides.HAS_UV = true
                         buffers.push({
                             arrayStride: 2 * 4,
                             attributes: [{
@@ -159,6 +163,7 @@ export class SmartRender {
                             }],
                             name: `NORMAL`
                         })
+                        geometry.shaderDescriptor.overrides.HAS_NORMAL_VEC3 = true
                     }
                     if (geometry.dataList.get(`TANGENT`)) {
                         buffers.push({
@@ -170,17 +175,14 @@ export class SmartRender {
                             }],
                             name: `TANGENT`
                         })
+                        geometry.shaderDescriptor.overrides.HAS_TANGENT_VEC4 = true
                     }
                     const isDoubleSided = primitive.material.isDoubleSided
                     const isTransparent = primitive.material.isTransparent
-                    const fragmentConstant: any = {
-                        ALPHA_MODE: primitive.material.alpha.mode === "OPAQUE" ? 0 : primitive.material.alpha.mode === "BLEND" ? 1 : 2,
-                        ALPHA_CUTOFF: primitive.material.alpha.cutoff
-                    }
+
+
                     if (isLightDependentMaterial(primitive.material)) {
                         primitive.sceneObject.scene.addExposureDependent(primitive)
-                        fragmentConstant.TONE_MAPPING_NUMBER = primitive.sceneObject.scene.getToneMapping(primitive)
-                        fragmentConstant.EXPOSURE = primitive.sceneObject.scene.environmentManager.getExposure()
                     }
 
 
@@ -211,9 +213,8 @@ export class SmartRender {
                                         operation: "add",
                                     },
                                 },
-                                format: SmartRender.format,
+                                format: BaseLayer.format,
                             }],
-                            fragmentConstants: fragmentConstant
                         })
                         primitive.setPipelineDescriptor("back", {
                             primitive: {
@@ -239,9 +240,8 @@ export class SmartRender {
                                         operation: "add",
                                     },
                                 },
-                                format: SmartRender.format
+                                format: BaseLayer.format
                             }],
-                            fragmentConstants: fragmentConstant
                         })
 
                     } else {
@@ -255,7 +255,7 @@ export class SmartRender {
                             depthStencil: {
                                 depthCompare: "less",
                                 depthWriteEnabled: !isTransparent,
-                                format: "depth24plus"
+                                format: "depth24plus",
                             },
                             targets: [{
                                 writeMask: GPUColorWrite.ALL,
@@ -271,9 +271,8 @@ export class SmartRender {
                                         operation: "add",
                                     },
                                 } : undefined,
-                                format: SmartRender.format
+                                format: BaseLayer.format
                             }],
-                            fragmentConstants: fragmentConstant
                         })
                     }
 
@@ -287,29 +286,24 @@ export class SmartRender {
 
     public entryCreator(
         sceneObjectsSet: Set<SceneObject>,
-        nodeMap: undefined | Map<Node, SceneObject>
+        nodeMap: undefined | Map<Node, SceneObject>,
+        materials: MaterialInstance[]
     ) {
         const sceneObjects = this.getRenderAbleNodes(sceneObjectsSet)
 
-        sceneObjects.forEach(sceneObject => {
-            sceneObject.primitives?.forEach(primitive => {
-                primitive.material.initDescriptor(SmartRender.materialBindGroupGenerator)
-            })
-        })
         this.setPipelineDescriptors(sceneObjects)
         this.setGeometryBindGroups(sceneObjects, nodeMap)
+        SmartRender.materialBindGroupGenerator.setDescriptors(materials)
 
+        sceneObjects.forEach(sceneObject => {
+            sceneObject.primitives?.forEach(p => {
+                SmartRender.shaderGenerator.baseVertex(p.geometry)
+            })
+        })
 
-        sceneObjects.forEach((sceneObject) => {
-            if (sceneObject.primitives && sceneObject.primitives.size > 0) {
-                sceneObject.primitives.forEach((primitive) => {
-                    let code = '';
-                    if (primitive.material instanceof StandardMaterial) {
-                        code = SmartRender.shaderGenerator.getStandardCode(primitive)
-                    }
-
-                    primitive.material.shaderCode = code
-                })
+        materials.forEach(mat => {
+            if (mat instanceof StandardMaterial) {
+                SmartRender.shaderGenerator.getStandardCode(mat)
             }
         })
 

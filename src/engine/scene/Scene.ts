@@ -30,10 +30,9 @@ export class Scene extends BaseLayer {
     public readonly _sceneObjectUpdateQueue: Map<number, SceneObject> = new Map();
 
     private _drawCalls: Set<Primitive> = new Set<Primitive>()
-    renderQueue: { queue: Primitive[], needsUpdate: boolean, opaqueOnly: Primitive[] } = {
+    renderQueue: { queue: Primitive[], opaqueOnly: Primitive[] } = {
         queue: [],
         opaqueOnly: [],
-        needsUpdate: false
     }
     private _background: Primitive | null = null
 
@@ -91,7 +90,6 @@ export class Scene extends BaseLayer {
         this.renderLoopRunAble.set("IndirectDraw", this.computeManager.indirectDraw.renderLoop);
         this.renderLoopRunAble.set("LOD", this.computeManager.lodSelection.renderLoop);
         this.renderLoopRunAble.set("FrustumCulling", this.computeManager.frustumCulling.renderLoop);
-
     }
 
 
@@ -225,7 +223,6 @@ export class Scene extends BaseLayer {
     }
 
     public set appendDrawCall(primitive: Primitive) {
-        this.renderQueue.needsUpdate = true
         this._drawCalls.add(primitive);
     }
 

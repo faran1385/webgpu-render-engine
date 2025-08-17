@@ -84,18 +84,14 @@ fn vs(in: vsIn) -> vsOut {
 
         material.shaderCode = `
             struct DLight {
-                color: vec3f,
-                intensity: f32,
-                _pad: f32, 
-                _pad1: vec2f, 
-                position: vec3f,
+                color: vec3f, // 0 12
+                intensity: f32, // 12 4
+                position: vec3f, // 16 12
             };
             
             struct ALight {
                 color: vec3f,
                 intensity: f32,
-                _pad: f32, 
-                _pad1: vec2f, 
             };
             
             
@@ -106,56 +102,17 @@ fn vs(in: vsIn) -> vsOut {
                 _pad1: u32, 
             };
             
-            
-            
             struct MaterialInfo {
-                ior: f32,
-                perceptualRoughness: f32,
-                f0_dielectric: vec3<f32>,
-            
-                alphaRoughness: f32,
-            
-                fresnel_w: f32,
-            
-                f90: vec3<f32>,
-                f90_dielectric: vec3<f32>,
+                ior:f32,
+                dielectricF0: f32,
+                f0:vec3f,
+                perceptualRoughness: f32,  
+                alphaRoughness: f32,  
                 metallic: f32,
-            
                 baseColor: vec3<f32>,
-            
-                sheenRoughnessFactor: f32,
-                sheenColorFactor: vec3<f32>,
-            
-                clearcoatF0: vec3<f32>,
-                clearcoatF90: vec3<f32>,
-                clearcoatFactor: f32,
-                clearcoatNormal: vec3<f32>,
-                clearcoatRoughness: f32,
-            
-                // KHR_materials_specular 
-                specularWeight: f32,
-            
-                transmissionFactor: f32,
-            
-                thickness: f32,
-                attenuationColor: vec3<f32>,
-                attenuationDistance: f32,
-            
-                // KHR_materials_iridescence
-                iridescenceFactor: f32,
-                iridescenceIor: f32,
-                iridescenceThickness: f32,
-            
-                diffuseTransmissionFactor: f32,
-                diffuseTransmissionColorFactor: vec3<f32>,
-            
-                // KHR_materials_anisotropy
-                anisotropicT: vec3<f32>,
-                anisotropicB: vec3<f32>,
-                anisotropyStrength: f32,
-            
-                // KHR_materials_dispersion
-                dispersion: f32,
+                baseColorAlpha: f32,
+                ao:f32,
+                fRoughness:vec3f
             };
 
             struct MaterialFactors{
@@ -190,20 +147,6 @@ fn vs(in: vsIn) -> vsOut {
                 envRotation:mat3x3f, // 192 48
             }
             
-            
-            struct NormalInfo {
-                ng:vec3f,  
-                t:vec3f,
-                b:vec3f,
-                n:vec3f, 
-                ntex:vec3f,
-            };
-            
-            //////////////
-            fn clampedDot(x:vec3f, y:vec3f)->f32{
-                return clamp(dot(x, y), 0.0, 1.0);
-            }
-            /////////////////
         
             @group(0) @binding(7) var<storage, read> dLights: array<DLight>;
             @group(0) @binding(6) var<storage, read> aLights: array<ALight>;
@@ -240,8 +183,75 @@ fn vs(in: vsIn) -> vsOut {
                 let uv=in.uv;
                 let TBN=mat3x3(in.T,in.B,in.normal);
                 let normal=in.normal;
+                let n=normal;
+
+                globalInfo=setBaseColor(globalInfo,uv);
+                globalInfo.ior=materialFactors.ior;
+                globalInfo=setMetallicRoughness(globalInfo,uv);
+                globalInfo.dielectricF0=dielectricIorToF0(globalInfo.ior);
+                globalInfo=setAO(globalInfo,uv);
+                globalInfo.f0=mix(vec3f(globalInfo.dielectricF0),globalInfo.baseColor,globalInfo.metallic);
                 
-                return vec4f(vec3f(normal),1.);
+                var Lo = vec3f(0.0);
+                let v=normalize(cameraPosition - in.worldPos);
+                let NoV=dot(n,v);
+                let r=reflect(-v,n);
+                for(var i=0;i < i32(lightCounts.directional); i++){
+                    let light=dLights[i];
+                    let lightIntensity=light.color * light.intensity;
+
+                    
+                    // brdf variables
+                    let l=normalize(light.position - in.worldPos);
+                    let NoL = saturate(dot(n, l));
+                    let NoV = saturate(dot(n, v));
+                    let h = normalize(l + v);
+                    let NoH = saturate(dot(n, h));
+                    let HoL = saturate(dot(h, l));
+                    let HoV = saturate(dot(h, v));
+                    
+                    let NDF = D_GGX(NoH,globalInfo.alphaRoughness);        
+                    let G   = G_Smith(NoL,NoV,globalInfo.perceptualRoughness);      
+                    let F    = fresnelSchlick(HoV, globalInfo.f0); 
+                          
+                    let kS = F;
+                    var kD = vec3(1.0) - kS;
+                    kD *= 1.0 - globalInfo.metallic;
+                    
+                    let numerator    = NDF * G * F;
+                    let denominator = 4.0 * NoV * NoL + 0.0001;
+                    let specular     = numerator / denominator;  
+                    Lo += (kD * globalInfo.baseColor / PI + specular) * lightIntensity * NoL; 
+                }
+                
+                globalInfo.fRoughness=FresnelSchlickRoughness(NoV, globalInfo.f0, globalInfo.perceptualRoughness);
+                
+                
+                for(var i=0;i < i32(lightCounts.ambient); i++){
+                    let light=aLights[i];
+                    let irradiance=light.color * light.intensity;
+
+                    let kS = globalInfo.fRoughness;
+                    var kD = 1.0 - kS;
+                    kD *= 1.0 - globalInfo.metallic;
+                    let diffuse = (globalInfo.baseColor / PI) * irradiance;
+
+                    Lo += diffuse * kD * globalInfo.ao; 
+                }
+                
+                Lo +=getIBL(globalInfo,n,r,NoV);
+                
+                var color=vec4f(Lo,globalInfo.baseColorAlpha);
+                color = vec4f(applyGamma(color.rgb,2.2),globalInfo.baseColorAlpha);
+                ${overrides.ALPHA_MODE === 0 ? `
+                color.a=1.;
+                `: overrides.ALPHA_MODE === 2 ? `
+                if(materialFactors.alphaCutoff < color.a) {
+                    discard;
+                }
+                color.a=1.;
+                `:``}
+                return color;
             }
         `
     }

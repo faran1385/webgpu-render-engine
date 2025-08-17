@@ -124,7 +124,7 @@ export class Background extends BaseLayer {
         primitive.setGeometry(geometry)
         primitive.setMaterial(material)
         primitive.setSide("front")
-        material.init(null)
+        material.name = "Background mat"
         primitive.setPipelineDescriptor("front", {
             primitive: {
                 cullMode: "front",
@@ -207,6 +207,14 @@ export class Background extends BaseLayer {
                 }
             },
             bindingPoint: 1
+        })
+        primitive.material.descriptor.layoutEntries.push({
+            texture: {
+                sampleType: "float",
+                viewDimension: "cube"
+            },
+            visibility: GPUShaderStage.FRAGMENT,
+            binding: 1
         })
 
         await hashAndCreateRenderSetup(this.scene.computeManager, [primitive.material], [primitive], true)

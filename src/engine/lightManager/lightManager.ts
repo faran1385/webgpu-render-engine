@@ -186,13 +186,11 @@ export class LightManager {
             offset += 3;
             data[offset++] = light.intensity; // f32
 
-
-            data[offset++] = 0; // f32
-            data.set([0, 0], offset);    // vec2
-            offset += 2;
-
             data.set(light.position, offset); // vec3
             offset += 3;
+
+            data[offset++] = 0; // f32
+
         }
 
         updateBuffer(LightManager.device, this.lightsBuffer.directional, data)
@@ -207,9 +205,6 @@ export class LightManager {
             data.set(light.color, offset);
             offset += 3;
             data[offset++] = light.intensity;
-            data[offset++] = 0;
-            data.set([0,0,0], offset);
-            offset += 3;
         }
         updateBuffer(LightManager.device, this.lightsBuffer.ambient, data)
     }

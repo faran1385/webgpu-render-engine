@@ -2,6 +2,7 @@ import {Material as MaterialClass} from "./Material.ts";
 import {Material} from "@gltf-transform/core";
 import {StandardMaterialExtractor} from "./standardMaterialExtractor.ts";
 import {BaseBindGroupEntryCreationType} from "../GPURenderSystem/GPUCache/GPUCacheTypes.ts";
+import {BaseLayer} from "../../layers/baseLayer.ts";
 
 
 export type matTextureInfo = {
@@ -41,6 +42,8 @@ export class StandardMaterial extends MaterialClass {
         layoutEntries: GPUBindGroupLayoutEntry[]
     } = {bindGroupEntries: [], layoutEntries: []}
 
+    private materialFactors!: GPUBuffer;
+
     textureInfo: standardMaterialTextureInfo = {
         albedo: {hash: null, dimension: null, shareInfo: null, textureReference: null},
         emissive: {hash: null, dimension: null, shareInfo: null, textureReference: null},
@@ -63,12 +66,26 @@ export class StandardMaterial extends MaterialClass {
         anisotropy: {hash: null, dimension: null, shareInfo: null, textureReference: null},
     }
 
+    setMaterialFactors(buffer: GPUBuffer) {
+        this.materialFactors = buffer
+    }
+
+
+    setMetallic(metallic: number) {
+        BaseLayer.device.queue.writeBuffer(this.materialFactors, 16, new Float32Array([metallic]));
+    }
+
+    setRoughness(roughness: number) {
+        BaseLayer.device.queue.writeBuffer(this.materialFactors, 20, new Float32Array([roughness]));
+    }
 
     init(material: Material | null) {
         this.name = material?.getName() ?? "Default"
 
         if (material) {
             new StandardMaterialExtractor().extractMaterial(this, material)
+        } else {
+            new StandardMaterialExtractor().setDescForNullMats(this)
         }
     }
 }

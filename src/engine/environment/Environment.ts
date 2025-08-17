@@ -6,9 +6,7 @@ import {
     cubemapVertexShader,
     cubePositions, views,
 } from "./cubeData.ts";
-import { ggxBRDFLUTCode,
-    ggxPrefilterCode,
-} from "../../helpers/pbrShaderFunctions.ts";
+import {ggxBRDFLUTCode, ggxPrefilterCode} from "../../helpers/pbrShaderFunctions.ts";
 import {quadVertices} from "./quadData.ts";
 import {BaseLayer} from "../../layers/baseLayer.ts";
 

@@ -72,7 +72,7 @@ export class SceneObject {
         }
         this.transformMatrix = {
             matrix: mat4.create(),
-            scale: vec3.create(),
+            scale: vec3.fromValues(1, 1, 1),
             translation: vec3.create(),
             rotation: quat.create()
         }

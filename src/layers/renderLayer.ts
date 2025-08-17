@@ -35,7 +35,6 @@ export class RenderLayer extends BaseLayer {
         RenderLayer.activeScene.renderQueue = {
             queue: finalQueue,
             opaqueOnly: opaque,
-            needsUpdate: false
         };
 
     }
@@ -68,7 +67,7 @@ export class RenderLayer extends BaseLayer {
 
         const sceneActiveCamera = RenderLayer.activeScene.getActiveCamera()
         const viewMatrix = sceneActiveCamera.getViewMatrix();
-        if (RenderLayer.activeScene.renderQueue.needsUpdate) this.buildRenderQueue(viewMatrix);
+        this.buildRenderQueue(viewMatrix);
         const primitives: Primitive[] = RenderLayer.activeScene.renderQueue.queue
 
         RenderLayer.activeScene.update(commandEncoder, primitives, this.ctx.getCurrentTexture().createView(), BaseLayer.depthTexture.createView())

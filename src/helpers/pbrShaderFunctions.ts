@@ -1,3 +1,5 @@
+import {GAMMA_CORRECTION} from "./postProcessUtils/postProcessUtilsShaderCodes.ts";
+
 export const distributionGGX = /* wgsl */ `
 fn distributionGGX(N:vec3f,H:vec3f, r: f32) -> f32 {
     let a=r*r;
@@ -106,12 +108,102 @@ export const toneMappings = {
 };
 
 
-
-
-
-
 export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
     return `
+        
+        ${GAMMA_CORRECTION}
+        
+        fn getIBL(globalInfo:MaterialInfo,n:vec3f,r:vec3f,NoV:f32)->vec3f{
+            let irradiance = textureSample(irradianceMap,iblSampler, n).rgb;
+            let diffuse    = irradiance * globalInfo.baseColor;
+            
+            let kS = globalInfo.fRoughness;
+            var kD = 1.0 - kS;
+            kD *= 1.0 - globalInfo.metallic;
+            
+            let prefilteredColor = textureSampleLevel(ggxPrefilterMap,iblSampler, r,  globalInfo.perceptualRoughness * f32(ENV_MAX_LOD_COUNT)).rgb;   
+            let envBRDF  = textureSample(ggxLUT,iblSampler, vec2f(NoV, globalInfo.perceptualRoughness)).rg;
+            let specular = prefilteredColor * (globalInfo.fRoughness * envBRDF.x + envBRDF.y);
+            let ambient = (kD * diffuse + specular) * globalInfo.ao; 
+            return ambient;
+        }
+    
+        fn setAO(globalInfo:MaterialInfo,uv:vec2f)->MaterialInfo{
+            var info=globalInfo;
+            info.ao=materialFactors.occlusionStrength;
+            
+            ${overrides.HAS_AO_MAP ? `
+            let sampledTex=textureSample([[ambient_occlusion.texture]],[[ambient_occlusion.sampler]],uv,[[ambient_occlusion.textureIndex]]);
+            info.ao *=sampledTex.r;
+            `:``}
+            
+            return info;
+        }
+        
+        fn setMetallicRoughness(globalInfo:MaterialInfo,uv:vec2f)->MaterialInfo{
+            var info=globalInfo;
+            
+            info.metallic=materialFactors.metallic;
+            info.perceptualRoughness=materialFactors.roughness;
+            
+            ${overrides.HAS_METALLIC_ROUGHNESS_MAP ? `
+            let sampledTex=textureSample([[metallic_roughness.texture]],[[metallic_roughness.sampler]],uv,[[metallic_roughness.textureIndex]]);
+            info.metallic *=sampledTex.b;
+            info.perceptualRoughness *=sampledTex.g;
+            `:``}
+            info.alphaRoughness=info.perceptualRoughness * info.perceptualRoughness;
+            
+            return info;
+        }
+        fn FresnelSchlickRoughness(cosTheta:f32, F0:vec3f, roughness:f32)->vec3f{
+            return F0 + (max(vec3(1.0 - roughness), F0) - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+        }   
+        
+        fn fresnelSchlick(cosTheta:f32, F0:vec3f)->vec3f{
+            return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
+        }
+    
+        fn dielectricIorToF0(ior:f32)->f32{
+            return pow((1 - ior) / (1 + ior),2);
+        }
+        
+        // clamp helper
+        fn saturate(x: f32) -> f32 {
+          return clamp(x, 0.0, 1.0);
+        }
+
+        // GGX / Trowbridge-Reitz NDF
+        fn D_GGX(nDotH: f32, a: f32) -> f32 {
+          let a2: f32 = a * a; // alpha^2
+          let nDotH2: f32 = nDotH * nDotH;
+          let denom: f32 = nDotH2 * (a2 - 1.0) + 1.0;
+          return a2 / (PI * denom * denom);
+        }
+        
+        fn G_Schlick_GGX_G1(nDotV: f32, roughness: f32) -> f32 {
+          let ndv: f32 = saturate(nDotV);
+          let r: f32 = saturate(roughness);
+          let k: f32 = (r + 1.0) * (r + 1.0) / 8.0;
+          return ndv / (ndv * (1.0 - k) + k);
+        }
+        
+        fn G_Smith(nDotL: f32, nDotV: f32, roughness: f32) -> f32 {
+          return G_Schlick_GGX_G1(nDotL, roughness) * G_Schlick_GGX_G1(nDotV, roughness);
+        }
+        
+        fn setBaseColor(globalInfo:MaterialInfo,uv:vec2f)->MaterialInfo{
+            var info=globalInfo;
+            info.baseColor=materialFactors.baseColor.rgb;
+            info.baseColorAlpha=materialFactors.baseColor.a;
+            
+            ${overrides.HAS_BASE_COLOR_MAP ? `
+            let sampledTex=textureSample(baseColorTexture,[[albedo.sampler]],uv);
+            info.baseColor *=sampledTex.rgb;
+            info.baseColorAlpha *=sampledTex.a;
+            ` : ``}
+            
+            return info;
+        }
     `
 }
 
@@ -146,11 +238,11 @@ fn skinMat(in: vsIn) -> skinOutput {
             
             ${overrides.HAS_NORMAL_VEC3 ? `
             skinnedNormal += (boneMatrix3 * in.normal) * weight;
-            `:``}
+            ` : ``}
             
             ${overrides.HAS_TANGENT_VEC4 ? `
             skinnedTangent += vec4f((boneMatrix3 * in.tangent.xyz) * weight,in.tangent.w * weight);
-            `:``}
+            ` : ``}
         }
     }
 
@@ -160,7 +252,7 @@ fn skinMat(in: vsIn) -> skinOutput {
         skinnedTangent
     );
 }
-`:``}
+` : ``}
 
 fn getInfo(in: vsIn) -> Info {
     var output: Info;
@@ -168,54 +260,52 @@ fn getInfo(in: vsIn) -> Info {
     ${overrides.HAS_SKIN ? `
         let skinData = skinMat(in);
         output.worldPos = modelMatrix * skinData.skinPos;
-    `:`
+    ` : `
         output.worldPos = modelMatrix * vec4f(in.pos, 1.0);
     `}
     var T=vec3f(0);
     var B=vec3f(0);
-    var N=vec3f(0);
+    var N=vec3f(1);
     
-    ${overrides.HAS_NORMAL_VEC3 ? `let normalMatrix =mat3x3<f32>(
-        normalMatrix4[0].xyz,
-        normalMatrix4[1].xyz,
-        normalMatrix4[2].xyz
-    );` : ""}
-    
+    ${overrides.HAS_NORMAL_VEC3 ? `
+        let normalMatrix =mat3x3<f32>(
+            normalMatrix4[0].xyz,
+            normalMatrix4[1].xyz,
+            normalMatrix4[2].xyz
+        );
+        N=normalize(normalMatrix * in.normal);
+    ` : ""}    
+        
     ${overrides.HAS_TANGENT_VEC4 ? `
-        ${overrides.HAS_SKIN?`
-        N = skinData.skinNormal;
-        var tangentDir = skinData.skinTangent.xyz;
-        T = normalize(tangentDir - N * dot(N, tangentDir));
-        
-        B = cross(N, T) * skinData.skinTangent.w;
-        B = normalize(B);
-        
-        output.N = N;
-        output.T = T;
-        output.B = B;
-        `:`
-        T = normalize(normalMatrix * in.tangent.xyz);
-        N = normalize(normalMatrix * in.normal.xyz);
-        T = normalize(T - N * dot(N, T));
-        
-        B = cross(N, T) * in.tangent.w;
-        B = normalize(B);
-        
-        output.N = N;
-        output.T = T;
-        output.B = B;
+        ${overrides.HAS_SKIN ? `
+    N = skinData.skinNormal;
+    var tangentDir = skinData.skinTangent.xyz;
+    T = normalize(tangentDir - N * dot(N, tangentDir));
+    
+    B = cross(N, T) * skinData.skinTangent.w;
+    B = normalize(B);
+    
+    ` : `
+    T = normalize(normalMatrix * in.tangent.xyz);
+    N = normalize(normalMatrix * in.normal.xyz);
+    T = normalize(T - N * dot(N, T));
+    
+    B = cross(N, T) * in.tangent.w;
+    B = normalize(B);
         `}
-    `:``}
+    ` : ``}
 
-
+    output.N = N;
+    output.T = T;
+    output.B = B;
     return output;
 }
     `
 }
 
 
-export const ggxPrefilterCode={
-    vertex:`
+export const ggxPrefilterCode = {
+    vertex: `
         struct VSOut {
           @builtin(position) Position: vec4f,
           @location(0) worldPosition: vec3f,
@@ -237,7 +327,7 @@ export const ggxPrefilterCode={
           return output;
         }
         `,
-    fragment:`
+    fragment: `
         struct Uniforms {
           modelViewProjectionMatrix: mat4x4f,
           roughness: f32,
@@ -299,160 +389,7 @@ export const ggxPrefilterCode={
         `
 }
 
-export const charliePrefilterCode={
-    vertex:            `// vertex.wgsl
-        struct Uniforms {
-          modelViewProjectionMatrix: mat4x4f,
-          roughness: f32,
-        };
-
-        @group(0) @binding(0) var<uniform> uniforms: Uniforms;
-                
-        struct VSOut {
-          @builtin(position) Position : vec4<f32>,
-          @location(0) localPos : vec3<f32>,
-        };
-        
-        @vertex
-        fn main(@location(0) position : vec3<f32>) -> VSOut {
-          var out : VSOut;
-          out.Position = uniforms.modelViewProjectionMatrix * vec4<f32>(position, 1.0);
-          out.localPos = position;
-          return out;
-        }`,
-    fragment:            `
-            // fragment.wgsl
-
-override SAMPLE_COUNT: i32;
-override TEXTURE_RESOLUTION: i32;
-
-struct Uniforms {
-    modelViewProjectionMatrix: mat4x4f,
-    roughness: f32,
-};
-
-@group(0) @binding(0) var<uniform> uniforms: Uniforms;
-@group(0) @binding(1) var envCube : texture_cube<f32>;
-@group(0) @binding(2) var envSmp : sampler;
-
-// helpers
-const PI: f32 = 3.141592653589793;
-
-fn saturate(x: f32) -> f32 { return clamp(x, 0.0, 1.0); }
-fn roughnessToAlpha(roughness: f32) -> f32 { return max(0.001, roughness * roughness); }
-
-// Charlie NDF D(alpha, cosThetaH)
-fn D_Charlie(alpha: f32, cosThetaH: f32) -> f32 {
-    let c = saturate(cosThetaH);
-    let sinThetaH = sqrt(max(0.0, 1.0 - c * c));
-    let exponent = 1.0 / alpha;
-    let sinPow = select(0.0, pow(sinThetaH, exponent), sinThetaH > 0.0);
-    let norm = (2.0 + 1.0 / alpha) / (2.0 * PI);
-    return norm * sinPow;
-}
-
-// cosine-weighted hemisphere sampling (tangent-space N=(0,0,1))
-fn sampleCosineHemisphere(xi: vec2<f32>) -> vec3<f32> {
-    let r = sqrt(max(0.0, xi.x));
-    let phi = 2.0 * PI * xi.y;
-    let x = r * cos(phi);
-    let y = r * sin(phi);
-    let z = sqrt(max(0.0, 1.0 - x*x - y*y));
-    return vec3<f32>(x, y, z);
-}
-
-// simple wang_hash RNG
-fn wang_hash(sIn: u32) -> u32 {
-    var s=sIn;
-    s = (s ^ 61u) ^ (s >> 16);
-    s = s * 9u;
-    s = s ^ (s >> 4);
-    s = s * 0x27d4eb2du;
-    s = s ^ (s >> 15);
-    return s;
-}
-
-// main fragment
-struct FSIn {
-  @location(0) localPos : vec3<f32>,
-  @builtin(position) fragCoord : vec4<f32>,
-};
-
-@fragment
-fn main(in: FSIn) -> @location(0) vec4<f32> {
-    // read roughness from uniform buffer: ubo[16] is the first float after the 4x4 matrix
-    let roughness = uniforms.roughness;
-    let envIntensity = 1.0; // if you want, you can pack envIntensity into ubo[17]
-
-    // direction R: normalize local position (cube pos -> direction)
-    let R = normalize(in.localPos);
-    let N = R;
-    let alpha = roughnessToAlpha(roughness);
-
-    // tangent frame
-    var up = vec3<f32>(0.0, 1.0, 0.0);
-    if (abs(N.y) > 0.999) {
-        up = vec3<f32>(1.0, 0.0, 0.0);
-    }
-    let tangent = normalize(cross(up, N));
-    let bitangent = cross(N, tangent);
-    let T = mat3x3<f32>(tangent, bitangent, N); // columns tangent, bitangent, N
-
-    var prefiltered : vec3<f32> = vec3<f32>(0.0);
-    var totalWeight : f32 = 0.0;
-
-    // seed from pixel coordinates + small roughness influence
-    let fx = u32(floor(in.fragCoord.x));
-    let fy = u32(floor(in.fragCoord.y));
-    var seed = fx * 1973u + fy * 9277u + u32(max(1.0, roughness * 1000.0));
-
-    // Monte Carlo loop
-    var i: i32 = 0;
-    let count: i32 = SAMPLE_COUNT;
-    loop {
-        if (i >= count) { break; }
-        seed = wang_hash(seed);
-        let r1 = f32(seed) / 4294967296.0;
-        seed = wang_hash(seed);
-        let r2 = f32(seed) / 4294967296.0;
-        let xi = vec2<f32>(r1, r2);
-
-        let sampleT = sampleCosineHemisphere(xi);
-        let L = normalize(T * sampleT);
-
-        let NdotL = max(dot(N, L), 0.0);
-        if (NdotL > 0.0) {
-            let V = R;
-            let H = normalize(L + V);
-            let NdotH = max(dot(N, H), 0.0);
-            let D = D_Charlie(alpha, NdotH);
-
-            let pdf_cos = sampleT.z / PI; // cosine hemisphere pdf
-            let weight = select(0.0, (D * NdotL) / pdf_cos, pdf_cos > 0.0);
-
-            // sample environment at this incoming direction
-            let envCol = textureSampleLevel(envCube, envSmp, L, 0.0).rgb;
-
-            prefiltered = prefiltered + envCol * weight;
-            totalWeight = totalWeight + weight;
-        }
-
-        i = i + 1;
-    }
-
-    if (totalWeight > 0.0) {
-        prefiltered = prefiltered / totalWeight;
-    }
-
-    prefiltered = prefiltered * envIntensity;
-
-    return vec4<f32>(prefiltered, 1.0);
-}
-        `
-}
-
-
-export const ggxBRDFLUTCode={
+export const ggxBRDFLUTCode = {
     vertex: `
             struct VertexOutput {
               @builtin(position) Position: vec4f,
@@ -467,7 +404,7 @@ export const ggxBRDFLUTCode={
               return output;
             }
         `,
-    fragment:`
+    fragment: `
             const PI: f32 = 3.14159265359;
             
             ${radicalInverseVdC}

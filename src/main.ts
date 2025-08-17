@@ -9,14 +9,13 @@ import {OrbitControls} from "./engine/camera/controls.ts";
 import {HDRLoader} from "./engine/environment/HDRLoader.ts";
 import {Pane} from "tweakpane";
 import {ToneMapping} from "./helpers/postProcessUtils/postProcessUtilsTypes.ts";
-import {mat3, quat} from "gl-matrix";
 
 
 const {device, canvas, ctx, baseLayer} = await initWebGPU()
 const camera = new Camera({
     aspect: canvas.width / canvas.height,
     device,
-    initialPosition: [3, 4.0, 10],
+    initialPosition: [3, 0, 5],
     fov: Math.PI / 3
 })
 
@@ -29,7 +28,7 @@ baseLayer.setActiveScene(scene)
 
 const mainLayer = new RenderLayer(device, canvas, ctx)
 const loader = new GLTFLoader()
-const {sceneObjects, nodeMap,animations} = await loader.load("/e.glb", scene)
+const {sceneObjects, nodeMap, animations} = await loader.load("/e.glb", scene)
 
 const hdrLoader = new HDRLoader(device);
 const cubeMap = await hdrLoader.load("/e.hdr")
@@ -39,25 +38,29 @@ await scene.backgroundManager.setBackground(cubeMap, 1)
 await scene.environmentManager.setEnvironment(cubeMap, 1024, 128, 32)
 
 scene.lightManager.addDirectional({
-    intensity: 5,
+    intensity: 2,
     color: [1, 1, 1],
-    position: [5, 5, 3]
+    position: [3, 0, 0]
 })
+
 
 const modelRenderer = new ModelRenderer({
     scene
 });
-console.log(mat3.fromQuat(mat3.create(),quat.identity(quat.create())))
 window.addEventListener("resize", () => {
     camera.setAspect(canvas.width / canvas.height)
     camera.updateProjectionMatrix()
 })
 modelRenderer.setSceneObjects(sceneObjects)
-modelRenderer.setScale(3,3,3)
 modelRenderer.setTranslation(0, 0, 0)
 modelRenderer.setNodeMap(nodeMap)
 await modelRenderer.init()
 modelRenderer.animate(animations[0])
+
+const factors = {
+    metallic: 0,
+    roughness: 0
+}
 const pane = new Pane();
 const paneElement = pane.element;
 paneElement.style.zIndex = "103";
@@ -69,7 +72,8 @@ document.body.appendChild(paneElement)
 pane.element.addEventListener("mouseover", () => {
     controls.disable()
 })
-
+pane.addBinding(factors,"metallic",{min:0,max:1}).on("change",(ev)=>modelRenderer.materials.forEach(mat=>mat.setMetallic(ev.value!)))
+pane.addBinding(factors,"roughness",{min:0,max:1}).on("change",(ev)=>modelRenderer.materials.forEach(mat=>mat.setRoughness(ev.value!)))
 pane.element.addEventListener("mouseleave", () => {
     controls.enable()
 })

@@ -115,7 +115,6 @@ export class StandardMaterialExtractor {
             "albedo",
             true
         )
-
         // metallic roughness
         this.pushEntriesDescriptor(
             material.getMetallicRoughnessTexture,
@@ -148,7 +147,7 @@ export class StandardMaterialExtractor {
             "HAS_AO_MAP", materialInstance,
             "ambient_occlusion"
         )
-        console.log(materialInstance.shaderDescriptor.overrides)
+
         // emissive
         this.pushEntriesDescriptor(
             material.getEmissiveTexture,
@@ -171,6 +170,8 @@ export class StandardMaterialExtractor {
         } else {
             materialFactorsArray.push(1.5)
         }
+
+
         // sheen
         const sheenExtension = material.getExtension<Sheen>('KHR_materials_sheen');
         materialInstance.shaderDescriptor.overrides.HAS_SHEEN = Boolean(sheenExtension)
@@ -245,6 +246,7 @@ export class StandardMaterialExtractor {
             "HAS_SPECULAR_MAP", materialInstance,
             "specular"
         )
+
         // specular color
         this.pushEntriesDescriptor(
             specularExtension?.getSpecularColorTexture,
@@ -255,6 +257,7 @@ export class StandardMaterialExtractor {
             "HAS_SPECULAR_COLOR_MAP", materialInstance,
             "specular_color"
         )
+
         ///// transmission
         const transmissionExtension = material.getExtension<Transmission>("KHR_materials_transmission");
         materialInstance.shaderDescriptor.overrides.HAS_TRANSMISSION = Boolean(transmissionExtension)
@@ -268,6 +271,7 @@ export class StandardMaterialExtractor {
             "HAS_TRANSMISSION_MAP", materialInstance,
             "transmission"
         )
+
         //dispersion
         const dispersionExtension = material.getExtension<Dispersion>("KHR_materials_dispersion");
         materialInstance.shaderDescriptor.overrides.HAS_DISPERSION = Boolean(dispersionExtension)
@@ -286,6 +290,7 @@ export class StandardMaterialExtractor {
             "HAS_THICKNESS_MAP", materialInstance,
             "thickness"
         )
+
         // attenuationDistance
         materialFactorsArray.push(volumeExtension?.getAttenuationDistance() ?? 1, 0);
         // attenuationColor
@@ -318,6 +323,7 @@ export class StandardMaterialExtractor {
             "HAS_IRIDESCENCE_THICKNESS_MAP", materialInstance,
             "iridescence_thickness"
         )
+
         //////// diffuse transmission
         const diffuseTransmissionExtension = material.getExtension<DiffuseTransmission>("KHR_materials_diffuse_transmission");
         materialInstance.shaderDescriptor.overrides.HAS_DIFFUSE_TRANSMISSION = Boolean(diffuseTransmissionExtension)
@@ -368,18 +374,19 @@ export class StandardMaterialExtractor {
         materialFactorsArray.push(1);
         // rotation
         materialFactorsArray.push(...[
-            1,0,0,0,
-            0,1,0,0,
-            0,0,1,0,
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
         ]);
 
         const materialFactorsBuffer = createGPUBuffer(
             BaseLayer.device, new Float32Array(materialFactorsArray),
             GPUBufferUsage.UNIFORM, `${materialInstance.name} material info buffer`, 240
         )
-
         // pushing entries
         // materialFactors
+        materialInstance.setMaterialFactors(materialFactorsBuffer)
+
         materialInstance.descriptor.bindGroupEntries.push({
             bindingPoint: materialInstance.bindingCounter,
             buffer: materialFactorsBuffer,
@@ -441,5 +448,110 @@ export class StandardMaterialExtractor {
         }
         materialInstance.isDoubleSided = material.getDoubleSided()
         materialInstance.isTransparent = alphaMode === "BLEND"
+    }
+
+    setDescForNullMats(materialInstance: StandardMaterial) {
+        ["HAS_BASE_COLOR_MAP", "HAS_METALLIC_ROUGHNESS_MAP", "HAS_NORMAL_MAP", "HAS_AO_MAP", "HAS_EMISSIVE_MAP",
+            "HAS_IOR", "HAS_SHEEN", "HAS_SHEEN_COLOR_MAP", "HAS_SHEEN_ROUGHNESS_MAP", "HAS_CLEARCOAT_MAP", "HAS_CLEARCOAT_NORMAL_MAP",
+            "HAS_CLEARCOAT_ROUGHNESS_MAP", "HAS_SPECULAR_MAP", "HAS_SPECULAR_COLOR_MAP", "HAS_TRANSMISSION", "HAS_TRANSMISSION_MAP",
+            "HAS_DISPERSION", "HAS_VOLUME", "HAS_THICKNESS_MAP", "HAS_IRIDESCENCE_MAP", "HAS_IRIDESCENCE_THICKNESS_MAP", "HAS_DIFFUSE_TRANSMISSION",
+            "HAS_DIFFUSE_TRANSMISSION_MAP", "HAS_DIFFUSE_TRANSMISSION_COLOR_MAP", "HAS_ANISOTROPY", "HAS_ANISOTROPY_MAP"]
+            .forEach(i => materialInstance.shaderDescriptor.overrides[i] = false)
+        const materialFactorsArray: number[] = []
+        // base color
+        materialFactorsArray.push(1, 1, 1, 1)
+        // metallic roughness
+        materialFactorsArray.push(1, 0)
+        // normal
+        materialFactorsArray.push(1)
+        // ao
+        materialFactorsArray.push(1)
+        // emissive
+        materialFactorsArray.push(0, 0, 0)
+        materialFactorsArray.push(1)
+        /////////// extensions
+        // ior
+        materialFactorsArray.push(1.5)
+        // sheen color
+        materialFactorsArray.push(0, 0, 0, 1, 1, 1)
+        // sheen roughness
+        materialFactorsArray.push(1)
+        // clearcoat
+        materialFactorsArray.push(0)
+        // clearcoat normal
+        materialFactorsArray.push(0)
+        // clearcoat roughness
+        materialFactorsArray.push(1)
+        // specular
+        materialFactorsArray.push(0)
+        // specular color
+        materialFactorsArray.push(...[0, 1, 0]);
+        // transmission
+        materialFactorsArray.push(0)
+        //dispersion
+        materialFactorsArray.push(0)
+        // thickness
+        materialFactorsArray.push(0)
+        // attenuationDistance
+        materialFactorsArray.push(1, 0);
+        // attenuationColor
+        materialFactorsArray.push(...[0, 1, 0]);
+        // iridescence
+        materialFactorsArray.push(1)
+        // iridescence thickness
+        materialFactorsArray.push(0)
+        materialFactorsArray.push(1)
+        materialFactorsArray.push(0)
+
+        // diffuse transmission
+        materialFactorsArray.push(0)
+
+        // diffuse transmission color
+        materialFactorsArray.push(0, 0, 0)
+
+        // ////// anisotropy
+        materialFactorsArray.push(...[0,
+            1,
+            0,
+            1
+        ])
+
+        // environment
+        // intensity
+        materialFactorsArray.push(1);
+        // rotation
+        materialFactorsArray.push(...[
+            1, 0, 0, 0,
+            0, 1, 0, 0,
+            0, 0, 1, 0,
+        ]);
+
+        const materialFactorsBuffer = createGPUBuffer(
+            BaseLayer.device, new Float32Array(materialFactorsArray),
+            GPUBufferUsage.UNIFORM, `${materialInstance.name} material info buffer`, 240
+        )
+
+        // pushing entries
+        // materialFactors
+        materialInstance.setMaterialFactors(materialFactorsBuffer)
+        materialInstance.descriptor.bindGroupEntries.push({
+            bindingPoint: materialInstance.bindingCounter,
+            buffer: materialFactorsBuffer,
+        })
+        materialInstance.descriptor.layoutEntries.push({
+            binding: materialInstance.bindingCounter,
+            buffer: {
+                type: "uniform"
+            },
+            visibility: GPUShaderStage.FRAGMENT
+        })
+        materialInstance.shaderDescriptor.bindings.push({
+            name: 'materialFactors',
+            wgslType: 'MaterialFactors',
+            address: 'var<uniform>',
+            binding: materialInstance.bindingCounter,
+            group: 1
+        })
+        materialInstance.bindingCounter++
     }
 }

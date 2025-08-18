@@ -28,11 +28,10 @@ baseLayer.setActiveScene(scene)
 
 const mainLayer = new RenderLayer(device, canvas, ctx)
 const loader = new GLTFLoader()
-const {sceneObjects, nodeMap, animations} = await loader.load("/e.glb", scene)
+const {sceneObjects, nodeMap, animations} = await loader.load("/a.glb", scene)
 
 const hdrLoader = new HDRLoader(device);
 const cubeMap = await hdrLoader.load("/e.hdr")
-
 scene.setToneMapping = ToneMapping.ACES
 await scene.backgroundManager.setBackground(cubeMap, 1)
 await scene.environmentManager.setEnvironment(cubeMap, 1024, 128, 32)
@@ -40,7 +39,7 @@ await scene.environmentManager.setEnvironment(cubeMap, 1024, 128, 32)
 scene.lightManager.addDirectional({
     intensity: 2,
     color: [1, 1, 1],
-    position: [3, 0, 0]
+    position: [0, 3, 0]
 })
 
 
@@ -51,7 +50,7 @@ window.addEventListener("resize", () => {
     camera.setAspect(canvas.width / canvas.height)
     camera.updateProjectionMatrix()
 })
-modelRenderer.setSceneObjects(sceneObjects)
+modelRenderer.setSceneObjects(new Set([Array.from(sceneObjects)[0]]))
 modelRenderer.setTranslation(0, 0, 0)
 modelRenderer.setNodeMap(nodeMap)
 await modelRenderer.init()
@@ -59,7 +58,8 @@ modelRenderer.animate(animations[0])
 
 const factors = {
     metallic: 0,
-    roughness: 0
+    roughness: 0,
+    ior: 1.5
 }
 const pane = new Pane();
 const paneElement = pane.element;
@@ -72,11 +72,22 @@ document.body.appendChild(paneElement)
 pane.element.addEventListener("mouseover", () => {
     controls.disable()
 })
-pane.addBinding(factors,"metallic",{min:0,max:1}).on("change",(ev)=>modelRenderer.materials.forEach(mat=>mat.setMetallic(ev.value!)))
-pane.addBinding(factors,"roughness",{min:0,max:1}).on("change",(ev)=>modelRenderer.materials.forEach(mat=>mat.setRoughness(ev.value!)))
 pane.element.addEventListener("mouseleave", () => {
     controls.enable()
 })
+
+pane.addBinding(factors, "metallic", {
+    min: 0,
+    max: 1
+}).on("change", (ev) => modelRenderer.materials.forEach(mat => mat.setMetallic(ev.value!)))
+pane.addBinding(factors, "roughness", {
+    min: 0,
+    max: 1
+}).on("change", (ev) => modelRenderer.materials.forEach(mat => mat.setRoughness(ev.value!)))
+pane.addBinding(factors, "ior", {
+    min: 1,
+    max: 8
+}).on("change", (ev) => modelRenderer.materials.forEach(mat => mat.setIOR(ev.value!)))
 
 
 const render = () => {

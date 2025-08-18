@@ -24,18 +24,23 @@ export class StandardMaterialExtractor {
     }>()
 
     private pushEntriesDescriptor(
-        getTexture: (() => Texture | null) | undefined,
+        getTexture: {
+            func: (() => Texture | null) | undefined,
+            callBY: any
+        },
         materialFactorsArray: number[],
         factors: number[],
         inUseTexCoords: Set<number>,
-        getTextureInfo: (() => TextureInfo | null) | undefined,
-        material: Material,
+        getTextureInfo: {
+            func: (() => TextureInfo | null) | undefined,
+            callBY: any
+        },
         fragmentOverride: string,
         materialInstance: MaterialInstance,
         textureInfoKey: keyof standardMaterialTextureInfo,
         makeSingleTexture: boolean = false
     ) {
-        const texture = getTexture?.call(material);
+        const texture = getTexture.func?.call(getTexture.callBY);
         materialFactorsArray.push(...factors)
         materialInstance.shaderDescriptor.overrides[fragmentOverride] = false;
         if (texture) {
@@ -81,7 +86,7 @@ export class StandardMaterialExtractor {
                     dimensions: size,
                 });
             }
-            const samplerData = getTextureInfo ? GPUCache.textureGenerator.createSamplerCaller(getTextureInfo.call(material)) : {
+            const samplerData = getTextureInfo ? GPUCache.textureGenerator.createSamplerCaller(getTextureInfo.func?.call(getTextureInfo.callBY) ?? null) : {
                 name: 'SAMPLER_DEFAULT',
                 sampler: BaseLayer.samplers.default
             }
@@ -96,7 +101,7 @@ export class StandardMaterialExtractor {
             }
 
             materialInstance.shaderDescriptor.overrides[fragmentOverride] = true;
-            inUseTexCoords.add(getTextureInfo?.call(material)?.getTexCoord() ?? 0)
+            inUseTexCoords.add(getTextureInfo.func?.call(getTextureInfo.callBY)?.getTexCoord() ?? 0)
         }
     }
 
@@ -106,58 +111,59 @@ export class StandardMaterialExtractor {
 
         // base color
         this.pushEntriesDescriptor(
-            material.getBaseColorTexture,
+            {func: material.getBaseColorTexture, callBY: material},
             materialFactorsArray,
             material.getBaseColorFactor().flat(),
             inUseTexCoords,
-            material.getBaseColorTextureInfo, material,
+            {func: material.getBaseColorTextureInfo, callBY: material},
             "HAS_BASE_COLOR_MAP", materialInstance,
             "albedo",
             true
         )
         // metallic roughness
         this.pushEntriesDescriptor(
-            material.getMetallicRoughnessTexture,
+            {func: material.getMetallicRoughnessTexture, callBY: material},
             materialFactorsArray,
             [material.getMetallicFactor(), material.getRoughnessFactor()],
             inUseTexCoords,
-            material.getMetallicRoughnessTextureInfo, material,
+            {func: material.getMetallicRoughnessTextureInfo, callBY: material},
             "HAS_METALLIC_ROUGHNESS_MAP", materialInstance,
             "metallic_roughness"
         )
 
         // normal
         this.pushEntriesDescriptor(
-            material.getNormalTexture,
+            {func: material.getNormalTexture, callBY: material},
             materialFactorsArray,
             [material.getNormalScale()],
             inUseTexCoords,
-            material.getNormalTextureInfo, material,
+            {func: material.getNormalTextureInfo, callBY: material},
             "HAS_NORMAL_MAP", materialInstance,
             "normal"
         )
 
         // ao
         this.pushEntriesDescriptor(
-            material.getOcclusionTexture,
+            {func: material.getOcclusionTexture, callBY: material},
             materialFactorsArray,
             [material.getOcclusionStrength()],
             inUseTexCoords,
-            material.getOcclusionTextureInfo, material,
+            {func: material.getOcclusionTextureInfo, callBY: material},
             "HAS_AO_MAP", materialInstance,
             "ambient_occlusion"
         )
 
         // emissive
         this.pushEntriesDescriptor(
-            material.getEmissiveTexture,
+            {func: material.getEmissiveTexture, callBY: material},
             materialFactorsArray,
             [...material.getEmissiveFactor()],
             inUseTexCoords,
-            material.getEmissiveTextureInfo, material,
+            {func: material.getEmissiveTextureInfo, callBY: material},
             "HAS_EMISSIVE_MAP", materialInstance,
             "emissive"
         )
+
         materialFactorsArray.push(material.getAlphaCutoff())
 
         /////////// extensions
@@ -177,21 +183,21 @@ export class StandardMaterialExtractor {
         materialInstance.shaderDescriptor.overrides.HAS_SHEEN = Boolean(sheenExtension)
         // sheen color
         this.pushEntriesDescriptor(
-            sheenExtension?.getSheenColorTexture,
+            {func: sheenExtension?.getSheenColorTexture, callBY: sheenExtension},
             materialFactorsArray,
             [0, 0, 0, ...sheenExtension?.getSheenColorFactor() ?? [1, 1, 1]],
             inUseTexCoords,
-            sheenExtension?.getSheenColorTextureInfo, material,
+            {func: sheenExtension?.getSheenColorTextureInfo, callBY: sheenExtension},
             "HAS_SHEEN_COLOR_MAP", materialInstance,
             "sheen_color"
         )
         // sheen roughness
         this.pushEntriesDescriptor(
-            sheenExtension?.getSheenRoughnessTexture,
+            {func: sheenExtension?.getSheenRoughnessTexture, callBY: sheenExtension},
             materialFactorsArray,
             [sheenExtension?.getSheenRoughnessFactor() ?? 1],
             inUseTexCoords,
-            sheenExtension?.getSheenRoughnessTextureInfo, material,
+            {func: sheenExtension?.getSheenRoughnessTextureInfo, callBY: sheenExtension},
             "HAS_SHEEN_ROUGHNESS_MAP", materialInstance,
             "sheen_roughness"
         )
@@ -200,35 +206,32 @@ export class StandardMaterialExtractor {
         // clearcoat
         const clearcoatExtension = material.getExtension<Clearcoat>("KHR_materials_clearcoat");
         materialInstance.shaderDescriptor.overrides.HAS_CLEARCOAT = Boolean(clearcoatExtension)
-
         this.pushEntriesDescriptor(
-            clearcoatExtension?.getClearcoatTexture,
+            {func: clearcoatExtension?.getClearcoatTexture, callBY: clearcoatExtension},
             materialFactorsArray,
             [clearcoatExtension?.getClearcoatFactor() ?? 0],
             inUseTexCoords,
-            clearcoatExtension?.getClearcoatTextureInfo, material,
+            {func: clearcoatExtension?.getClearcoatTextureInfo, callBY: clearcoatExtension},
             "HAS_CLEARCOAT_MAP", materialInstance,
             "clearcoat"
         )
-
         // clearcoat normal
         this.pushEntriesDescriptor(
-            clearcoatExtension?.getClearcoatNormalTexture,
+            {func: clearcoatExtension?.getClearcoatNormalTexture, callBY: clearcoatExtension},
             materialFactorsArray,
             [clearcoatExtension?.getClearcoatNormalScale() ?? 0],
             inUseTexCoords,
-            clearcoatExtension?.getClearcoatTextureInfo, material,
+            {func: clearcoatExtension?.getClearcoatTextureInfo, callBY: clearcoatExtension},
             "HAS_CLEARCOAT_NORMAL_MAP", materialInstance,
             "clearcoat_normal"
         )
-
         // clearcoat roughness
         this.pushEntriesDescriptor(
-            clearcoatExtension?.getClearcoatRoughnessTexture,
+            {func: clearcoatExtension?.getClearcoatRoughnessTexture, callBY: clearcoatExtension},
             materialFactorsArray,
             [clearcoatExtension?.getClearcoatRoughnessFactor() ?? 1],
             inUseTexCoords,
-            clearcoatExtension?.getClearcoatRoughnessTextureInfo, material,
+            {func: clearcoatExtension?.getClearcoatRoughnessTextureInfo, callBY: clearcoatExtension},
             "HAS_CLEARCOAT_ROUGHNESS_MAP", materialInstance,
             "clearcoat_roughness"
         )
@@ -238,22 +241,22 @@ export class StandardMaterialExtractor {
         materialInstance.shaderDescriptor.overrides.HAS_SPECULAR = Boolean(clearcoatExtension)
         // specular
         this.pushEntriesDescriptor(
-            specularExtension?.getSpecularTexture,
+            {func: specularExtension?.getSpecularTexture, callBY: specularExtension},
             materialFactorsArray,
             [specularExtension?.getSpecularFactor() ?? 0],
             inUseTexCoords,
-            specularExtension?.getSpecularTextureInfo, material,
+            {func: specularExtension?.getSpecularTextureInfo, callBY: specularExtension},
             "HAS_SPECULAR_MAP", materialInstance,
             "specular"
         )
 
         // specular color
         this.pushEntriesDescriptor(
-            specularExtension?.getSpecularColorTexture,
+            {func: specularExtension?.getSpecularColorTexture, callBY: specularExtension},
             materialFactorsArray,
             specularExtension?.getSpecularColorFactor().flat() ?? [0, 0, 0],
             inUseTexCoords,
-            specularExtension?.getSpecularTextureInfo, material,
+            {func: specularExtension?.getSpecularTextureInfo, callBY: specularExtension},
             "HAS_SPECULAR_COLOR_MAP", materialInstance,
             "specular_color"
         )
@@ -263,11 +266,11 @@ export class StandardMaterialExtractor {
         materialInstance.shaderDescriptor.overrides.HAS_TRANSMISSION = Boolean(transmissionExtension)
         // transmission
         this.pushEntriesDescriptor(
-            transmissionExtension?.getTransmissionTexture,
+            {func: transmissionExtension?.getTransmissionTexture, callBY: transmissionExtension},
             materialFactorsArray,
             [transmissionExtension?.getTransmissionFactor() ?? 0],
             inUseTexCoords,
-            transmissionExtension?.getTransmissionTextureInfo, material,
+            {func: transmissionExtension?.getTransmissionTextureInfo, callBY: transmissionExtension},
             "HAS_TRANSMISSION_MAP", materialInstance,
             "transmission"
         )
@@ -282,11 +285,11 @@ export class StandardMaterialExtractor {
         materialInstance.shaderDescriptor.overrides.HAS_VOLUME = Boolean(volumeExtension)
         // thickness
         this.pushEntriesDescriptor(
-            volumeExtension?.getThicknessTexture,
+            {func: volumeExtension?.getThicknessTexture, callBY: volumeExtension},
             materialFactorsArray,
             [volumeExtension?.getThicknessFactor() ?? 0],
             inUseTexCoords,
-            volumeExtension?.getThicknessTextureInfo, material,
+            {func: volumeExtension?.getThicknessTextureInfo, callBY: volumeExtension},
             "HAS_THICKNESS_MAP", materialInstance,
             "thickness"
         )
@@ -300,11 +303,11 @@ export class StandardMaterialExtractor {
         materialInstance.shaderDescriptor.overrides.HAS_IRIDESCENCE = Boolean(iridescenceExtension)
         // iridescence
         this.pushEntriesDescriptor(
-            iridescenceExtension?.getIridescenceTexture,
+            {func:iridescenceExtension?.getIridescenceTexture,callBY:iridescenceExtension},
             materialFactorsArray,
             [iridescenceExtension?.getIridescenceFactor() ?? 0.9],
             inUseTexCoords,
-            iridescenceExtension?.getIridescenceTextureInfo, material,
+            {func:iridescenceExtension?.getIridescenceTextureInfo,callBY:iridescenceExtension},
             "HAS_IRIDESCENCE_MAP", materialInstance,
             "iridescence"
         )
@@ -315,11 +318,11 @@ export class StandardMaterialExtractor {
         materialFactorsArray.push(iridescenceExtension?.getIridescenceIOR() ?? 0)
 
         this.pushEntriesDescriptor(
-            iridescenceExtension?.getIridescenceThicknessTexture,
+            {func:iridescenceExtension?.getIridescenceThicknessTexture,callBY:iridescenceExtension},
             materialFactorsArray,
             [],
             inUseTexCoords,
-            iridescenceExtension?.getIridescenceThicknessTextureInfo, material,
+            {func:iridescenceExtension?.getIridescenceThicknessTextureInfo,callBY:iridescenceExtension},
             "HAS_IRIDESCENCE_THICKNESS_MAP", materialInstance,
             "iridescence_thickness"
         )
@@ -329,22 +332,22 @@ export class StandardMaterialExtractor {
         materialInstance.shaderDescriptor.overrides.HAS_DIFFUSE_TRANSMISSION = Boolean(diffuseTransmissionExtension)
         // diffuse transmission
         this.pushEntriesDescriptor(
-            diffuseTransmissionExtension?.getDiffuseTransmissionTexture,
+            {func:diffuseTransmissionExtension?.getDiffuseTransmissionTexture,callBY:diffuseTransmissionExtension},
             materialFactorsArray,
             [diffuseTransmissionExtension?.getDiffuseTransmissionFactor() ?? 0],
             inUseTexCoords,
-            diffuseTransmissionExtension?.getDiffuseTransmissionTextureInfo, material,
+            {func:diffuseTransmissionExtension?.getDiffuseTransmissionTextureInfo,callBY:diffuseTransmissionExtension},
             "HAS_DIFFUSE_TRANSMISSION_MAP", materialInstance,
             "diffuse_transmission"
         )
 
         // diffuse transmission color
         this.pushEntriesDescriptor(
-            diffuseTransmissionExtension?.getDiffuseTransmissionColorTexture,
+            {func:diffuseTransmissionExtension?.getDiffuseTransmissionColorTexture,callBY:diffuseTransmissionExtension},
             materialFactorsArray,
             diffuseTransmissionExtension?.getDiffuseTransmissionColorFactor() ?? [0, 0, 0],
             inUseTexCoords,
-            diffuseTransmissionExtension?.getDiffuseTransmissionTextureInfo, material,
+            {func:diffuseTransmissionExtension?.getDiffuseTransmissionTextureInfo,callBY:diffuseTransmissionExtension},
             "HAS_DIFFUSE_TRANSMISSION_COLOR_MAP", materialInstance,
             "diffuse_transmission_color"
         )
@@ -360,11 +363,11 @@ export class StandardMaterialExtractor {
 
         // anisotropy
         this.pushEntriesDescriptor(
-            anisotropyExtension?.getAnisotropyTexture,
+            {func:anisotropyExtension?.getAnisotropyTexture,callBY:anisotropyExtension},
             materialFactorsArray,
             [],
             inUseTexCoords,
-            anisotropyExtension?.getAnisotropyTextureInfo, material,
+            {func:anisotropyExtension?.getAnisotropyTextureInfo,callBY:anisotropyExtension},
             "HAS_ANISOTROPY_MAP", materialInstance,
             "anisotropy"
         )

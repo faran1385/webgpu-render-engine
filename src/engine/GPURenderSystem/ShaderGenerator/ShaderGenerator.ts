@@ -112,7 +112,17 @@ fn vs(in: vsIn) -> vsOut {
                 baseColor: vec3<f32>,
                 baseColorAlpha: f32,
                 ao:f32,
-                fRoughness:vec3f
+                fRoughness:vec3f,
+                emissive:vec3f,
+                normal:vec3f,
+                
+                // clearcoat
+                clearcoatWeight:f32,
+                clearcoatNormal:vec3f,
+                clearcoatRoughness:f32,
+                clearcoatF0:vec3f,
+                clearcoatAlphaRoughness:f32,
+                clearcoatF:vec3f
             };
 
             struct MaterialFactors{
@@ -181,11 +191,15 @@ fn vs(in: vsIn) -> vsOut {
             @fragment fn fs(in: fsIn) -> @location(0) vec4f {
                 var globalInfo:MaterialInfo;
                 let uv=in.uv;
-                let TBN=mat3x3(in.T,in.B,in.normal);
-                let normal=in.normal;
-                let n=normal;
-
+                let TBN=mat3x3(
+                in.T,
+                in.B,
+                in.normal
+                );
+                
+                globalInfo=setNormal(globalInfo,uv,TBN,in.normal);
                 globalInfo=setBaseColor(globalInfo,uv);
+                globalInfo=setEmissive(globalInfo,uv);
                 globalInfo.ior=materialFactors.ior;
                 globalInfo=setMetallicRoughness(globalInfo,uv);
                 globalInfo.dielectricF0=dielectricIorToF0(globalInfo.ior);
@@ -194,21 +208,38 @@ fn vs(in: vsIn) -> vsOut {
                 
                 var Lo = vec3f(0.0);
                 let v=normalize(cameraPosition - in.worldPos);
-                let NoV=dot(n,v);
-                let r=reflect(-v,n);
+                let NoV=dot(globalInfo.normal,v);
+                let r=reflect(-v,globalInfo.normal);
+                
+                globalInfo=setClearcoat(globalInfo,uv,TBN,1.5);
+                
+                let CR=reflect(-v,globalInfo.clearcoatNormal);
+                let NcV=saturate(dot(globalInfo.clearcoatNormal, v));
+
+                
                 for(var i=0;i < i32(lightCounts.directional); i++){
                     let light=dLights[i];
                     let lightIntensity=light.color * light.intensity;
-
                     
                     // brdf variables
                     let l=normalize(light.position - in.worldPos);
-                    let NoL = saturate(dot(n, l));
-                    let NoV = saturate(dot(n, v));
+                    let NoL = saturate(dot(globalInfo.normal, l));
                     let h = normalize(l + v);
-                    let NoH = saturate(dot(n, h));
+                    let NoH = saturate(dot(globalInfo.normal, h));
                     let HoL = saturate(dot(h, l));
                     let HoV = saturate(dot(h, v));
+                    ${overrides.HAS_CLEARCOAT ? `
+                    let NcH=saturate(dot(globalInfo.clearcoatNormal, h));
+                    let NcL=saturate(dot(globalInfo.clearcoatNormal, l));
+                    let CCNDF = D_GGX(NcH,globalInfo.clearcoatAlphaRoughness);        
+                    let CCG   = G_Smith(NcL,NcV,globalInfo.clearcoatRoughness);    
+                    let CCF   = fresnelSchlick(HoV,globalInfo.clearcoatF0);    
+                    let CCDenominator = 4.0 * NcV * NcL + 1e-5;
+                    let CCNumerator = CCNDF * CCG  * CCF;
+                    var CCSpecular     = CCNumerator / CCDenominator; 
+                    CCSpecular *=globalInfo.clearcoatWeight;
+                    let transmittedFromCC= max(vec3f(1) - (globalInfo.clearcoatWeight * CCF),vec3f(0.));
+                    `:``}
                     
                     let NDF = D_GGX(NoH,globalInfo.alphaRoughness);        
                     let G   = G_Smith(NoL,NoV,globalInfo.perceptualRoughness);      
@@ -219,9 +250,14 @@ fn vs(in: vsIn) -> vsOut {
                     kD *= 1.0 - globalInfo.metallic;
                     
                     let numerator    = NDF * G * F;
-                    let denominator = 4.0 * NoV * NoL + 0.0001;
+                    let denominator = 4.0 * NoV * NoL + 1e-5;
                     let specular     = numerator / denominator;  
-                    Lo += (kD * globalInfo.baseColor / PI + specular) * lightIntensity * NoL; 
+                    var baseBRDF=(kD * globalInfo.baseColor / PI + specular) ;
+                    ${overrides.HAS_CLEARCOAT ? `
+                    Lo += (CCSpecular * NcL) * lightIntensity;
+                    baseBRDF *=transmittedFromCC; 
+                    `:``}
+                    Lo += (baseBRDF * NoL) * lightIntensity; 
                 }
                 
                 globalInfo.fRoughness=FresnelSchlickRoughness(NoV, globalInfo.f0, globalInfo.perceptualRoughness);
@@ -239,18 +275,45 @@ fn vs(in: vsIn) -> vsOut {
                     Lo += diffuse * kD * globalInfo.ao; 
                 }
                 
-                Lo +=getIBL(globalInfo,n,r,NoV);
-                
+                Lo +=getIBL(
+                globalInfo.baseColor,
+                globalInfo.metallic,
+                globalInfo.normal,
+                r,
+                NoV,
+                globalInfo.fRoughness,
+                globalInfo.perceptualRoughness,
+                globalInfo.ao,
+                );         
+                       
+                ${overrides.HAS_CLEARCOAT ? `
+                globalInfo.clearcoatF=FresnelSchlickRoughness(NcV, globalInfo.clearcoatF0, globalInfo.clearcoatRoughness);
+                Lo +=getIBL(
+                globalInfo.baseColor,
+                globalInfo.metallic,
+                globalInfo.clearcoatNormal,
+                CR,
+                NcV,
+                globalInfo.clearcoatF,
+                globalInfo.clearcoatRoughness,
+                globalInfo.ao,
+                );
+                `:``}
+
+
                 var color=vec4f(Lo,globalInfo.baseColorAlpha);
+                color = vec4f(color.rgb + globalInfo.emissive,globalInfo.baseColorAlpha);
                 color = vec4f(applyGamma(color.rgb,2.2),globalInfo.baseColorAlpha);
+                //color = vec4f(vec3f(dot(dLights[0].position,globalInfo.clearcoatNormal)),globalInfo.baseColorAlpha);
                 ${overrides.ALPHA_MODE === 0 ? `
                 color.a=1.;
                 `: overrides.ALPHA_MODE === 2 ? `
-                if(materialFactors.alphaCutoff < color.a) {
+                if(color.a < materialFactors.alphaCutoff) {
                     discard;
                 }
                 color.a=1.;
                 `:``}
+
                 return color;
             }
         `

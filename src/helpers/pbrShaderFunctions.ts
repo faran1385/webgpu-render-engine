@@ -110,23 +110,92 @@ export const toneMappings = {
 
 export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
     return `
+    
+        fn setNormal(globalInfo:MaterialInfo,uv:vec2f,TBN:mat3x3f,normal:vec3f)->MaterialInfo{
+            var info=globalInfo;
+            
+            info.normal=normal;
+            
+            ${overrides.HAS_NORMAL_MAP ? `
+            let sampledTex=textureSample([[normal.texture]],[[normal.sampler]],uv,[[normal.textureIndex]]);
+            var n = sampledTex.rgb * 2.0 - 1.0;
+            n = vec3<f32>(n.xy * materialFactors.normalScale, n.z);
+            info.normal = normalize(TBN * n);
+            `:``}
+                        
+            return info;
+        }    
+        
+        fn setClearcoat(globalInfo:MaterialInfo,uv:vec2f,TBN:mat3x3f,ior:f32)->MaterialInfo{
+            var info=globalInfo;
+            info.clearcoatF0=vec3f(dielectricIorToF0(ior));
+            info.clearcoatWeight=max(materialFactors.clearcoat, 1e-4);
+            info.clearcoatRoughness=max(materialFactors.clearcoatRoughness, 1e-4);;
+            
+            ${overrides.HAS_CLEARCOAT_MAP ? `
+            let clearcoatSampledTex=textureSample([[clearcoat.texture]],[[clearcoat.sampler]],uv,[[clearcoat.textureIndex]]);
+            info.clearcoatWeight *=clamp(clearcoatSampledTex.r, 0.0, 1.0);
+            `:``}
+            
+            ${overrides.HAS_CLEARCOAT_ROUGHNESS_MAP ? `
+            let clearcoatRoughnessSampledTex=textureSample([[clearcoat_roughness.texture]],[[clearcoat_roughness.sampler]],uv,[[clearcoat_roughness.textureIndex]]);
+            info.clearcoatRoughness *=clamp(clearcoatRoughnessSampledTex.g, 1e-4, 1.0);
+            `:``}            
+            
+            ${overrides.HAS_CLEARCOAT_NORMAL_MAP ? `
+            let clearcoatNormalSampledTex=textureSample([[clearcoat_normal.texture]],[[clearcoat_normal.sampler]],uv,[[clearcoat_normal.textureIndex]]);
+            var n = clearcoatNormalSampledTex.rgb * 2.0 - 1.0;
+            n = vec3<f32>(n.xy * materialFactors.clearcoatNormalScale, n.z);
+            info.clearcoatNormal = normalize(TBN * n);
+            `:`
+            info.clearcoatNormal=info.normal;
+            `}
+            
+            info.clearcoatAlphaRoughness=info.clearcoatRoughness * info.clearcoatRoughness;
+            
+            return info;
+        }
+    
+        fn setEmissive(globalInfo:MaterialInfo,uv:vec2f)->MaterialInfo{
+            var info=globalInfo;
+            
+            info.emissive=materialFactors.emissive;
+            
+            ${overrides.HAS_EMISSIVE_MAP ? `
+            let sampledTex=textureSample([[emissive.texture]],[[emissive.sampler]],uv,[[emissive.textureIndex]]);
+            info.emissive =sampledTex.rgb;
+            `:``}
+            
+            return info;
+        }
         
         ${GAMMA_CORRECTION}
         
-        fn getIBL(globalInfo:MaterialInfo,n:vec3f,r:vec3f,NoV:f32)->vec3f{
+        fn getIBL(
+        baseColor:vec3f,
+        metallic:f32,
+        n:vec3f,
+        r:vec3f,
+        NoV:f32,
+        F:vec3f,
+        roughness:f32,
+        ao:f32
+        )->vec3f{
             let irradiance = textureSample(irradianceMap,iblSampler, n).rgb;
-            let diffuse    = irradiance * globalInfo.baseColor;
+            let diffuse    = irradiance * baseColor;
             
-            let kS = globalInfo.fRoughness;
+            let kS = F;
             var kD = 1.0 - kS;
-            kD *= 1.0 - globalInfo.metallic;
+            kD *= 1.0 - metallic;
             
-            let prefilteredColor = textureSampleLevel(ggxPrefilterMap,iblSampler, r,  globalInfo.perceptualRoughness * f32(ENV_MAX_LOD_COUNT)).rgb;   
-            let envBRDF  = textureSample(ggxLUT,iblSampler, vec2f(NoV, globalInfo.perceptualRoughness)).rg;
-            let specular = prefilteredColor * (globalInfo.fRoughness * envBRDF.x + envBRDF.y);
-            let ambient = (kD * diffuse + specular) * globalInfo.ao; 
+            let prefilteredColor = textureSampleLevel(ggxPrefilterMap,iblSampler, r,  roughness * f32(ENV_MAX_LOD_COUNT)).rgb;   
+            let envBRDF  = textureSample(ggxLUT,iblSampler, vec2f(NoV, roughness)).rg;
+            let specular = prefilteredColor * (F * envBRDF.x + envBRDF.y);
+            let ambient = (kD * diffuse + specular) * ao; 
             return ambient;
-        }
+        }        
+        
+
     
         fn setAO(globalInfo:MaterialInfo,uv:vec2f)->MaterialInfo{
             var info=globalInfo;
@@ -161,8 +230,8 @@ export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
         
         fn fresnelSchlick(cosTheta:f32, F0:vec3f)->vec3f{
             return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
-        }
-    
+        }        
+        
         fn dielectricIorToF0(ior:f32)->f32{
             return pow((1 - ior) / (1 + ior),2);
         }
@@ -265,7 +334,7 @@ fn getInfo(in: vsIn) -> Info {
     `}
     var T=vec3f(0);
     var B=vec3f(0);
-    var N=vec3f(1);
+    var N=vec3f(0);
     
     ${overrides.HAS_NORMAL_VEC3 ? `
         let normalMatrix =mat3x3<f32>(

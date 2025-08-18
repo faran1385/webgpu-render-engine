@@ -79,6 +79,10 @@ export class StandardMaterial extends MaterialClass {
         BaseLayer.device.queue.writeBuffer(this.materialFactors, 20, new Float32Array([roughness]));
     }
 
+    setIOR(ior: number) {
+        BaseLayer.device.queue.writeBuffer(this.materialFactors, 48, new Float32Array([ior]));
+    }
+
     init(material: Material | null) {
         this.name = material?.getName() ?? "Default"
 

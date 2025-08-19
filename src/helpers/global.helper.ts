@@ -123,6 +123,17 @@ export function isLightDependentMaterial(material: MaterialInstance) {
     return material instanceof StandardMaterial
 }
 
+export function hexToVec3(hex: string): [number, number, number] {
+    hex = hex.replace("#", "");
+
+    // Parse hex values to integers
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+
+    return [r / 255.0, g / 255.0, b / 255.0];
+}
+
 
 export async function hashAndCreateRenderSetup(
     computeManager: ComputeManager,
@@ -131,7 +142,7 @@ export async function hashAndCreateRenderSetup(
     isBindGroupLayoutAlreadySet: undefined | true = undefined
 ) {
     const geometryLayoutHashes = BaseLayer.gpuCache.createGeometryLayoutHashes(primitives)
-    if(!isBindGroupLayoutAlreadySet){
+    if (!isBindGroupLayoutAlreadySet) {
         materials.forEach(mat => {
             const hash = BaseLayer.hasher.hashBindGroupLayout(mat.descriptor.layoutEntries)
             BaseLayer.gpuCache.appendBindGroupLayout(mat.descriptor.layoutEntries,

@@ -7,7 +7,7 @@ import {StandardMaterial, standardMaterialTextureInfo} from "./StandardMaterial.
 import {
     Anisotropy,
     Clearcoat, DiffuseTransmission,
-    Dispersion,
+    Dispersion, EmissiveStrength,
     IOR,
     Iridescence,
     Sheen,
@@ -178,6 +178,12 @@ export class StandardMaterialExtractor {
         }
 
         materialFactorsArray.push(1.5) // clearcoat ior
+
+        const emissiveStrengthExtension = material.getExtension<EmissiveStrength>('KHR_materials_emissive_strength');
+        materialInstance.shaderDescriptor.overrides.HAS_EMISSIVE_STRENGTH = Boolean(emissiveStrengthExtension);
+        materialFactorsArray.push(emissiveStrengthExtension?.getEmissiveStrength() ?? 1)
+
+
         // sheen
         const sheenExtension = material.getExtension<Sheen>('KHR_materials_sheen');
         materialInstance.shaderDescriptor.overrides.HAS_SHEEN = Boolean(sheenExtension)
@@ -185,12 +191,13 @@ export class StandardMaterialExtractor {
         this.pushEntriesDescriptor(
             {func: sheenExtension?.getSheenColorTexture, callBY: sheenExtension},
             materialFactorsArray,
-            [0, 0, ...sheenExtension?.getSheenColorFactor() ?? [1, 1, 1]],
+            [0, ...sheenExtension?.getSheenColorFactor() ?? [1, 1, 1]],
             inUseTexCoords,
             {func: sheenExtension?.getSheenColorTextureInfo, callBY: sheenExtension},
             "HAS_SHEEN_COLOR_MAP", materialInstance,
             "sheen_color"
         )
+
         // sheen roughness
         this.pushEntriesDescriptor(
             {func: sheenExtension?.getSheenRoughnessTexture, callBY: sheenExtension},
@@ -454,7 +461,7 @@ export class StandardMaterialExtractor {
     }
 
     setDescForNullMats(materialInstance: StandardMaterial) {
-        ["HAS_BASE_COLOR_MAP", "HAS_METALLIC_ROUGHNESS_MAP", "HAS_NORMAL_MAP", "HAS_AO_MAP", "HAS_EMISSIVE_MAP",
+        ["HAS_BASE_COLOR_MAP","HAS_EMISSIVE_STRENGTH", "HAS_METALLIC_ROUGHNESS_MAP", "HAS_NORMAL_MAP", "HAS_AO_MAP", "HAS_EMISSIVE_MAP",
             "HAS_IOR", "HAS_SHEEN", "HAS_SHEEN_COLOR_MAP", "HAS_SHEEN_ROUGHNESS_MAP", "HAS_CLEARCOAT_MAP", "HAS_CLEARCOAT_NORMAL_MAP",
             "HAS_CLEARCOAT_ROUGHNESS_MAP", "HAS_SPECULAR_MAP", "HAS_SPECULAR_COLOR_MAP", "HAS_TRANSMISSION", "HAS_TRANSMISSION_MAP",
             "HAS_DISPERSION", "HAS_VOLUME", "HAS_THICKNESS_MAP", "HAS_IRIDESCENCE_MAP", "HAS_IRIDESCENCE_THICKNESS_MAP", "HAS_DIFFUSE_TRANSMISSION",
@@ -473,11 +480,12 @@ export class StandardMaterialExtractor {
         materialFactorsArray.push(0, 0, 0)
         materialFactorsArray.push(1)
         /////////// extensions
-        // ior
-        materialFactorsArray.push(1.5)
+
+        materialFactorsArray.push(1.5) // ior
         materialFactorsArray.push(1.5) // clearcoat ior
+        materialFactorsArray.push(1) // emissive strength
         // sheen color
-        materialFactorsArray.push( 0, 0, 1, 1, 1)
+        materialFactorsArray.push(  0, 1, 1, 1)
         // sheen roughness
         materialFactorsArray.push(1)
         // clearcoat

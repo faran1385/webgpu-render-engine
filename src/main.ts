@@ -1,6 +1,6 @@
 import {RenderLayer} from "./layers/renderLayer.ts";
 import {GLTFLoader} from "./engine/loader/loader.ts";
-import {getStats, initWebGPU} from "./helpers/global.helper.ts";
+import {getStats, hexToVec3, initWebGPU} from "./helpers/global.helper.ts";
 import {ModelRenderer} from "./renderers/modelRenderer.ts";
 
 import {Camera} from "./engine/camera/Camera.ts";
@@ -60,7 +60,9 @@ const factors = {
     metallic: 0,
     roughness: 0,
     ior: 1.5,
-    clearcoatIOR: 1.5
+    clearcoatIOR: 1.5,
+    sheenRoughness: 0,
+    sheenColor:"#111"
 }
 const pane = new Pane();
 const paneElement = pane.element;
@@ -76,6 +78,17 @@ pane.element.addEventListener("mouseover", () => {
 pane.element.addEventListener("mouseleave", () => {
     controls.enable()
 })
+
+pane.addBinding(factors, "sheenRoughness", {
+    min: 0,
+    max: 1
+}).on("change", (ev) => modelRenderer.materials.forEach(mat => mat.setSheenRoughness(ev.value!)))
+
+pane.addBinding(factors, "sheenColor", {
+    color:{}
+}).on("change", (ev) => modelRenderer.materials.forEach(mat => {
+    mat.setSheenColor(hexToVec3(ev.value))
+}))
 
 pane.addBinding(factors, "metallic", {
     min: 0,

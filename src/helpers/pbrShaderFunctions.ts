@@ -110,7 +110,66 @@ export const toneMappings = {
 
 export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
     return `
-    
+        fn charlieLUTSampler(roughness:f32,dotP:f32)->f32{
+            return textureSample(charlieLUT,iblSampler, vec2f(dotP, roughness)).r;
+        }
+
+        fn max3(v:vec3f)->f32 { return max(max(v.x, v.y), v.z); }
+        
+        fn setSheen(globalInfo:MaterialInfo,sheenUV:vec2f,sheenRoughness:vec2f)->MaterialInfo{
+            var info=globalInfo;
+            info.sheenColor=materialFactors.sheenColor;
+            info.sheenRoughness=materialFactors.sheenRoughness;
+            
+            ${overrides.HAS_SHEEN_COLOR_MAP ? `
+            let sampledSheenColor=textureSample([[sheen_color.texture]],[[sheen_color.sampler]],sheenUV,[[sheen_color.textureIndex]]);
+            info.sheenColor *=sampledSheenColor.rgb;
+            `:``}   
+                     
+            ${overrides.HAS_SHEEN_ROUGHNESS_MAP ? `
+            let sampledSheenRoughness=textureSample([[sheen_roughness.texture]],[[sheen_roughness.sampler]],sheenUV,[[sheen_roughness.textureIndex]]);
+            info.sheenRoughness *=sampledSheenRoughness.a;
+            `:``}
+            return info;
+        }
+
+        fn D_Charlie(a: f32, NoH: f32) -> f32 {
+            let invR = 1.0 / a;
+            let cos2h = NoH * NoH;
+            let sin2h = 1.0 - cos2h;
+            return (2.0 + invR) * pow(sin2h, invR * 0.5) / (2.0 * PI);
+        }
+        
+        fn L_curve(x: f32, r: f32) -> f32 {
+          let t = (1.0 - r) * (1.0 - r);
+          let a = mix(21.5473, 25.3245, t);
+          let b = mix(3.82987, 3.32435, t);
+          let c = mix(0.19823, 0.16801, t);
+          let d = mix(-1.97760, -1.27393, t);
+          let e = mix(-4.32054, -4.85967, t);
+          return a / (1.0 + b * pow(x, c)) + d * x + e;
+        }
+        
+        fn lambda_sheen(cosTheta: f32, a: f32) -> f32 {
+          let x = clamp(cosTheta, 0.0, 1.0);
+          var Lx:f32;
+          if (x < 0.5) { 
+            Lx=L_curve(x, a) ;
+          } else { 
+            Lx=2.0 * L_curve(0.5, a) - L_curve(1.0 - x, a);
+          };
+          return exp(Lx);
+        }
+        
+        fn V_Charlie(a: f32, NoV: f32, NoL: f32) -> f32 {
+          let nv = max(NoV, 1e-4);
+          let nl = max(NoL, 1e-4);
+          let G = 1.0 / (1.0 + lambda_sheen(nv, a) + lambda_sheen(nl, a));
+          
+          return saturate(G / (4.0 * nv * nl));
+        }
+
+
         fn setNormal(globalInfo:MaterialInfo,uv:vec2f,TBN:mat3x3f,normal:vec3f)->MaterialInfo{
             var info=globalInfo;
             
@@ -165,7 +224,7 @@ export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
             let sampledTex=textureSample([[emissive.texture]],[[emissive.sampler]],uv,[[emissive.textureIndex]]);
             info.emissive =sampledTex.rgb;
             `:``}
-            
+            info.emissive *=materialFactors.emissiveStrength;
             return info;
         }
         
@@ -207,7 +266,17 @@ export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
             let specular = prefilteredColor * (F * envBRDF.x + envBRDF.y);
             let ambient = (specular) * ao; 
             return ambient;
-        }               
+        }    
+        fn getSheenIBL(
+        r:vec3f,
+        NoV:f32,
+        roughness:f32,
+        )->vec3f{
+            let prefilteredColor = textureSampleLevel(charliePrefilterMap,iblSampler, r,  roughness * f32(ENV_MAX_LOD_COUNT)).rgb;   
+            let envBRDF  = textureSample(charlieLUT,iblSampler, vec2f(NoV, roughness)).r;
+            return prefilteredColor * envBRDF;
+        }          
+        
         
 
     
@@ -387,6 +456,7 @@ fn getInfo(in: vsIn) -> Info {
 }
 
 
+
 export const ggxPrefilterCode = {
     vertex: `
         struct VSOut {
@@ -545,6 +615,324 @@ export const ggxBRDFLUTCode = {
             }
             `
 }
+
+export const charlieBRDFLUTCode = {
+    vertex: `
+    struct VertexOutput {
+      @builtin(position) Position: vec4f,
+      @location(0) uv: vec2f,
+    }
+
+    @vertex
+    fn main(@location(0) position: vec2f, @location(1) uv: vec2f) -> VertexOutput {
+      var output: VertexOutput;
+      output.Position = vec4f(position, 0.0, 1.0);
+      output.uv = uv;
+      return output;
+    }
+  `,
+    fragment: `
+    const PI: f32 = 3.14159265359;
+
+    // radical inverse + hammersley (same approach as your GGX LUT helpers)
+    fn RadicalInverse_VdC(bits: u32) -> f32 {
+      var b = bits;
+      b = (b << 16u) | (b >> 16u);
+      b = ((b & 0x55555555u) << 1u) | ((b & 0xAAAAAAAAu) >> 1u);
+      b = ((b & 0x33333333u) << 2u) | ((b & 0xCCCCCCCCu) >> 2u);
+      b = ((b & 0x0F0F0F0Fu) << 4u) | ((b & 0xF0F0F0F0u) >> 4u);
+      b = ((b & 0x00FF00FFu) << 8u) | ((b & 0xFF00FF00u) >> 8u);
+      return f32(b) * 2.3283064365386963e-10;
+    }
+
+    fn hammersley(i: u32, N: u32) -> vec2f {
+      return vec2f(f32(i) / f32(N), RadicalInverse_VdC(i));
+    }
+
+    // cosine-weighted hemisphere sample (used for LUT integrator)
+    fn sampleCosineHemisphere(xi: vec2f) -> vec3f {
+      let r = sqrt(xi.x);
+      let phi = 2.0 * PI * xi.y;
+      let x = r * cos(phi);
+      let y = r * sin(phi);
+      let z = sqrt(max(0.0, 1.0 - xi.x));
+      return vec3f(x, y, z);
+    }
+
+    // Charlie curve l(x,a)
+    fn l_curve(x: f32, a: f32) -> f32 {
+      let t = (1.0 - a) * (1.0 - a);
+      let A = mix(21.5473, 25.3245, t);
+      let B = mix(3.82987, 3.32435, t);
+      let C = mix(0.19823, 0.16801, t);
+      let D = mix(-1.97760, -1.27393, t);
+      let E = mix(-4.32054, -4.85967, t);
+      return A / (1.0 + B * pow(x, C)) + D * x + E;
+    }
+
+    fn lambda_sheen(cosTheta: f32, a: f32) -> f32 {
+      let x = clamp(cosTheta, 0.0, 1.0);
+      if (x < 0.5) {
+        return exp(l_curve(x, a));
+      } else {
+        return exp(2.0 * l_curve(0.5, a) - l_curve(1.0 - x, a));
+      }
+    }
+
+    fn V_Charlie(a: f32, NoV: f32, NoL: f32) -> f32 {
+      let nv = max(NoV, 1e-6);
+      let nl = max(NoL, 1e-6);
+      let lamV = lambda_sheen(nv, a);
+      let lamL = lambda_sheen(nl, a);
+      return 1.0 / ((1.0 + lamV + lamL) * (4.0 * nv * nl));
+    }
+
+    fn D_Charlie(a: f32, NoH: f32) -> f32 {
+      let rr = max(a, 1e-4);
+      let inv_r = 1.0 / rr;
+      let cos2h = NoH * NoH;
+      let sin2h = max(1.0 - cos2h, 0.0);
+      return (2.0 + inv_r) * pow(sin2h, 0.5 * inv_r) / (2.0 * PI);
+    }
+
+    // Integrator: cosine-weighted hemisphere sampling simplifies the estimator:
+    // E = PI * average_over_samples( D * V )
+    fn integrateCharlie(NdotV: f32, roughness: f32) -> f32 {
+      var V: vec3f;
+      V.x = sqrt(max(0.0, 1.0 - NdotV * NdotV));
+      V.y = 0.0;
+      V.z = NdotV;
+
+      let N = vec3f(0.0, 0.0, 1.0);
+
+      var sum: f32 = 0.0;
+
+      // match your GGX sample count style
+      let SAMPLE_COUNT: u32 = 1024u;
+      for (var i: u32 = 0u; i < SAMPLE_COUNT; i = i + 1u) {
+        let Xi: vec2f = hammersley(i, SAMPLE_COUNT);
+        let L_local: vec3f = sampleCosineHemisphere(Xi);
+        let L: vec3f = L_local; // N=(0,0,1) tangent frame
+        let NoL = max(dot(N, L), 0.0);
+        let H = normalize(V + L);
+        let NoH = clamp(dot(N, H), 0.0, 1.0);
+
+        let D = D_Charlie(roughness, NoH);
+        let Vterm = V_Charlie(roughness, NdotV, NoL);
+        sum = sum + D * Vterm;
+      }
+
+      let E = PI * (sum / f32(SAMPLE_COUNT));
+      // keep same return shape as your GGX LUT (vec2f)
+      return E;
+    }
+
+    @fragment
+    fn main(@location(0) uv: vec2f) -> @location(0) f32 {
+      // follow GGX LUT mapping: integrateBRDF(uv.x, 1 - uv.y)
+      let NdotV = clamp(uv.x, 0.0, 1.0);
+      let roughness = clamp(1.0 - uv.y, 0.0, 1.0);
+      let result = integrateCharlie(NdotV, roughness);
+      return result;
+    }
+  `
+};
+
+
+export const charliePrefilterCode = {
+    vertex: `
+    struct VSOut {
+      @builtin(position) Position: vec4f,
+      @location(0) worldPosition: vec3f,
+    };
+
+    struct Uniforms {
+      modelViewProjectionMatrix: mat4x4f,
+      roughness: f32,
+    };
+
+    @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
+    @vertex
+    fn main(@location(0) position: vec3f) -> VSOut {
+      var output: VSOut;
+      let worldPosition: vec4f = vec4f(position, 1.0);
+      output.Position = uniforms.modelViewProjectionMatrix * worldPosition;
+      output.worldPosition = worldPosition.xyz;
+      return output;
+    }
+  `,
+    fragment: `
+    struct Uniforms {
+      modelViewProjectionMatrix: mat4x4f,
+      roughness: f32,
+    };
+
+    @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+    @group(0) @binding(1) var environmentMap: texture_cube<f32>;
+    @group(0) @binding(2) var environmentSampler: sampler;
+
+    const PI: f32 = 3.14159265359;
+
+    // ---------------- Charlie NDF (D), lambda, and V (Gs) ----------------
+    fn l_curve(x: f32, a: f32) -> f32 {
+      let t = (1.0 - a) * (1.0 - a);
+      let A = mix(21.5473, 25.3245, t);
+      let B = mix(3.82987, 3.32435, t);
+      let C = mix(0.19823, 0.16801, t);
+      let D = mix(-1.97760, -1.27393, t);
+      let E = mix(-4.32054, -4.85967, t);
+      return A / (1.0 + B * pow(x, C)) + D * x + E;
+    }
+
+    fn lambda_sheen(cosTheta: f32, a: f32) -> f32 {
+      let x = clamp(cosTheta, 0.0, 1.0);
+      if (x < 0.5) {
+        return exp(l_curve(x, a));
+      } else {
+        return exp(2.0 * l_curve(0.5, a) - l_curve(1.0 - x, a));
+      }
+    }
+
+    // G_s = 1 / (1 + lambda_v + lambda_l)
+    // V = G_s / (4 * NoV * NoL)
+    fn V_Charlie(a: f32, NoV: f32, NoL: f32) -> f32 {
+      let nv = max(NoV, 1e-6);
+      let nl = max(NoL, 1e-6);
+      let lamV = lambda_sheen(nv, a);
+      let lamL = lambda_sheen(nl, a);
+      return 1.0 / ((1.0 + lamV + lamL) * (4.0 * nv * nl));
+    }
+
+    fn D_Charlie(a: f32, NoH: f32) -> f32 {
+      let rr = max(a, 1e-4);
+      let inv_r = 1.0 / rr;
+      let cos2h = NoH * NoH;
+      let sin2h = max(1.0 - cos2h, 0.0);
+      return (2.0 + inv_r) * pow(sin2h, 0.5 * inv_r) / (2.0 * PI);
+    }
+    // --------------------------------------------------------------------
+
+    // ------------------ Hammersley / RadicalInverse ----------------------
+    fn RadicalInverse_VdC(bits: u32) -> f32 {
+      var b = bits;
+      b = (b << 16u) | (b >> 16u);
+      b = ((b & 0x55555555u) << 1u) | ((b & 0xAAAAAAAAu) >> 1u);
+      b = ((b & 0x33333333u) << 2u) | ((b & 0xCCCCCCCCu) >> 2u);
+      b = ((b & 0x0F0F0F0Fu) << 4u) | ((b & 0xF0F0F0F0u) >> 4u);
+      b = ((b & 0x00FF00FFu) << 8u) | ((b & 0xFF00FF00u) >> 8u);
+      return f32(b) * 2.3283064365386963e-10;
+    }
+
+    fn hammersley(i: u32, N: u32) -> vec2f {
+      return vec2f(f32(i) / f32(N), RadicalInverse_VdC(i));
+    }
+    // --------------------------------------------------------------------
+
+    // Minimal numeric guards (kept tiny to preserve behaviour)
+    const EPS_XI: f32 = 1e-6;
+    const EPS_PDF: f32 = 1e-8;
+    const EPS_WEIGHT: f32 = 1e-6;
+
+    // Importance-sample Charlie half-vector H.
+    // Standard derivation: for p = 1/a, exponent = p + 2, sinTheta = xi.x^(1/(p+2)), phi = 2π xi.y.
+    fn importanceSampleCharlie(xi: vec2f, N: vec3f, a: f32) -> vec3f {
+      // protect xi.x from exact 0 or 1 which can produce degenerate values
+      let x = clamp(xi.x, EPS_XI, 1.0 - EPS_XI);
+      let y = xi.y;
+
+      let aa = max(a, 1e-4);
+      let p = 1.0 / aa; // p = 1/a
+      let exponent = p + 2.0;
+
+      let sinTheta = pow(x, 1.0 / exponent);
+      let cosTheta = sqrt(max(0.0, 1.0 - sinTheta * sinTheta));
+      let phi = 2.0 * PI * y;
+
+      // H in tangent space (N = (0,0,1))
+      let Ht = vec3f(sinTheta * cos(phi), sinTheta * sin(phi), cosTheta);
+
+      // build tangent/bitangent using same approach as your GGX shader
+      var up = vec3f(0.0, 0.0, 1.0);
+      if (abs(N.z) > 0.999) {
+        up = vec3f(1.0, 0.0, 0.0);
+      }
+      let tangent = normalize(cross(up, N));
+      let bitangent = cross(N, tangent);
+
+      // transform to world space
+      let H = normalize(Ht.x * tangent + Ht.y * bitangent + Ht.z * N);
+      return H;
+    }
+
+    override SAMPLE_COUNT = 1024u;
+    override TEXTURE_RESOLUTION = 1024.0;
+
+    @fragment
+    fn main(@location(0) worldPosition: vec3f) -> @location(0) vec4f {
+      // same orientation mapping as your GGX shader
+      var n = normalize(vec3f(worldPosition.x, -worldPosition.y, worldPosition.z));
+
+      // same simplifying assumption: V == R == N (keeps your pipeline identical)
+      let v = n;
+
+      var prefilteredColor = vec3f(0.0, 0.0, 0.0);
+      var totalWeight: f32 = 0.0;
+
+      let SAMPLES: u32 = max(SAMPLE_COUNT, 1u);
+      for (var i: u32 = 0u; i < SAMPLES; i = i + 1u) {
+        let xi = hammersley(i, SAMPLES);
+
+        // importance-sample half-vector using Charlie distribution
+        let h = importanceSampleCharlie(xi, n, uniforms.roughness);
+        let l = normalize(2.0 * dot(v, h) * h - v);
+
+        let nDotL = clamp(dot(n, l), 0.0, 1.0);
+        if (nDotL <= 0.0) {
+          continue;
+        }
+
+        // compute D, nDotH, hDotV exactly like the GGX flow
+        let nDotH = max(dot(n, h), 0.0);
+        let hDotV = max(dot(h, v), EPS_PDF); // avoid zero in denominator
+
+        let d_val = D_Charlie(uniforms.roughness, nDotH);
+
+        // same pdf mapping used in GGX -> L mapping
+        var pdf = d_val * nDotH / (4.0 * hDotV);
+        pdf = max(pdf, EPS_PDF);
+
+        // same solid-angle / mip selection logic as your GGX shader
+        let saTexel = 4.0 * PI / (6.0 * TEXTURE_RESOLUTION * TEXTURE_RESOLUTION);
+        let saSample = 1.0 / (f32(SAMPLES) * pdf + EPS_PDF);
+
+        // stable mip computation and preserve exact formula you used
+        var mipLevel = 0.5 * log2(max(saSample / saTexel, EPS_PDF)) + 1.0;
+        let maxMip = max(0.0, floor(log2(TEXTURE_RESOLUTION)));
+        mipLevel = clamp(mipLevel, 0.0, maxMip);
+
+        let sampleColor = textureSampleLevel(environmentMap, environmentSampler, l, mipLevel).rgb;
+
+        // accumulation unchanged
+        prefilteredColor = prefilteredColor + sampleColor * nDotL;
+        let weight = D_Charlie(uniforms.roughness, nDotH) * 
+                     V_Charlie(uniforms.roughness, max(dot(n, v), 0.0), nDotL) * 
+                     nDotL;
+        prefilteredColor += sampleColor * weight;
+        totalWeight += weight;     
+     }
+
+      // final normalization (same weighting, protect against zero)
+      if (totalWeight <= EPS_WEIGHT) {
+        return vec4f(vec3f(0.0, 0.0, 0.0), 1.0);
+      }
+      prefilteredColor = prefilteredColor / totalWeight;
+      return vec4f(prefilteredColor, 1.0);
+    }
+  `
+};
+
+
 
 
 

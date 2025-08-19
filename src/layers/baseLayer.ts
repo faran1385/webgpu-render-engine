@@ -40,6 +40,7 @@ export class BaseLayer {
     }
     // global resources
     static ggxBRDFLUTTexture: GPUTexture | null = null;
+    static charlieBRDFLUTTexture: GPUTexture | null = null;
     private static _dummyTextures: {
         irradiance: GPUTexture;
         prefiltered: GPUTexture;
@@ -262,6 +263,21 @@ export class BaseLayer {
                 binding: 12,
                 sampler: {
                     type: "filtering"
+                }
+            },
+            {
+                visibility: GPUShaderStage.FRAGMENT,
+                binding: 13,
+                texture: {
+                    sampleType: "float"
+                }
+            },
+            {
+                visibility: GPUShaderStage.FRAGMENT,
+                binding: 14,
+                texture: {
+                    sampleType: "float",
+                    viewDimension: "cube"
                 }
             }
         ]

@@ -6,7 +6,12 @@ import {
     cubemapVertexShader,
     cubePositions, views,
 } from "./cubeData.ts";
-import {ggxBRDFLUTCode, ggxPrefilterCode} from "../../helpers/pbrShaderFunctions.ts";
+import {
+    charlieBRDFLUTCode,
+    charliePrefilterCode,
+    ggxBRDFLUTCode,
+    ggxPrefilterCode
+} from "../../helpers/pbrShaderFunctions.ts";
 import {quadVertices} from "./quadData.ts";
 import {BaseLayer} from "../../layers/baseLayer.ts";
 
@@ -14,7 +19,8 @@ export class Environment {
     private device!: GPUDevice;
     private scene!: Scene;
     public irradianceMap: null | GPUTexture = null;
-    public prefilteredMap: null | GPUTexture = null;
+    public ggxPrefilteredMap: null | GPUTexture = null;
+    public charliePrefilteredMap: null | GPUTexture = null;
     private exposure = 1;
 
     constructor(device: GPUDevice, scene: Scene) {
@@ -365,14 +371,14 @@ export class Environment {
         return this.exposure
     }
 
-    private initBRDFLUT(vertexShader: string, fragmentShader: string, checkTexture: GPUTexture | null) {
+    private initBRDFLUT(vertexShader: string, fragmentShader: string, checkTexture: GPUTexture | null,format:GPUTextureFormat) {
         if (checkTexture) return;
         const BRDF_LUT_SIZE = 64;
 
         const texture = this.device.createTexture({
             label: "BRDF LUT",
             size: {width: BRDF_LUT_SIZE, height: BRDF_LUT_SIZE},
-            format: "rg16float",
+            format,
             usage:
                 GPUTextureUsage.RENDER_ATTACHMENT |
                 GPUTextureUsage.TEXTURE_BINDING |
@@ -407,7 +413,7 @@ export class Environment {
             fragment: {
                 module: this.device.createShaderModule({code: fragmentShader}),
                 entryPoint: "main",
-                targets: [{format: "rg16float"}],
+                targets: [{format}],
             },
             primitive: {
                 topology: "triangle-list",
@@ -461,21 +467,31 @@ export class Environment {
 
     async setEnvironment(cubeMap: GPUTexture, prefilterSampleCount: number, prefilterTextureResolution: number, irradianceResolution: number) {
         const irradiance = this.createIrradiance(cubeMap, irradianceResolution)
-        const prefiltered = this.createPrefiltered(cubeMap,
+        const ggxPrefiltered = this.createPrefiltered(cubeMap,
             prefilterSampleCount,
             prefilterTextureResolution,
             ggxPrefilterCode.vertex,
             ggxPrefilterCode.fragment)
 
+        const charliePrefiltered = this.createPrefiltered(cubeMap,
+            prefilterSampleCount,
+            prefilterTextureResolution,
+            charliePrefilterCode.vertex,
+            charliePrefilterCode.fragment)
 
-        const ggxBRDFLUT = this.initBRDFLUT(ggxBRDFLUTCode.vertex, ggxBRDFLUTCode.fragment, BaseLayer.ggxBRDFLUTTexture)
+
+        const ggxBRDFLUT = this.initBRDFLUT(ggxBRDFLUTCode.vertex, ggxBRDFLUTCode.fragment, BaseLayer.ggxBRDFLUTTexture,"rg16float")
+        const charlieBRDFLUT = this.initBRDFLUT(charlieBRDFLUTCode.vertex, charlieBRDFLUTCode.fragment, BaseLayer.charlieBRDFLUTTexture,"r16float")
         if (ggxBRDFLUT) BaseLayer.ggxBRDFLUTTexture = ggxBRDFLUT;
+        if (charlieBRDFLUT) BaseLayer.charlieBRDFLUTTexture = charlieBRDFLUT;
 
         this.irradianceMap?.destroy()
-        this.prefilteredMap?.destroy()
+        this.ggxPrefilteredMap?.destroy()
+        this.charliePrefilteredMap?.destroy()
 
         this.irradianceMap = irradiance;
-        this.prefilteredMap = prefiltered;
+        this.ggxPrefilteredMap = ggxPrefiltered;
+        this.charliePrefilteredMap = charliePrefiltered;
 
         this.scene.setBindGroup()
     }

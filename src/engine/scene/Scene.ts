@@ -23,7 +23,6 @@ export class Scene extends BaseLayer {
     public largeBufferMap: Map<string, LargeBuffer> = new Map<string, LargeBuffer>()
 
     public globalBindGroup!: GPUBindGroup;
-    public transmissionBindGroup!: GPUBindGroup;
     public readonly renderLoopRunAble: Map<string, (...args: any[]) => void> = new Map()
 
     public readonly renderLoopAnimations: ((t: number) => void)[] = []
@@ -195,7 +194,7 @@ export class Scene extends BaseLayer {
             resource: BaseLayer.ggxBRDFLUTTexture?.createView() ?? BaseLayer.dummyTextures.brdfLut.createView(),
             binding: 9,
         }, {
-            resource: this.environmentManager.prefilteredMap?.createView({dimension: "cube"}) ?? BaseLayer.dummyTextures.prefiltered.createView({dimension: "cube"}),
+            resource: this.environmentManager.ggxPrefilteredMap?.createView({dimension: "cube"}) ?? BaseLayer.dummyTextures.prefiltered.createView({dimension: "cube"}),
             binding: 10,
         }, {
             resource: this.environmentManager.irradianceMap?.createView({dimension: "cube"}) ?? BaseLayer.dummyTextures.irradiance.createView({dimension: "cube"}),
@@ -203,6 +202,12 @@ export class Scene extends BaseLayer {
         }, {
             resource: BaseLayer.samplers.ibl,
             binding: 12,
+        }, {
+            resource: BaseLayer.charlieBRDFLUTTexture?.createView() ?? BaseLayer.dummyTextures.brdfLut.createView(),
+            binding: 13,
+        }, {
+            resource: this.environmentManager.charliePrefilteredMap?.createView({dimension: "cube"}) ?? BaseLayer.dummyTextures.prefiltered.createView({dimension: "cube"}),
+            binding: 14,
         }]
 
         this.globalBindGroup = Scene.device.createBindGroup({

@@ -122,7 +122,11 @@ fn vs(in: vsIn) -> vsOut {
                 clearcoatRoughness:f32,
                 clearcoatF0:vec3f,
                 clearcoatAlphaRoughness:f32,
-                clearcoatF:vec3f
+                clearcoatF:vec3f,
+                
+                // sheen 
+                sheenColor:vec3f,
+                sheenRoughness:f32,
             };
 
             struct MaterialFactors{
@@ -135,12 +139,13 @@ fn vs(in: vsIn) -> vsOut {
                 alphaCutoff:f32, // 44 4
                 ior:f32, // 48 4,
                 clearcoatIOR:f32, // 52 4,
-                sheenColor:vec3f, // 64 16
-                sheenRoughness:f32, // 80 4 
-                clearcoat:f32, // 84 4
-                clearcoatNormalScale:f32, // 88 4
-                clearcoatRoughness:f32, // 92 4
-                specular:f32, // 96 4
+                emissiveStrength:f32, // 56 4,
+                sheenColor:vec3f, // 64 12
+                sheenRoughness:f32, // 76 4 
+                clearcoat:f32, // 80 4
+                clearcoatNormalScale:f32, // 84 4
+                clearcoatRoughness:f32, // 88 4
+                specular:f32, // 92 4
                 specularColor:vec3f, // 96 12 
                 transmission:f32, // 108 4 
                 dispersion:f32, // 112 4 
@@ -163,7 +168,9 @@ fn vs(in: vsIn) -> vsOut {
             @group(0) @binding(6) var<storage, read> aLights: array<ALight>;
             @group(0) @binding(8) var<uniform> lightCounts: LightCounts;
             @group(0) @binding(9) var ggxLUT:texture_2d<f32>;
+            @group(0) @binding(13) var charlieLUT:texture_2d<f32>;
             @group(0) @binding(10) var ggxPrefilterMap:texture_cube<f32>;
+            @group(0) @binding(14) var charliePrefilterMap:texture_cube<f32>;
             @group(0) @binding(11) var irradianceMap:texture_cube<f32>;
             @group(0) @binding(12) var iblSampler:sampler;
             
@@ -199,6 +206,7 @@ fn vs(in: vsIn) -> vsOut {
                 );
                 
                 globalInfo=setNormal(globalInfo,uv,TBN,in.normal);
+                globalInfo=setSheen(globalInfo,uv,uv);
                 globalInfo=setBaseColor(globalInfo,uv);
                 globalInfo=setEmissive(globalInfo,uv);
                 globalInfo.ior=materialFactors.ior;
@@ -242,6 +250,16 @@ fn vs(in: vsIn) -> vsOut {
                     let transmittedFromCC= max(vec3f(1) - (globalInfo.clearcoatWeight * CCF),vec3f(0.));
                     `:``}
                     
+                    ${overrides.HAS_SHEEN? `
+                    let D = D_Charlie(globalInfo.sheenRoughness, NoH);
+                    let V = V_Charlie(globalInfo.sheenRoughness, NoV, NoL);
+                    let sheenBRDF = D * V * materialFactors.sheenColor;
+                    let sheenAlbedoScaling = min(1.0 - max3(materialFactors.sheenColor)
+                    * charlieLUTSampler(NoV,globalInfo.sheenRoughness), 1.0 - max3(materialFactors.sheenColor) * charlieLUTSampler(NoL,globalInfo.sheenRoughness));
+                        
+                    `:``}
+                    
+                    
                     let NDF = D_GGX(NoH,globalInfo.alphaRoughness);        
                     let G   = G_Smith(NoL,NoV,globalInfo.perceptualRoughness);      
                     let F    = fresnelSchlick(HoV, globalInfo.f0); 
@@ -257,6 +275,10 @@ fn vs(in: vsIn) -> vsOut {
                     ${overrides.HAS_CLEARCOAT ? `
                     Lo += (CCSpecular * NcL) * lightIntensity;
                     baseBRDF *=transmittedFromCC; 
+                    `:``}
+                    ${overrides.HAS_SHEEN ? `
+                    Lo += (sheenBRDF * NoL) * lightIntensity;
+                    baseBRDF *=sheenAlbedoScaling; 
                     `:``}
                     Lo += (baseBRDF * NoL) * lightIntensity; 
                 }
@@ -287,6 +309,15 @@ fn vs(in: vsIn) -> vsOut {
                 globalInfo.ao,
                 );
                 `:``}
+                                       
+                ${overrides.HAS_SHEEN ? `
+                let albedoSheenScaling = 1.0 - max3(globalInfo.sheenColor) * charlieLUTSampler(globalInfo.sheenRoughness,NoV);
+                let sheenIbl=getSheenIBL(
+                r,
+                NoV,
+                globalInfo.sheenRoughness
+                ) * globalInfo.sheenColor;
+                `:``}
                 
                 var baseIBL=getIBL(
                 globalInfo.baseColor,
@@ -298,16 +329,25 @@ fn vs(in: vsIn) -> vsOut {
                 globalInfo.perceptualRoughness,
                 globalInfo.ao,
                 );
+                ${overrides.HAS_SHEEN ? `
+                baseIBL = sheenIbl + baseIBL * albedoSheenScaling;
+                `:``}
+                
                 ${overrides.HAS_CLEARCOAT ? `
                 baseIBL *=iblTransmittedFromCC;
                 `:``}
                 
+                
+                
                 Lo+=baseIBL;
-
+                var emissive=globalInfo.emissive;
+                ${overrides.HAS_CLEARCOAT ? `
+                emissive *=iblTransmittedFromCC;
+                `:``}
                 var color=vec4f(Lo,globalInfo.baseColorAlpha);
-                color = vec4f(color.rgb + globalInfo.emissive,globalInfo.baseColorAlpha);
+                color = vec4f(color.rgb + emissive,globalInfo.baseColorAlpha);
                 color = vec4f(applyGamma(color.rgb,2.2),globalInfo.baseColorAlpha);
-                //color = vec4f(vec3f(dot(dLights[0].position,globalInfo.clearcoatNormal)),globalInfo.baseColorAlpha);
+                //color = vec4f(vec3f(materialFactors.sheenRoughness),globalInfo.baseColorAlpha);
                 ${overrides.ALPHA_MODE === 0 ? `
                 color.a=1.;
                 `: overrides.ALPHA_MODE === 2 ? `

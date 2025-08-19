@@ -133,7 +133,8 @@ fn vs(in: vsIn) -> vsOut {
                 occlusionStrength:f32, // 28 4
                 emissive:vec3f, // 32 12 
                 alphaCutoff:f32, // 44 4
-                ior:f32, // 48 4
+                ior:f32, // 48 4,
+                clearcoatIOR:f32, // 52 4,
                 sheenColor:vec3f, // 64 16
                 sheenRoughness:f32, // 80 4 
                 clearcoat:f32, // 84 4
@@ -211,7 +212,7 @@ fn vs(in: vsIn) -> vsOut {
                 let NoV=dot(globalInfo.normal,v);
                 let r=reflect(-v,globalInfo.normal);
                 
-                globalInfo=setClearcoat(globalInfo,uv,TBN,1.5);
+                globalInfo=setClearcoat(globalInfo,uv,TBN,materialFactors.clearcoatIOR);
                 
                 let CR=reflect(-v,globalInfo.clearcoatNormal);
                 let NcV=saturate(dot(globalInfo.clearcoatNormal, v));
@@ -274,8 +275,20 @@ fn vs(in: vsIn) -> vsOut {
 
                     Lo += diffuse * kD * globalInfo.ao; 
                 }
+                       
+                ${overrides.HAS_CLEARCOAT ? `
+                globalInfo.clearcoatF=FresnelSchlickRoughness(NcV, globalInfo.clearcoatF0, globalInfo.clearcoatRoughness);
+                let iblTransmittedFromCC=vec3f(1.) - globalInfo.clearcoatWeight * globalInfo.clearcoatF;
+                Lo +=getClearcoatIBL(
+                CR,
+                NcV,
+                globalInfo.clearcoatF,
+                globalInfo.clearcoatRoughness,
+                globalInfo.ao,
+                );
+                `:``}
                 
-                Lo +=getIBL(
+                var baseIBL=getIBL(
                 globalInfo.baseColor,
                 globalInfo.metallic,
                 globalInfo.normal,
@@ -284,22 +297,12 @@ fn vs(in: vsIn) -> vsOut {
                 globalInfo.fRoughness,
                 globalInfo.perceptualRoughness,
                 globalInfo.ao,
-                );         
-                       
-                ${overrides.HAS_CLEARCOAT ? `
-                globalInfo.clearcoatF=FresnelSchlickRoughness(NcV, globalInfo.clearcoatF0, globalInfo.clearcoatRoughness);
-                Lo +=getIBL(
-                globalInfo.baseColor,
-                globalInfo.metallic,
-                globalInfo.clearcoatNormal,
-                CR,
-                NcV,
-                globalInfo.clearcoatF,
-                globalInfo.clearcoatRoughness,
-                globalInfo.ao,
                 );
+                ${overrides.HAS_CLEARCOAT ? `
+                baseIBL *=iblTransmittedFromCC;
                 `:``}
-
+                
+                Lo+=baseIBL;
 
                 var color=vec4f(Lo,globalInfo.baseColorAlpha);
                 color = vec4f(color.rgb + globalInfo.emissive,globalInfo.baseColorAlpha);

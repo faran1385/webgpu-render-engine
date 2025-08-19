@@ -179,7 +179,7 @@ export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
         NoV:f32,
         F:vec3f,
         roughness:f32,
-        ao:f32
+        ao:f32,
         )->vec3f{
             let irradiance = textureSample(irradianceMap,iblSampler, n).rgb;
             let diffuse    = irradiance * baseColor;
@@ -193,7 +193,21 @@ export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
             let specular = prefilteredColor * (F * envBRDF.x + envBRDF.y);
             let ambient = (kD * diffuse + specular) * ao; 
             return ambient;
-        }        
+        }
+        
+        fn getClearcoatIBL(
+        r:vec3f,
+        NoV:f32,
+        F:vec3f,
+        roughness:f32,
+        ao:f32,
+        )->vec3f{
+            let prefilteredColor = textureSampleLevel(ggxPrefilterMap,iblSampler, r,  roughness * f32(ENV_MAX_LOD_COUNT)).rgb;   
+            let envBRDF  = textureSample(ggxLUT,iblSampler, vec2f(NoV, roughness)).rg;
+            let specular = prefilteredColor * (F * envBRDF.x + envBRDF.y);
+            let ambient = (specular) * ao; 
+            return ambient;
+        }               
         
 
     

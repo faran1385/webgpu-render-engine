@@ -28,7 +28,7 @@ baseLayer.setActiveScene(scene)
 
 const mainLayer = new RenderLayer(device, canvas, ctx)
 const loader = new GLTFLoader()
-const {sceneObjects, nodeMap, animations} = await loader.load("/a.glb", scene)
+const {sceneObjects, nodeMap, animations} = await loader.load("/c.glb", scene)
 
 const hdrLoader = new HDRLoader(device);
 const cubeMap = await hdrLoader.load("/e.hdr")
@@ -50,7 +50,7 @@ window.addEventListener("resize", () => {
     camera.setAspect(canvas.width / canvas.height)
     camera.updateProjectionMatrix()
 })
-modelRenderer.setSceneObjects(new Set([Array.from(sceneObjects)[0]]))
+modelRenderer.setSceneObjects(sceneObjects)
 modelRenderer.setTranslation(0, 0, 0)
 modelRenderer.setNodeMap(nodeMap)
 await modelRenderer.init()
@@ -59,7 +59,8 @@ modelRenderer.animate(animations[0])
 const factors = {
     metallic: 0,
     roughness: 0,
-    ior: 1.5
+    ior: 1.5,
+    clearcoatIOR: 1.5
 }
 const pane = new Pane();
 const paneElement = pane.element;
@@ -88,6 +89,10 @@ pane.addBinding(factors, "ior", {
     min: 1,
     max: 8
 }).on("change", (ev) => modelRenderer.materials.forEach(mat => mat.setIOR(ev.value!)))
+pane.addBinding(factors, "clearcoatIOR", {
+    min: 1,
+    max: 8
+}).on("change", (ev) => modelRenderer.materials.forEach(mat => mat.setClearcoatIOR(ev.value!)))
 
 
 const render = () => {

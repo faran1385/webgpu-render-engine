@@ -177,7 +177,7 @@ export class StandardMaterialExtractor {
             materialFactorsArray.push(1.5)
         }
 
-
+        materialFactorsArray.push(1.5) // clearcoat ior
         // sheen
         const sheenExtension = material.getExtension<Sheen>('KHR_materials_sheen');
         materialInstance.shaderDescriptor.overrides.HAS_SHEEN = Boolean(sheenExtension)
@@ -185,7 +185,7 @@ export class StandardMaterialExtractor {
         this.pushEntriesDescriptor(
             {func: sheenExtension?.getSheenColorTexture, callBY: sheenExtension},
             materialFactorsArray,
-            [0, 0, 0, ...sheenExtension?.getSheenColorFactor() ?? [1, 1, 1]],
+            [0, 0, ...sheenExtension?.getSheenColorFactor() ?? [1, 1, 1]],
             inUseTexCoords,
             {func: sheenExtension?.getSheenColorTextureInfo, callBY: sheenExtension},
             "HAS_SHEEN_COLOR_MAP", materialInstance,
@@ -475,8 +475,9 @@ export class StandardMaterialExtractor {
         /////////// extensions
         // ior
         materialFactorsArray.push(1.5)
+        materialFactorsArray.push(1.5) // clearcoat ior
         // sheen color
-        materialFactorsArray.push(0, 0, 0, 1, 1, 1)
+        materialFactorsArray.push( 0, 0, 1, 1, 1)
         // sheen roughness
         materialFactorsArray.push(1)
         // clearcoat

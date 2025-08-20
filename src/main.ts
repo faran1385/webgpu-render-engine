@@ -39,7 +39,7 @@ await scene.environmentManager.setEnvironment(cubeMap, 1024, 128, 32)
 scene.lightManager.addDirectional({
     intensity: 2,
     color: [1, 1, 1],
-    position: [0, 3, 0]
+    position: [0, 6, 3]
 })
 
 
@@ -80,7 +80,7 @@ pane.element.addEventListener("mouseleave", () => {
 })
 
 pane.addBinding(factors, "sheenRoughness", {
-    min: 0,
+    min: 0.001,
     max: 1
 }).on("change", (ev) => modelRenderer.materials.forEach(mat => mat.setSheenRoughness(ev.value!)))
 
@@ -107,9 +107,9 @@ pane.addBinding(factors, "clearcoatIOR", {
     max: 8
 }).on("change", (ev) => modelRenderer.materials.forEach(mat => mat.setClearcoatIOR(ev.value!)))
 
-
 const render = () => {
     const commandEncoder = device.createCommandEncoder()
+
     mainLayer.render(commandEncoder);
     controls.update()
     device.queue.submit([commandEncoder.finish()])

@@ -55,6 +55,34 @@ fn importanceSampleGGX(xi: vec2f, n: vec3f, roughness: f32) -> vec3f {
 `;
 
 export const toneMappings = {
+    khronosNeutral:`
+    fn toneMapping(color: vec3<f32>) -> vec3<f32> {
+        let startCompression: f32 = 0.8 - 0.04;
+        let desaturation: f32 = 0.15;
+    
+        let x: f32 = min(color.r, min(color.g, color.b));
+        var offset: f32;
+        if (x < 0.08) { 
+            offset=x - 6.25 * x * x;
+        } else { 
+            offset=0.04;
+        }
+        var c: vec3<f32> = color - vec3<f32>(offset);
+    
+        let peak: f32 = max(c.r, max(c.g, c.b));
+        if (peak < startCompression) {
+            return c;
+        }
+    
+        let d: f32 = 1.0 - startCompression;
+        let newPeak: f32 = 1.0 - d * d / (peak + d - startCompression);
+        c *= newPeak / peak;
+    
+        let g: f32 = 1.0 - 1.0 / (desaturation * (peak - newPeak) + 1.0);
+        return mix(c, newPeak * vec3<f32>(1.0, 1.0, 1.0), g);
+    }
+    `,
+
     reinhard: /* wgsl */ `
   fn toneMapping(color: vec3f) -> vec3f {
     return color / (color + vec3f(1.0));
@@ -110,6 +138,89 @@ export const toneMappings = {
 
 export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
     return `
+
+        
+        fn D_GGX_Aniso(ToH: f32, BoH: f32, NoH: f32, at: f32, ab: f32) -> f32 {
+            let invAt2 = 1.0 / (at * at);
+            let invAb2 = 1.0 / (ab * ab);
+        
+            let e = ToH * ToH * invAt2 + BoH * BoH * invAb2 + NoH * NoH;
+            return 1.0 / (PI * at * ab * e * e + 1e-7);
+        }
+        
+        fn G1_GGX_Aniso(NoW: f32, ToW: f32, BoW: f32, at: f32, ab: f32) -> f32 {
+            // NoW must be > 0 for a meaningful result; caller should guard with saturate
+            let num = ToW * ToW * (at * at) + BoW * BoW * (ab * ab);
+            let denom = max(NoW * NoW, 1e-7);
+            let k = num / denom;
+            return 2.0 / (1.0 + sqrt(1.0 + k));
+        }
+        
+        fn G_Smith_Aniso(NoL: f32, NoV: f32,
+                         ToV: f32, BoV: f32,
+                         ToL: f32, BoL: f32,
+                         at: f32, ab: f32) -> f32 {
+            return G1_GGX_Aniso(NoL, ToL, BoL, at, ab) * G1_GGX_Aniso(NoV, ToV, BoV, at, ab);
+        }
+
+        
+    
+        fn setAnisotropy(globalInfo:MaterialInfo,uv:vec2f,TBN:mat3x3f,n:vec3f)->MaterialInfo{
+            var info=globalInfo;
+            
+            info.anisotropyStrength=materialFactors.anisotropy.z;
+            var direction = materialFactors.anisotropy.xy;
+            
+            ${overrides.HAS_ANISOTROPY_MAP ? `
+            let anisotropyTex = textureSample([[anisotropy.texture]],[[anisotropy.sampler]],uv,[[anisotropy.textureIndex]]).rgb;
+            direction = anisotropyTex.rg * 2.0 - vec2(1.0);
+            direction = mat2x2f(direction.x, direction.y, -direction.y, direction.x) * normalize(direction);
+            info.anisotropyStrength *= anisotropyTex.b;
+            `:``}   
+            
+            info.anisotropicT = normalize(TBN * vec3f(direction, 0.0));
+            info.anisotropicB = normalize(cross(n, info.anisotropicT));
+            
+            return info;
+        }
+        fn setTransmission(globalInfo:MaterialInfo,uv:vec2f)->MaterialInfo{
+            var info=globalInfo;
+            info.transmissionWeight=materialFactors.transmission;
+              
+            ${overrides.HAS_TRANSMISSION_MAP ? `
+            let sampledTex=textureSample([[transmission.texture]],[[transmission.sampler]],uv,[[transmission.textureIndex]]);
+            info.transmissionWeight *=sampledTex.r;
+            `:``}       
+            
+            return info;
+        }
+        fn setSpecular(globalInfo:MaterialInfo,specularUV:vec2f,specularColorUV:vec2f)->MaterialInfo{
+            var info=globalInfo;
+            
+            info.specular=materialFactors.specular;
+            info.specularColor=materialFactors.specularColor;
+            
+            ${overrides.HAS_SPECULAR_MAP ? `
+            let sampledSpecular=textureSample([[specular.texture]],[[specular.sampler]],specularUV,[[specular.textureIndex]]);
+            info.specular *=sampledSpecular.a;
+            `:``}               
+            
+            ${overrides.HAS_SPECULAR_COLOR_MAP ? `
+            let sampledSpecularColor=textureSample([[specular_color.texture]],[[specular_color.sampler]],specularColorUV,[[specular_color.textureIndex]]);
+            info.specularColor *=sampledSpecularColor.rgb;
+            `:``}   
+            
+            return info;
+        }
+    
+        fn buildTBN(N:vec3f, T:vec3f,tangentW:f32)->mat3x3f {
+            let Nn = normalize(N);
+            var Tn = normalize(T);
+            Tn = normalize(Tn - Nn * dot(Nn, Tn)); 
+            let Bn = cross(Nn, Tn) * tangentW;
+            
+            return mat3x3f(Tn, Bn, Nn);
+        }
         fn charlieLUTSampler(roughness:f32,dotP:f32)->f32{
             return textureSample(charlieLUT,iblSampler, vec2f(dotP, roughness)).r;
         }
@@ -130,6 +241,8 @@ export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
             let sampledSheenRoughness=textureSample([[sheen_roughness.texture]],[[sheen_roughness.sampler]],sheenUV,[[sheen_roughness.textureIndex]]);
             info.sheenRoughness *=sampledSheenRoughness.a;
             `:``}
+            
+            info.sheenRoughness=max(1e-4,info.sheenRoughness);
             return info;
         }
 
@@ -415,8 +528,7 @@ fn getInfo(in: vsIn) -> Info {
     ` : `
         output.worldPos = modelMatrix * vec4f(in.pos, 1.0);
     `}
-    var T=vec3f(0);
-    var B=vec3f(0);
+    var T=vec4f(0);
     var N=vec3f(0);
     
     ${overrides.HAS_NORMAL_VEC3 ? `
@@ -430,26 +542,16 @@ fn getInfo(in: vsIn) -> Info {
         
     ${overrides.HAS_TANGENT_VEC4 ? `
         ${overrides.HAS_SKIN ? `
-    N = skinData.skinNormal;
-    var tangentDir = skinData.skinTangent.xyz;
-    T = normalize(tangentDir - N * dot(N, tangentDir));
-    
-    B = cross(N, T) * skinData.skinTangent.w;
-    B = normalize(B);
-    
+    N = normalize(normalMatrix * skinData.skinNormal);
+    T = vec4(normalize(normalMatrix * skinData.skinTangent.xyz), skinData.skinTangent.w);  
     ` : `
-    T = normalize(normalMatrix * in.tangent.xyz);
-    N = normalize(normalMatrix * in.normal.xyz);
-    T = normalize(T - N * dot(N, T));
-    
-    B = cross(N, T) * in.tangent.w;
-    B = normalize(B);
+    N = normalize(normalMatrix * in.normal);
+    T = vec4(normalize(normalMatrix * in.tangent.xyz), in.tangent.w);
         `}
     ` : ``}
 
     output.N = N;
     output.T = T;
-    output.B = B;
     return output;
 }
     `

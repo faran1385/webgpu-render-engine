@@ -197,7 +197,6 @@ export class StandardMaterialExtractor {
             "HAS_SHEEN_COLOR_MAP", materialInstance,
             "sheen_color"
         )
-
         // sheen roughness
         this.pushEntriesDescriptor(
             {func: sheenExtension?.getSheenRoughnessTexture, callBY: sheenExtension},
@@ -250,7 +249,7 @@ export class StandardMaterialExtractor {
         this.pushEntriesDescriptor(
             {func: specularExtension?.getSpecularTexture, callBY: specularExtension},
             materialFactorsArray,
-            [specularExtension?.getSpecularFactor() ?? 0],
+            [specularExtension?.getSpecularFactor() ?? 1],
             inUseTexCoords,
             {func: specularExtension?.getSpecularTextureInfo, callBY: specularExtension},
             "HAS_SPECULAR_MAP", materialInstance,
@@ -261,7 +260,7 @@ export class StandardMaterialExtractor {
         this.pushEntriesDescriptor(
             {func: specularExtension?.getSpecularColorTexture, callBY: specularExtension},
             materialFactorsArray,
-            specularExtension?.getSpecularColorFactor().flat() ?? [0, 0, 0],
+            specularExtension?.getSpecularColorFactor().flat() ?? [1, 1, 1],
             inUseTexCoords,
             {func: specularExtension?.getSpecularTextureInfo, callBY: specularExtension},
             "HAS_SPECULAR_COLOR_MAP", materialInstance,
@@ -495,9 +494,9 @@ export class StandardMaterialExtractor {
         // clearcoat roughness
         materialFactorsArray.push(1)
         // specular
-        materialFactorsArray.push(0)
+        materialFactorsArray.push(1)
         // specular color
-        materialFactorsArray.push(...[0, 1, 0]);
+        materialFactorsArray.push(...[1, 1, 1]);
         // transmission
         materialFactorsArray.push(0)
         //dispersion

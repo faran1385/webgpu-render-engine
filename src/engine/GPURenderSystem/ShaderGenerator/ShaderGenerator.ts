@@ -2,7 +2,7 @@ import {
     GeometryBindingPoint, GlobalBindPoints,
     PipelineShaderLocations,
 } from "../../../helpers/Types.ts";
-import {pbrFragmentHelpers, pbrVertexHelpers} from "../../../helpers/pbrShaderFunctions.ts";
+import {pbrFragmentHelpers, pbrVertexHelpers, toneMappings} from "../../../helpers/pbrShaderFunctions.ts";
 import {StandardMaterial} from "../../Material/StandardMaterial.ts";
 import {Geometry} from "../../geometry/Geometry.ts";
 
@@ -34,10 +34,8 @@ struct vsOut {
     @location(0) uv: vec2f,
     @location(1) worldPos:vec3f,
     @location(2) normal: vec3f,
-    @location(3) T: vec3f,
-    @location(4) N: vec3f,
-    @location(5) B: vec3f,
-    @location(6) color: vec3f,
+    @location(3) T: vec4f,
+    @location(4) color: vec3f,
 };
 
 @group(0) @binding(${GlobalBindPoints.PROJECTION_MATRIX}) var<uniform> projectionMatrix: mat4x4<f32>;
@@ -50,8 +48,7 @@ ${pbrVertexHelpers(overrides)}
 
 struct Info{
     worldPos:vec4f,
-    T:vec3f,
-    B:vec3f,
+    T:vec4f,
     N:vec3f
 }
 
@@ -69,7 +66,6 @@ fn vs(in: vsIn) -> vsOut {
     
     output.worldPos = info.worldPos.xyz;
     output.T = info.T;
-    output.B = info.B;
     output.normal = info.N;
     output.clipPos = projectionMatrix * viewMatrix * info.worldPos;
     return output;
@@ -104,7 +100,7 @@ fn vs(in: vsIn) -> vsOut {
             
             struct MaterialInfo {
                 ior:f32,
-                dielectricF0: f32,
+                dielectricF0: vec3f,
                 f0:vec3f,
                 perceptualRoughness: f32,  
                 alphaRoughness: f32,  
@@ -127,6 +123,18 @@ fn vs(in: vsIn) -> vsOut {
                 // sheen 
                 sheenColor:vec3f,
                 sheenRoughness:f32,
+            
+                // specular
+                specularColor:vec3f,
+                specular:f32,
+                
+                // anisotropic
+                anisotropicT:vec3f,
+                anisotropicB:vec3f,
+                anisotropyStrength:f32,
+                
+                // transmission
+                transmissionWeight:f32
             };
 
             struct MaterialFactors{
@@ -187,33 +195,33 @@ fn vs(in: vsIn) -> vsOut {
             struct fsIn{
                 @builtin(front_facing) frontFacing: bool,
                 @location(0) uv: vec2f,
-                @location(2) normal: vec3f,
-                @location(3) T: vec3f,
-                @location(5) B: vec3f,
-                @location(6) color: vec3f,
                 @location(1) worldPos:vec3f,
+                @location(2) normal: vec3f,
+                @location(3) T: vec4f,
+                @location(4) color: vec3f,
             }
             
             ${pbrFragmentHelpers(overrides)}
+            ${toneMappings.khronosNeutral}
             
             @fragment fn fs(in: fsIn) -> @location(0) vec4f {
                 var globalInfo:MaterialInfo;
                 let uv=in.uv;
-                let TBN=mat3x3(
-                in.T,
-                in.B,
-                in.normal
-                );
+                let TBN=buildTBN(in.normal,in.T.xyz,in.T.w);
                 
                 globalInfo=setNormal(globalInfo,uv,TBN,in.normal);
+                globalInfo=setAnisotropy(globalInfo,uv,TBN,in.normal);
+                globalInfo=setSpecular(globalInfo,uv,uv);
+                globalInfo=setTransmission(globalInfo,uv);
                 globalInfo=setSheen(globalInfo,uv,uv);
                 globalInfo=setBaseColor(globalInfo,uv);
                 globalInfo=setEmissive(globalInfo,uv);
                 globalInfo.ior=materialFactors.ior;
                 globalInfo=setMetallicRoughness(globalInfo,uv);
-                globalInfo.dielectricF0=dielectricIorToF0(globalInfo.ior);
+                globalInfo.dielectricF0=dielectricIorToF0(globalInfo.ior) * globalInfo.specularColor;
                 globalInfo=setAO(globalInfo,uv);
-                globalInfo.f0=mix(vec3f(globalInfo.dielectricF0),globalInfo.baseColor,globalInfo.metallic);
+                globalInfo.f0=mix(globalInfo.dielectricF0,globalInfo.baseColor,globalInfo.metallic);
+                globalInfo.f0 *=globalInfo.specular;
                 
                 var Lo = vec3f(0.0);
                 let v=normalize(cameraPosition - in.worldPos);
@@ -251,27 +259,48 @@ fn vs(in: vsIn) -> vsOut {
                     `:``}
                     
                     ${overrides.HAS_SHEEN? `
-                    let D = D_Charlie(globalInfo.sheenRoughness, NoH);
-                    let V = V_Charlie(globalInfo.sheenRoughness, NoV, NoL);
-                    let sheenBRDF = D * V * materialFactors.sheenColor;
+                    let Ds = D_Charlie(globalInfo.sheenRoughness, NoH);
+                    let Vs = V_Charlie(globalInfo.sheenRoughness, NoV, NoL);
+                    let sheenBRDF = Ds * Vs * materialFactors.sheenColor;
                     let sheenAlbedoScaling = min(1.0 - max3(materialFactors.sheenColor)
                     * charlieLUTSampler(NoV,globalInfo.sheenRoughness), 1.0 - max3(materialFactors.sheenColor) * charlieLUTSampler(NoL,globalInfo.sheenRoughness));
-                        
                     `:``}
                     
                     
-                    let NDF = D_GGX(NoH,globalInfo.alphaRoughness);        
-                    let G   = G_Smith(NoL,NoV,globalInfo.perceptualRoughness);      
+                    
                     let F    = fresnelSchlick(HoV, globalInfo.f0); 
+                    ${overrides.HAS_ANISOTROPY ? `
+                    let ToH = dot(globalInfo.anisotropicT, h);
+                    let BoH = dot(globalInfo.anisotropicB, h);
+                    
+                    let ToV = dot(globalInfo.anisotropicT, v);
+                    let BoV = dot(globalInfo.anisotropicB, v);
+                    
+                    let ToL = dot(globalInfo.anisotropicT, l);
+                    let BoL = dot(globalInfo.anisotropicB, l);
+                    
+                    let at = mix(globalInfo.alphaRoughness, 1.0, globalInfo.anisotropyStrength * globalInfo.anisotropyStrength);
+                    let ab = globalInfo.alphaRoughness;
+                    let eps = 0.001;
+                    let at_clamped = max(at, eps);
+                    let ab_clamped = max(ab, eps);
+                    
+                    let NDF = D_GGX_Aniso(ToH, BoH, NoH, at_clamped, ab_clamped);
+                    let G   = G_Smith_Aniso(NoL, NoV, ToV, BoV, ToL, BoL, at_clamped, ab_clamped);
+                    `:`
+                    let NDF = D_GGX(NoH,globalInfo.alphaRoughness);        
+                    let G   = G_Smith(NoL,NoV,globalInfo.perceptualRoughness); 
+                    `}     
                           
                     let kS = F;
                     var kD = vec3(1.0) - kS;
                     kD *= 1.0 - globalInfo.metallic;
-                    
+                    let diffuse = kD * globalInfo.baseColor / PI;
+
                     let numerator    = NDF * G * F;
                     let denominator = 4.0 * NoV * NoL + 1e-5;
                     let specular     = numerator / denominator;  
-                    var baseBRDF=(kD * globalInfo.baseColor / PI + specular) ;
+                    var baseBRDF= diffuse + specular;
                     ${overrides.HAS_CLEARCOAT ? `
                     Lo += (CCSpecular * NcL) * lightIntensity;
                     baseBRDF *=transmittedFromCC; 
@@ -307,7 +336,7 @@ fn vs(in: vsIn) -> vsOut {
                 globalInfo.clearcoatF,
                 globalInfo.clearcoatRoughness,
                 globalInfo.ao,
-                );
+                ) * globalInfo.clearcoatWeight;;
                 `:``}
                                        
                 ${overrides.HAS_SHEEN ? `
@@ -319,6 +348,26 @@ fn vs(in: vsIn) -> vsOut {
                 ) * globalInfo.sheenColor;
                 `:``}
                 
+                ${overrides.HAS_ANISOTROPY? `
+                var bentNormal = cross(globalInfo.anisotropicB, v);
+                bentNormal = normalize(cross(bentNormal, globalInfo.anisotropicB));
+                
+                let a = pow(pow(1.0 - globalInfo.anisotropyStrength * (1.0 - globalInfo.perceptualRoughness),2),2);
+                bentNormal = normalize(mix(bentNormal, globalInfo.normal, a));
+                var Ar = reflect(-v, bentNormal);
+                Ar = normalize(mix(Ar, bentNormal, globalInfo.perceptualRoughness * globalInfo.perceptualRoughness));
+
+                var baseIBL=getIBL(
+                globalInfo.baseColor,
+                globalInfo.metallic,
+                globalInfo.normal,
+                Ar,
+                NoV,
+                globalInfo.fRoughness,
+                globalInfo.perceptualRoughness,
+                globalInfo.ao,
+                );
+                `:`
                 var baseIBL=getIBL(
                 globalInfo.baseColor,
                 globalInfo.metallic,
@@ -329,6 +378,9 @@ fn vs(in: vsIn) -> vsOut {
                 globalInfo.perceptualRoughness,
                 globalInfo.ao,
                 );
+                `}
+                
+                
                 ${overrides.HAS_SHEEN ? `
                 baseIBL = sheenIbl + baseIBL * albedoSheenScaling;
                 `:``}
@@ -346,8 +398,9 @@ fn vs(in: vsIn) -> vsOut {
                 `:``}
                 var color=vec4f(Lo,globalInfo.baseColorAlpha);
                 color = vec4f(color.rgb + emissive,globalInfo.baseColorAlpha);
+                color = vec4f(toneMapping(color.rgb),globalInfo.baseColorAlpha);
                 color = vec4f(applyGamma(color.rgb,2.2),globalInfo.baseColorAlpha);
-                //color = vec4f(vec3f(materialFactors.sheenRoughness),globalInfo.baseColorAlpha);
+                //color = vec4f(vec3f(globalInfo.anisotropyStrength),globalInfo.baseColorAlpha);
                 ${overrides.ALPHA_MODE === 0 ? `
                 color.a=1.;
                 `: overrides.ALPHA_MODE === 2 ? `

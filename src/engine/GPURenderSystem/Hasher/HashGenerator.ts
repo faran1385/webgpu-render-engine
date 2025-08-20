@@ -90,7 +90,6 @@ export class HashGenerator {
     }
 
     public hashBindGroupLayout(entries: GPUBindGroupLayoutEntry[]): number {
-
         let str = '';
         for (const entry of entries) {
             str += entry.binding;
@@ -98,9 +97,9 @@ export class HashGenerator {
             if (entry.buffer) {
                 str += entry.buffer.type === "uniform" ? 0 : entry.buffer.type === "storage" ? 1 : 2;
             } else if (entry.texture) {
-                str += ["float", "sint", "uint", "depth"].indexOf(entry.texture.sampleType ?? "float");
+                str += entry.texture.sampleType
             } else if (entry.sampler) {
-                str += ["filtering", "comparison"].indexOf(entry.sampler.type ?? "filtering");
+                str += entry.sampler.type
             }
         }
         const hashInCache = this.bindGroupLayoutHashCache.get(str);

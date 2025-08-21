@@ -71,6 +71,9 @@ export class StandardMaterial extends MaterialClass {
     }
 
 
+    setBaseColor(color: [number,number,number]) {
+        BaseLayer.device.queue.writeBuffer(this.materialFactors, 0, new Float32Array(color));
+    }
     setSheenColor(color: [number,number,number]) {
         BaseLayer.device.queue.writeBuffer(this.materialFactors, 64, new Float32Array(color));
     }

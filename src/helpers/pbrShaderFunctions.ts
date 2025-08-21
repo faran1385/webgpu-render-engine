@@ -138,7 +138,127 @@ export const toneMappings = {
 
 export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
     return `
+        const XYZ_TO_REC709 = mat3x3f(
+             3.2404542, -0.9692660,  0.0556434,
+            -1.5371385,  1.8760108, -0.2040259,
+            -0.4985314,  0.0415560,  1.0572252
+        );
+        fn snellLaw(outsideIor:f32,iridescenceIor:f32,cosTheta1:f32)->f32{
+            let sinTheta2Sq = pow(outsideIor / iridescenceIor, 2.0) * (1.0 - pow(cosTheta1, 2.0));
+            let cosTheta2Sq = 1.0 - sinTheta2Sq;
+            
+            if (cosTheta2Sq < 0.0) {
+                return -1.0;
+            }
+            
+            return sqrt(max(0.0, 1.0 - sinTheta2Sq));
+        }
+    
+        fn  calculateIridescenceF0(
+        cosTheta1:f32,
+        iridescenceIor:f32,
+        outsideIOR:f32,
+        baseF0:vec3f,
+        iridescenceThickness:f32
+        )->vec3f{
+            let cosTheta2 = snellLaw(outsideIOR, iridescenceIor, cosTheta1);
+            if (cosTheta2 < 0.0) { // TIR
+                return vec3(1.0);
+            }
+            let R0 = dielectricIorToF0(iridescenceIor,outsideIOR);
+            let R12 = fresnelSchlick(cosTheta1,vec3f(R0));
+            let R21 = R12;
+            let T121 = 1.0 - R12;
 
+            let baseIor = dielectricIorToF0_vec3(baseF0 + 0.0001);
+            let R1 = IorToFresnel0_vec3(baseIor, vec3f(iridescenceIor));
+            let R23 = fresnelSchlick(cosTheta2,vec3f(R1));
+            let OPD = 2.0 * iridescenceIor * iridescenceThickness * cosTheta2;
+            
+            // First interface
+            var phi12 = 0.0;
+            if (iridescenceIor < outsideIOR) {
+                phi12 = PI;
+            };
+            let phi21 = PI - phi12;
+            
+            // Second interface
+            var phi23 = vec3f(0.0);
+            if (baseIor[0] < iridescenceIor){
+                phi23[0] = PI;
+            }
+            if (baseIor[1] < iridescenceIor){
+                phi23[1] = PI;
+            }
+            if (baseIor[2] < iridescenceIor){
+                phi23[2] = PI;
+            }
+            
+            let phi = vec3f(phi21) + phi23;
+            
+            // Compound terms
+            let R123 = clamp(R12 * R23, vec3f(1e-5), vec3f(0.9999));
+            let r123 = sqrt(R123);
+            let Rs = pow(T121,vec3f(2.)) * R23 / (vec3(1.0) - R123);
+            
+            // Reflectance term for m = 0 (DC term amplitude)
+            let C0 = R12 + Rs;
+            var I = C0;
+            
+            // Reflectance term for m > 0 (pairs of diracs)
+            var Cm = Rs - T121;
+            for (var m = 1; m <= 2; m++)
+            {
+                Cm *= r123;
+                let Sm = 2.0 * evalSensitivity(f32(m) * OPD, f32(m) * phi);
+                I += Cm * Sm;
+            }
+                        
+            return max(I, vec3(0.0));
+        }
+        
+        fn evalSensitivity(OPD:f32,shift:vec3f)->vec3f {
+            let phase = 2.0 * PI * OPD * 1.0e-9;
+            let val = vec3f(5.4856e-13, 4.4201e-13, 5.2481e-13);
+            let pos = vec3f(1.6810e+06, 1.7953e+06, 2.2084e+06);
+            let variable = vec3f(4.3278e+09, 9.3046e+09, 6.6121e+09);
+        
+            var xyz = val * sqrt(2.0 * PI * variable) * cos(pos * phase + shift) * exp(-1 * pow(phase,2.) * variable);
+            xyz.x += 9.7470e-14 * sqrt(2.0 * PI * 4.5282e+09) * cos(2.2399e+06 * phase + shift[0]) * exp(-4.5282e+09 * pow(phase,2.));
+            xyz /= 1.0685e-7;
+        
+            return XYZ_TO_REC709 * xyz;
+        }
+        
+        fn IorToFresnel0_vec3(transmittedIor:vec3f,incidentIor:vec3f)->vec3f {
+            return pow((transmittedIor - incidentIor) / (transmittedIor + incidentIor), vec3(2.0));
+        }
+
+        fn dielectricIorToF0_vec3(F0:vec3f)->vec3f {
+            let sqrtF0 = sqrt(F0);
+            return (vec3(1.0) + sqrtF0) / (vec3(1.0) - sqrtF0);
+        }
+        
+        
+        
+        fn  setIridescence(globalInfo:MaterialInfo,thicknessUV:vec2f,iridescenceUV:vec2f)->MaterialInfo{
+            var info=globalInfo;
+            info.iridescence = materialFactors.iridescence;
+            info.iridescenceThickness = materialFactors.maximumIridescenceThickness;
+            info.iridescenceIOR = materialFactors.iridescenceIor;
+            
+            ${overrides.HAS_IRIDESCENCE_MAP?`
+            let iridescenceTex = textureSample([[iridescence.texture]],[[iridescence.sampler]],iridescenceUV,[[iridescence.textureIndex]]);
+            info.iridescence *= iridescenceTex.r;
+            `:``}            
+            
+            ${overrides.HAS_IRIDESCENCE_THICKNESS_MAP?`
+            let iridescenceThicknessTex = textureSample([[iridescence_thickness.texture]],[[iridescence_thickness.sampler]],thicknessUV,[[iridescence_thickness.textureIndex]]);
+            info.iridescenceThickness = mix(materialFactors.minimumIridescenceThickness,materialFactors.maximumIridescenceThickness,iridescenceThicknessTex.g);
+            `:``}
+            
+            return info;
+        }
         
         fn D_GGX_Aniso(ToH: f32, BoH: f32, NoH: f32, at: f32, ab: f32) -> f32 {
             let invAt2 = 1.0 / (at * at);
@@ -300,7 +420,7 @@ export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
         
         fn setClearcoat(globalInfo:MaterialInfo,uv:vec2f,TBN:mat3x3f,ior:f32)->MaterialInfo{
             var info=globalInfo;
-            info.clearcoatF0=vec3f(dielectricIorToF0(ior));
+            info.clearcoatF0=vec3f(dielectricIorToF0(ior,1.));
             info.clearcoatWeight=max(materialFactors.clearcoat, 1e-4);
             info.clearcoatRoughness=max(materialFactors.clearcoatRoughness, 1e-4);;
             
@@ -428,8 +548,8 @@ export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
             return F0 + (1.0 - F0) * pow(clamp(1.0 - cosTheta, 0.0, 1.0), 5.0);
         }        
         
-        fn dielectricIorToF0(ior:f32)->f32{
-            return pow((1 - ior) / (1 + ior),2);
+        fn dielectricIorToF0(transmittedIor:f32,incidentIor:f32)->f32{
+            return pow((incidentIor - transmittedIor) / (incidentIor + transmittedIor),2);
         }
         
         // clamp helper
@@ -462,9 +582,9 @@ export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
             info.baseColorAlpha=materialFactors.baseColor.a;
             
             ${overrides.HAS_BASE_COLOR_MAP ? `
-            let sampledTex=textureSample(baseColorTexture,[[albedo.sampler]],uv);
-            info.baseColor *=sampledTex.rgb;
-            info.baseColorAlpha *=sampledTex.a;
+                let sampledTex=textureSample(baseColorTexture,[[albedo.sampler]],uv);
+                info.baseColor *=sampledTex.rgb;
+                info.baseColorAlpha *=sampledTex.a;
             ` : ``}
             
             return info;

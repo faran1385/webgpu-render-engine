@@ -39,7 +39,7 @@ await scene.environmentManager.setEnvironment(cubeMap, 1024, 128, 32)
 scene.lightManager.addDirectional({
     intensity: 2,
     color: [1, 1, 1],
-    position: [0, 6, 3]
+    position: [0, 5, 3]
 })
 
 
@@ -62,7 +62,8 @@ const factors = {
     ior: 1.5,
     clearcoatIOR: 1.5,
     sheenRoughness: 0,
-    sheenColor:"#111"
+    sheenColor: "#111",
+    baseColor: '#fff'
 }
 const pane = new Pane();
 const paneElement = pane.element;
@@ -84,8 +85,14 @@ pane.addBinding(factors, "sheenRoughness", {
     max: 1
 }).on("change", (ev) => modelRenderer.materials.forEach(mat => mat.setSheenRoughness(ev.value!)))
 
+pane.addBinding(factors, "baseColor", {
+    color: {}
+}).on("change", (ev) => modelRenderer.materials.forEach(mat => {
+    mat.setBaseColor(hexToVec3(ev.value))
+}))
+
 pane.addBinding(factors, "sheenColor", {
-    color:{}
+    color: {}
 }).on("change", (ev) => modelRenderer.materials.forEach(mat => {
     mat.setSheenColor(hexToVec3(ev.value))
 }))

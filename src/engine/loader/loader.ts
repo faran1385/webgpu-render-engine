@@ -77,7 +77,6 @@ export class GLTFLoader {
                 sceneObject.markTransformDirty();
             }
         }
-
         return {
             sceneObjects,
             nodeMap,

@@ -77,7 +77,7 @@ fn vs(in: vsIn) -> vsOut {
         const bindings = material.shaderDescriptor.bindings.map(item => {
             return `@group(${item.group}) @binding(${item.binding}) ${item.address} ${item.name}:${item.wgslType};`
         }).join('\n')
-
+        console.log(overrides)
         material.shaderCode = `
             struct DLight {
                 color: vec3f, // 0 12
@@ -132,6 +132,11 @@ fn vs(in: vsIn) -> vsOut {
                 anisotropicT:vec3f,
                 anisotropicB:vec3f,
                 anisotropyStrength:f32,
+                
+                // iridescence
+                iridescence:f32,
+                iridescenceThickness:f32,
+                iridescenceIOR:f32,
                 
                 // transmission
                 transmissionWeight:f32
@@ -210,6 +215,7 @@ fn vs(in: vsIn) -> vsOut {
                 let TBN=buildTBN(in.normal,in.T.xyz,in.T.w);
                 
                 globalInfo=setNormal(globalInfo,uv,TBN,in.normal);
+                globalInfo=setIridescence(globalInfo,uv,uv);
                 globalInfo=setAnisotropy(globalInfo,uv,TBN,in.normal);
                 globalInfo=setSpecular(globalInfo,uv,uv);
                 globalInfo=setTransmission(globalInfo,uv);
@@ -218,7 +224,7 @@ fn vs(in: vsIn) -> vsOut {
                 globalInfo=setEmissive(globalInfo,uv);
                 globalInfo.ior=materialFactors.ior;
                 globalInfo=setMetallicRoughness(globalInfo,uv);
-                globalInfo.dielectricF0=dielectricIorToF0(globalInfo.ior) * globalInfo.specularColor;
+                globalInfo.dielectricF0=dielectricIorToF0(globalInfo.ior,1.) * globalInfo.specularColor;
                 globalInfo=setAO(globalInfo,uv);
                 globalInfo.f0=mix(globalInfo.dielectricF0,globalInfo.baseColor,globalInfo.metallic);
                 globalInfo.f0 *=globalInfo.specular;
@@ -268,7 +274,18 @@ fn vs(in: vsIn) -> vsOut {
                     
                     
                     
-                    let F    = fresnelSchlick(HoV, globalInfo.f0); 
+                    
+                    ${overrides.HAS_IRIDESCENCE ? `
+                    let iridescenceF0=calculateIridescenceF0(NoL,globalInfo.iridescenceIOR,1.,globalInfo.f0,globalInfo.iridescenceThickness);
+                    `:``}
+                    
+                    var F0_total=globalInfo.f0;
+                    ${overrides.HAS_IRIDESCENCE ? `
+                    F0_total = mix(globalInfo.f0, iridescenceF0, globalInfo.iridescence);
+                    `:``}
+                    let F    = fresnelSchlick(HoV, F0_total); 
+                    ${overrides.HAS_IRIDESCENCE ? `
+                    `:''}
                     ${overrides.HAS_ANISOTROPY ? `
                     let ToH = dot(globalInfo.anisotropicT, h);
                     let BoH = dot(globalInfo.anisotropicB, h);
@@ -312,8 +329,13 @@ fn vs(in: vsIn) -> vsOut {
                     Lo += (baseBRDF * NoL) * lightIntensity; 
                 }
                 
+                ${overrides.HAS_IRIDESCENCE ? `
+                let iridescenceF0=calculateIridescenceF0(NoV,globalInfo.iridescenceIOR,1.,globalInfo.f0,globalInfo.iridescenceThickness);
+                let F0_total = mix(globalInfo.f0, iridescenceF0, globalInfo.iridescence);
+                globalInfo.fRoughness=FresnelSchlickRoughness(NoV, F0_total, globalInfo.perceptualRoughness);
+                `:`
                 globalInfo.fRoughness=FresnelSchlickRoughness(NoV, globalInfo.f0, globalInfo.perceptualRoughness);
-                
+                `}
                 
                 for(var i=0;i < i32(lightCounts.ambient); i++){
                     let light=aLights[i];
@@ -400,7 +422,7 @@ fn vs(in: vsIn) -> vsOut {
                 color = vec4f(color.rgb + emissive,globalInfo.baseColorAlpha);
                 color = vec4f(toneMapping(color.rgb),globalInfo.baseColorAlpha);
                 color = vec4f(applyGamma(color.rgb,2.2),globalInfo.baseColorAlpha);
-                //color = vec4f(vec3f(globalInfo.anisotropyStrength),globalInfo.baseColorAlpha);
+                //color = vec4f(vec3f(${overrides.HAS_IRIDESCENCE ? `iridescenceF0`:`0`}),1.);
                 ${overrides.ALPHA_MODE === 0 ? `
                 color.a=1.;
                 `: overrides.ALPHA_MODE === 2 ? `

@@ -34,6 +34,8 @@ export type standardMaterialTextureInfo = {
     diffuse_transmission: matTextureInfo,
     diffuse_transmission_color: matTextureInfo,
     anisotropy: matTextureInfo,
+    specular_glossiness: matTextureInfo,
+    specular_glossiness_diffuse: matTextureInfo,
 }
 
 export class StandardMaterial extends MaterialClass {
@@ -64,6 +66,8 @@ export class StandardMaterial extends MaterialClass {
         diffuse_transmission: {hash: null, dimension: null, shareInfo: null, textureReference: null},
         diffuse_transmission_color: {hash: null, dimension: null, shareInfo: null, textureReference: null},
         anisotropy: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        specular_glossiness: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        specular_glossiness_diffuse: {hash: null, dimension: null, shareInfo: null, textureReference: null},
     }
 
     setMaterialFactors(buffer: GPUBuffer) {

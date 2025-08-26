@@ -1,4 +1,4 @@
-import {updateBuffer} from "../helpers/global.helper.ts";
+import {downsampleWGSL, updateBuffer} from "../helpers/global.helper.ts";
 // @ts-ignore
 import lodComputeShader from "../shaders/builtin/lod.wgsl?raw"
 
@@ -19,6 +19,9 @@ export class BaseLayer {
     public static device: GPUDevice;
     public static hasher: HashGenerator;
     public static gpuCache: GPUCache;
+    public static sceneOpaqueTexture: GPUTexture | null = null
+    public static sceneOpaqueDepthTexture: GPUTexture | null = null
+    public static transmissionPrimitives = new Set<Primitive>()
 
 
     // global data
@@ -49,7 +52,8 @@ export class BaseLayer {
     }
     private static _samplers: {
         ibl: GPUSampler,
-        default: GPUSampler
+        default: GPUSampler,
+        linear: GPUSampler,
     };
     static bindGroupLayouts: {
         globalBindGroupLayout: GPUBindGroupLayout;
@@ -58,7 +62,8 @@ export class BaseLayer {
             hash: number
         }
     };
-
+    public static downSamplePipeline: GPURenderPipeline;
+    public static downSampleUniformBuffer: GPUBuffer;
     public static materialUpdateQueue = new Set<MaterialInstance>();
     public static pipelineUpdateQueue = new Set<Primitive>()
 
@@ -103,6 +108,35 @@ export class BaseLayer {
     async initialize() {
         BaseLayer.format = navigator.gpu.getPreferredCanvasFormat()
 
+        const shaderModule = BaseLayer.device.createShaderModule({
+            code: downsampleWGSL
+        });
+        BaseLayer.downSampleUniformBuffer = BaseLayer.device.createBuffer({
+            size: 16,
+            usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+
+        })
+        BaseLayer.downSamplePipeline = BaseLayer.device.createRenderPipeline({
+            layout: "auto",
+            vertex: {
+                module: shaderModule,
+                entryPoint: "vs_main",
+            },
+            fragment: {
+                module: shaderModule,
+                entryPoint: "fs_main",
+                targets: [
+                    {
+                        format: BaseLayer.format,
+                    }
+                ],
+            },
+            primitive: {
+                topology: "triangle-list",
+                stripIndexFormat: undefined,
+            },
+        });
+
         BaseLayer._depthTexture = BaseLayer.device.createTexture({
             size: {width: window.innerWidth, height: window.innerHeight, depthOrArrayLayers: 1},
             usage: GPUTextureUsage.RENDER_ATTACHMENT,
@@ -144,28 +178,39 @@ export class BaseLayer {
                 addressModeU: "clamp-to-edge",
                 addressModeV: "clamp-to-edge",
                 minFilter: "linear",
-                mipmapFilter: "nearest"
+                mipmapFilter: "linear"
             }),
             default: BaseLayer.device.createSampler({
                 magFilter: "linear",
                 addressModeU: "repeat",
                 addressModeV: "repeat",
                 minFilter: "linear",
-                mipmapFilter: "nearest"
+                mipmapFilter: "linear"
+            }),
+            linear: BaseLayer.device.createSampler({
+                minFilter: "linear",
+                magFilter: "linear",
+                mipmapFilter: "linear",
+                addressModeU: "clamp-to-edge",
+                addressModeV: "clamp-to-edge",
             })
+
         };
 
         BaseLayer._lastFrameTime = performance.now();
         BaseLayer._timeBuffer = BaseLayer.device.createBuffer({
             size: 4,
+            label: "time buffer",
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         })
         BaseLayer._resolutionBuffer = BaseLayer.device.createBuffer({
             size: 8,
+            label: "resolution",
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         })
         BaseLayer._deltaBuffer = BaseLayer.device.createBuffer({
             size: 4,
+            label: "delta buffer",
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         })
 
@@ -279,6 +324,13 @@ export class BaseLayer {
                     sampleType: "float",
                     viewDimension: "cube"
                 }
+            },
+            {
+                visibility: GPUShaderStage.FRAGMENT,
+                binding: 15,
+                texture: {
+                    sampleType: "float",
+                }
             }
         ]
 
@@ -317,6 +369,23 @@ export class BaseLayer {
         BaseLayer.gpuCache = new GPUCache();
     }
 
+    static setSceneOpaqueOnlyTexture() {
+        const mipLevels = Math.floor(Math.log2(Math.max(window.innerWidth, window.innerHeight))) + 1;
+
+        BaseLayer.sceneOpaqueTexture = this.device.createTexture({
+            size: [window.innerWidth, window.innerHeight],
+            usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT,
+            format: BaseLayer.format,
+            mipLevelCount: mipLevels
+        })
+        BaseLayer.sceneOpaqueDepthTexture = this.device.createTexture({
+            size: [window.innerWidth, window.innerHeight],
+            usage: GPUTextureUsage.RENDER_ATTACHMENT,
+            label: "depthTexture transmissionTexture",
+            format: "depth24plus",
+        })
+        this.activeScene.setBindGroup()
+    }
 
     private setFrustumCulling(): void {
         const layout = BaseLayer.device.createBindGroupLayout({
@@ -451,6 +520,10 @@ export class BaseLayer {
             label: "depthTexture",
             format: "depth24plus"
         });
+
+        if (BaseLayer.transmissionPrimitives.size > 0) {
+            BaseLayer.setSceneOpaqueOnlyTexture()
+        }
     }
 
 }

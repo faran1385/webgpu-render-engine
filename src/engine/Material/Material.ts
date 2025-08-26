@@ -14,12 +14,10 @@ export type bindingType = {
     name: string,
     wgslType: string,
 }
-
 export type compileHintType = {
     searchKeyword: string,
     replaceKeyword: string,
 }
-
 
 export interface ShaderDescriptor {
     bindings: bindingType[]

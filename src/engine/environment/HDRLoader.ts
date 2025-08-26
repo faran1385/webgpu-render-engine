@@ -54,6 +54,7 @@ export class HDRLoader {
 
         const vpBuffer = this.device.createBuffer({
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+            label:"vpBuffer",
             size: 64
         })
         const projection = mat4.perspective(mat4.create(), Math.PI / 2, 1, 0.1, 10);

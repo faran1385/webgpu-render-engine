@@ -47,6 +47,7 @@ export class Environment {
 
         const uniformBuffer = this.device.createBuffer({
             size: Float32Array.BYTES_PER_ELEMENT * 16,
+            label:"env uniform buffer",
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 
@@ -86,7 +87,8 @@ export class Environment {
                     sampleCount++;
                 }
             }
-            return vec4(PI * color / f32(sampleCount), 1.0);
+            
+                return vec4(PI * color / f32(sampleCount), 1.0);
           }
         `;
 
@@ -235,6 +237,7 @@ export class Environment {
         });
         const uniformBuffer = this.device.createBuffer({
             size: Float32Array.BYTES_PER_ELEMENT * (16 + 4),
+            label:"env uniform buffer",
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 

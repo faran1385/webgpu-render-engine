@@ -7,6 +7,7 @@ import {ModelAnimator} from "../engine/modelAnimator/modelAnimator.ts";
 import {MaterialInstance} from "../engine/Material/Material.ts";
 import {Primitive} from "../engine/primitive/Primitive.ts";
 import {Scene} from "../engine/scene/Scene.ts";
+import {BaseLayer} from "../layers/baseLayer.ts";
 
 export type PipelineLayoutHashItem = {
     primitive: Primitive
@@ -33,7 +34,7 @@ export class ModelRenderer {
 
     public fillInitEntry() {
         if (this.sceneObjects.size === 0) throw new Error("sceneObjects is not set");
-        GPUCache.smartRenderer.entryCreator(this.sceneObjects, this.nodeMap, Array.from(this.materials))
+        GPUCache.smartRenderer.entryCreator(this.sceneObjects, this.nodeMap, Array.from(this.materials), this.scene)
     }
 
     public setNodeMap(map: Map<Node, SceneObject>) {
@@ -106,9 +107,11 @@ export class ModelRenderer {
 
 
     public async init() {
-        this.fillInitEntry()
-
         const primitives: Primitive[] = []
+        this.fillInitEntry()
+        if (this.scene.transmissionPrimitives.size > 0 && !BaseLayer.sceneOpaqueTexture) {
+            BaseLayer.setSceneOpaqueOnlyTexture()
+        }
         this.sceneObjects.forEach(sceneObject => {
             sceneObject.primitives?.forEach(p => primitives.push(p))
         })

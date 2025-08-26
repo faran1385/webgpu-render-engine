@@ -116,6 +116,7 @@ export class LightManager {
         const byteSize = floatCount * 4;
         this.lightsBuffer.directional = LightManager.device.createBuffer({
             size: byteSize,
+            label:"directional light",
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
     }
@@ -123,6 +124,7 @@ export class LightManager {
     private createMinimalBuffer(size:number): GPUBuffer {
         return LightManager.device.createBuffer({
             size,
+            label:"minimal buffer",
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
     }
@@ -132,6 +134,7 @@ export class LightManager {
         const directional = dirMax > 0
             ? LightManager.device.createBuffer({
                 size: dirMax * 12 * 4,
+                label:"directional light",
                 usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
             })
             : this.createMinimalBuffer(48);
@@ -139,12 +142,14 @@ export class LightManager {
         const ambient = aMax > 0
             ? LightManager.device.createBuffer({
                 size: aMax * 8 * 4,
+                label:"ambient light",
                 usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST
             })
             : this.createMinimalBuffer(32);
 
         const counts = LightManager.device.createBuffer({
             size: 16,
+            label:"light count buffer",
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
         });
 
@@ -160,6 +165,7 @@ export class LightManager {
         const byteSize = floatCount * 4;
         this.lightsBuffer.ambient = LightManager.device.createBuffer({
             size: byteSize,
+            label:"ambient buffer",
             usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
         });
     }

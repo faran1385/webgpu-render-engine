@@ -12,6 +12,7 @@ import {isLightDependentMaterial} from "../../../helpers/global.helper.ts";
 import {BaseLayer} from "../../../layers/baseLayer.ts";
 import {MaterialLayoutGenerator} from "../MaterialLayoutGenerator/MaterialLayoutGenerator.ts";
 import {MaterialInstance} from "../../Material/Material.ts";
+import {Scene} from "../../scene/Scene.ts";
 
 export class SmartRender {
     static defaultGeometryBindGroupLayout: GPUBindGroupLayoutEntry[][] = []
@@ -287,7 +288,8 @@ export class SmartRender {
     public entryCreator(
         sceneObjectsSet: Set<SceneObject>,
         nodeMap: undefined | Map<Node, SceneObject>,
-        materials: MaterialInstance[]
+        materials: MaterialInstance[],
+        scene: Scene
     ) {
         const sceneObjects = this.getRenderAbleNodes(sceneObjectsSet)
 
@@ -302,6 +304,15 @@ export class SmartRender {
         })
 
         materials.forEach(mat => {
+            // adding transmission objects to the scene
+            if(mat.shaderDescriptor.overrides.HAS_TRANSMISSION){
+                mat.primitives.forEach(p => {
+                    BaseLayer.transmissionPrimitives.add(p)
+                    scene.transmissionPrimitives.add(p)
+                })
+            }
+
+            /// generating code
             if (mat instanceof StandardMaterial) {
                 SmartRender.shaderGenerator.getStandardCode(mat)
             }

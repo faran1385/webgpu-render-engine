@@ -92,7 +92,7 @@ export class IndirectDraw {
                 const pipeline = environment.pipelines.get(side);
                 if (!pipeline) throw new Error("pipeline not found");
                 pass.setPipeline(pipeline)
-                pass.setBindGroup(0, this.scene.globalBindGroup)
+                pass.setBindGroup(0, this.scene.usedGlobalBindGroup)
                 pass.setBindGroup(1,environment.material.bindGroup)
                 pass.setBindGroup(2,environment.geometry.bindGroup)
 
@@ -115,7 +115,7 @@ export class IndirectDraw {
             item.sides.forEach((side) => {
                 const pipeline = item.pipelines.get(side)!;
                 pass.setPipeline(pipeline)
-                pass.setBindGroup(0, this.scene.globalBindGroup)
+                pass.setBindGroup(0, this.scene.usedGlobalBindGroup)
                 pass.setBindGroup(1,item.material.bindGroup)
                 pass.setBindGroup(2,item.geometry.bindGroup)
                 item.vertexBuffers.forEach((buffer, i) => {

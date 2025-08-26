@@ -138,6 +138,184 @@ export const toneMappings = {
 
 export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
     return `
+
+fn getDiffuseTransmissionIBL(
+n:vec3f,
+diffuseTransmissionColor:vec3f,
+diffuseTransmission:f32,
+diffuseTransmissionThickness:vec3f,
+attenuationColor:vec3f,
+attenuationDistance:f32,
+)->vec3f{
+
+    var diffuseTransmissionIBL = textureSample(irradianceMap,iblSampler, -n).rgb * diffuseTransmissionColor;
+    
+    ${overrides.HAS_VOLUME ? `
+    diffuseTransmissionIBL = applyVolumeAttenuation(diffuseTransmissionIBL, diffuseTransmissionThickness, attenuationColor, attenuationDistance);
+    `:``}
+    
+    return diffuseTransmissionIBL;
+}
+
+fn getPunctualRadianceTransmission(F0_total:vec3f,normal: vec3<f32>, view: vec3<f32>, pointToLight: vec3<f32>, roughness: f32, baseColor: vec3<f32>, ior: f32) -> vec3<f32> {
+    let alphaRoughness=roughness * roughness;
+    let transmissionRougness: f32 = applyIorToRoughness(alphaRoughness, ior);
+    let n: vec3<f32> = normalize(normal);
+    let v: vec3<f32> = normalize(view);
+    let l: vec3<f32> = normalize(pointToLight);
+    let l_mirror: vec3<f32> = normalize(l + 2. * n * dot(-l, n));
+    let h: vec3<f32> = normalize(l_mirror + v);
+    let NoH=saturate(dot(n,h));
+    let NoL=saturate(dot(n,l_mirror));
+    let NoV=saturate(dot(n,v));
+    let HoV=saturate(dot(h,v));
+    let F    = fresnelSchlick(HoV, F0_total); 
+    let NDF = D_GGX(NoH,alphaRoughness);        
+    let G   = G_Smith(NoL,NoV,roughness); 
+    let numerator    = NDF * G * F;
+    let denominator = 4.0 * NoV * NoL + 1e-5;
+
+    return baseColor * numerator / denominator;
+} 
+
+
+
+fn applyVolumeAttenuation(radiance: vec3<f32>, transmissionDistance: f32, attenuationColor: vec3<f32>, attenuationDistance: f32) -> vec3<f32> {
+    if (attenuationDistance == 0.) {
+        return radiance;
+    } else { 
+        let transmittance: vec3<f32> = pow(attenuationColor, vec3<f32>(transmissionDistance / attenuationDistance));
+        return transmittance * radiance;
+    }
+} 
+
+fn setDiffuseTransmission(globalInfo:MaterialInfo,uv:vec2f,colorUV:vec2f) -> MaterialInfo {
+    var info:MaterialInfo= globalInfo;
+    
+    info.diffuseTransmission=materialFactors.diffuseTransmission;
+    info.diffuseTransmissionColor=materialFactors.diffuseTransmissionColor;
+    
+    ${overrides.HAS_DIFFUSE_TRANSMISSION_MAP ? `
+    let sampledTex=textureSample([[diffuse_transmission.texture]],[[diffuse_transmission.sampler]],uv,[[diffuse_transmission.textureIndex]]);
+    info.diffuseTransmission *=sampledTex.a;
+    `:``}
+        
+    ${overrides.HAS_DIFFUSE_TRANSMISSION_COLOR_MAP ? `
+    let sampledTex=textureSample([[diffuse_transmission_color.texture]],[[diffuse_transmission_color.sampler]],uv,[[diffuse_transmission_color.textureIndex]]);
+    info.diffuseTransmissionColor *=sampledTex.rgb;
+    `:``}
+    
+    return info;
+} 
+fn setVolume(globalInfo:MaterialInfo,uv:vec2f) -> MaterialInfo {
+    var info:MaterialInfo= globalInfo;
+    
+    info.thickness=materialFactors.thickness;
+    info.attenuationColor=materialFactors.attenuationColor;
+    info.attenuationDistance=materialFactors.attenuationDistance;
+    
+    ${overrides.HAS_THICKNESS_MAP ? `
+    let sampledTex=textureSample([[thickness.texture]],[[thickness.sampler]],uv,[[thickness.textureIndex]]);
+    info.thickness *=sampledTex.g;
+    `:``}
+    
+    return info;
+} 
+
+
+fn getVolumeTransmissionRay(n: vec3<f32>, v: vec3<f32>, thickness: f32, ior: f32, modelMatrix: mat4x4<f32>) -> vec3<f32> {
+
+    let refractionVector: vec3<f32> = refract(-v, n, 1. / ior);
+    var modelScale: vec3<f32>;
+    modelScale.x = length(vec3<f32>(modelMatrix[0].xyz));
+    modelScale.y = length(vec3<f32>(modelMatrix[1].xyz));
+    modelScale.z = length(vec3<f32>(modelMatrix[2].xyz));
+    return normalize(refractionVector) * thickness * modelScale;
+} 
+
+
+fn applyIorToRoughness(roughness: f32, ior: f32) -> f32 {
+    return roughness * clamp(ior * 2. - 2., 0., 1.);
+} 
+
+fn getTransmissionSample(fragCoord: vec2<f32>, roughness: f32, ior: f32) -> vec3<f32> {
+    let levelCount=floor(log2(f32(max(textureDimensions(sceneBackgroundTexture,0).x,textureDimensions(sceneBackgroundTexture,0).y))));
+    let framebufferLod=levelCount * applyIorToRoughness(roughness, ior);
+    let transmittedLight: vec3<f32> = textureSampleLevel(sceneBackgroundTexture, iblSampler, fragCoord.xy, f32(framebufferLod)).rgb;
+    return transmittedLight;
+} 
+
+fn getIBLVolumeRefraction(
+n: vec3<f32>, 
+v: vec3<f32>, 
+perceptualRoughness: f32, 
+baseColor: vec3<f32>, 
+position: vec3<f32>, 
+modelMatrix: mat4x4<f32>, 
+viewMatrix: mat4x4<f32>, 
+projMatrix: mat4x4<f32>, 
+ior: f32, 
+thickness: f32, 
+attenuationColor: vec3<f32>, 
+attenuationDistance: f32, 
+dispersion: f32
+) -> vec3<f32> {
+    ${overrides.HAS_DISPERSION ? `
+    let halfSpread: f32 = (ior - 1.) * 0.025 * dispersion;
+    let iors: vec3<f32> = vec3<f32>(ior - halfSpread, ior, ior + halfSpread);
+    var transmittedLight: vec3<f32>;
+    var transmissionRayLength: f32;
+    
+    for (var i: i32 = 0; i < 3; i = i + 1) {
+        var transmissionRay: vec3<f32> = getVolumeTransmissionRay(n, v, thickness, iors[i], modelMatrix);
+        transmissionRayLength = length(transmissionRay);
+        var refractedRayExit: vec3<f32> = position + transmissionRay;
+        var ndcPos: vec4<f32> = projMatrix * viewMatrix * vec4<f32>(refractedRayExit, 1.);
+        var refractionCoords: vec2<f32> = ndcPos.xy / ndcPos.w;
+        refractionCoords = refractionCoords.xy * 0.5 + 0.5;
+        refractionCoords = vec2f(refractionCoords.x,1.-refractionCoords.y);
+        transmittedLight[i] = getTransmissionSample(refractionCoords, perceptualRoughness, iors[i])[i];
+    }
+    `:`
+        let transmissionRay: vec3<f32> = getVolumeTransmissionRay(n, v, thickness, ior, modelMatrix);
+        let transmissionRayLength: f32 = length(transmissionRay);
+        let refractedRayExit: vec3<f32> = position + transmissionRay;
+        let ndcPos: vec4<f32> = projMatrix * viewMatrix * vec4<f32>(refractedRayExit, 1.);
+        var refractionCoords: vec2<f32> = ndcPos.xy / ndcPos.w;
+        refractionCoords = refractionCoords.xy * 0.5 + 0.5;
+        refractionCoords = vec2f(refractionCoords.x,1.-refractionCoords.y);
+        let transmittedLight: vec3<f32> = getTransmissionSample(refractionCoords, perceptualRoughness, ior);
+    `}
+    
+    let attenuatedColor: vec3<f32> = applyVolumeAttenuation(transmittedLight, transmissionRayLength, attenuationColor, attenuationDistance);
+    return attenuatedColor * baseColor;
+} 
+
+
+
+fn getTransmission(
+    v:vec3f,
+    n:vec3f,
+    NoV:f32,
+    ior:f32,
+    worldPos:vec3f,
+    thickness:f32,
+    roughness:f32
+) -> vec3<f32> {
+    let eta = select(ior, 1.0/ior, NoV < 0.0);
+    let refracted = refract(-v, n, eta);
+
+    let projectedPos = worldPos + refracted * thickness;
+    let clip = projectionMatrix * viewMatrix * vec4f(projectedPos, 1.0);
+    let ndc = clip.xyz / clip.w;    
+    var screenUV = ndc.xy * 0.5 + 0.5; 
+    screenUV = vec2f(screenUV.x,1.-screenUV.y);
+    let levelCount=floor(log2(f32(max(textureDimensions(sceneBackgroundTexture,0).x,textureDimensions(sceneBackgroundTexture,0).y))));
+    var color = textureSampleLevel(sceneBackgroundTexture, iblSampler, screenUV,roughness * f32(levelCount));
+    
+    return vec3f(color.rgb);
+}
+
         const XYZ_TO_REC709 = mat3x3f(
              3.2404542, -0.9692660,  0.0556434,
             -1.5371385,  1.8760108, -0.2040259,
@@ -153,7 +331,7 @@ export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
             
             return sqrt(max(0.0, 1.0 - sinTheta2Sq));
         }
-    
+        
         fn  calculateIridescenceF0(
         cosTheta1:f32,
         iridescenceIor:f32,
@@ -463,6 +641,11 @@ export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
         
         ${GAMMA_CORRECTION}
         
+        struct IBLOutput{
+            diffuse:vec3f,
+            specular:vec3f
+        }
+        
         fn getIBL(
         baseColor:vec3f,
         metallic:f32,
@@ -472,7 +655,7 @@ export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
         F:vec3f,
         roughness:f32,
         ao:f32,
-        )->vec3f{
+        )->IBLOutput{
             let irradiance = textureSample(irradianceMap,iblSampler, n).rgb;
             let diffuse    = irradiance * baseColor;
             
@@ -483,23 +666,30 @@ export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
             let prefilteredColor = textureSampleLevel(ggxPrefilterMap,iblSampler, r,  roughness * f32(ENV_MAX_LOD_COUNT)).rgb;   
             let envBRDF  = textureSample(ggxLUT,iblSampler, vec2f(NoV, roughness)).rg;
             let specular = prefilteredColor * (F * envBRDF.x + envBRDF.y);
-            let ambient = (kD * diffuse + specular) * ao; 
-            return ambient;
+            return IBLOutput(kD * diffuse,specular * ao);
         }
         
         fn getClearcoatIBL(
-        r:vec3f,
-        NoV:f32,
-        F:vec3f,
-        roughness:f32,
-        ao:f32,
-        )->vec3f{
-            let prefilteredColor = textureSampleLevel(ggxPrefilterMap,iblSampler, r,  roughness * f32(ENV_MAX_LOD_COUNT)).rgb;   
-            let envBRDF  = textureSample(ggxLUT,iblSampler, vec2f(NoV, roughness)).rg;
-            let specular = prefilteredColor * (F * envBRDF.x + envBRDF.y);
-            let ambient = (specular) * ao; 
-            return ambient;
-        }    
+        r: vec3f,
+        NoV: f32,
+        F: vec3f,
+        roughness: f32
+    ) -> vec3f {
+        let pR = roughness * roughness;
+    
+        let maxLod = f32(ENV_MAX_LOD_COUNT);
+        let lod = clamp(pR * maxLod, 0.0, maxLod);
+    
+        let prefilteredColor = textureSampleLevel(ggxPrefilterMap, iblSampler, r, lod).rgb;
+    
+        let uv = vec2f(clamp(NoV, 0.0, 1.0), clamp(roughness, 0.0, 1.0));
+        let envBRDF = textureSample(ggxLUT, iblSampler, uv).rg;
+    
+        let specular = prefilteredColor * (F * envBRDF.x + vec3f(envBRDF.y));
+        return specular;
+    }
+ 
+        
         fn getSheenIBL(
         r:vec3f,
         NoV:f32,
@@ -576,15 +766,48 @@ export const pbrFragmentHelpers = (overrides: Record<string, any>) => {
           return G_Schlick_GGX_G1(nDotL, roughness) * G_Schlick_GGX_G1(nDotV, roughness);
         }
         
+        fn setSpecularGlossinessDiffuse(globalInfo:MaterialInfo,uv:vec2f)->MaterialInfo{
+            var info=globalInfo;
+
+            info.baseColor=materialFactors.pbrSpecularGlossinessDiffuse.rgb;
+            info.baseColorAlpha=materialFactors.pbrSpecularGlossinessDiffuse.a;
+                
+            ${overrides.HAS_SPECULAR_GLOSSINESS_DIFFUSE_MAP ? `
+                let sampledTex=textureSample([[specular_glossiness_diffuse.texture]],[[specular_glossiness_diffuse.sampler]],uv,[[specular_glossiness_diffuse.textureIndex]]);
+                info.baseColor *=sampledTex.rgb;
+                info.baseColorAlpha *=sampledTex.a;
+            ` : ``}
+            
+            return info;
+        }    
+        
+        fn setSpecularGlossiness(globalInfo:MaterialInfo,uv:vec2f)->MaterialInfo{
+            var info=globalInfo;
+            
+            info.metallic=0.;
+            info.perceptualRoughness=1. - materialFactors.pbrGlossiness;
+            info.f0=materialFactors.pbrSpecular;
+            
+            ${overrides.HAS_SPECULAR_GLOSSINESS_MAP ? `
+            let sampledTex=textureSample([[specular_glossiness.texture]],[[specular_glossiness.sampler]],uv,[[specular_glossiness.textureIndex]]);
+            info.perceptualRoughness *=1.- sampledTex.a;
+            info.f0 *=sampledTex.rgb;
+            `:``}
+            info.alphaRoughness=info.perceptualRoughness * info.perceptualRoughness;
+            
+            return info;
+        }
+        
         fn setBaseColor(globalInfo:MaterialInfo,uv:vec2f)->MaterialInfo{
             var info=globalInfo;
+            
             info.baseColor=materialFactors.baseColor.rgb;
             info.baseColorAlpha=materialFactors.baseColor.a;
             
             ${overrides.HAS_BASE_COLOR_MAP ? `
-                let sampledTex=textureSample(baseColorTexture,[[albedo.sampler]],uv);
-                info.baseColor *=sampledTex.rgb;
-                info.baseColorAlpha *=sampledTex.a;
+            let sampledTex=textureSample(baseColorTexture,[[albedo.sampler]],uv);
+            info.baseColor *=sampledTex.rgb;
+            info.baseColorAlpha *=sampledTex.a;
             ` : ``}
             
             return info;

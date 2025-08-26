@@ -213,3 +213,160 @@ export async function hashAndCreateRenderSetup(
         })
     })
 }
+
+export const downsampleWGSL = `
+struct Params {
+    flipY: u32
+};
+
+@group(0) @binding(0) var prevMip : texture_2d<f32>;
+@group(0) @binding(1) var samp : sampler;
+@group(0) @binding(2) var<uniform> params : Params;
+
+// 4x4 Gaussian kernel (sigma ~ 1.0), normalized
+const KERNEL : array<array<f32,4>,4> = array<array<f32,4>,4>(
+    array<f32,4>(0.018082, 0.049153, 0.049153, 0.018082),
+    array<f32,4>(0.049153, 0.133612, 0.133612, 0.049153),
+    array<f32,4>(0.049153, 0.133612, 0.133612, 0.049153),
+    array<f32,4>(0.018082, 0.049153, 0.049153, 0.018082)
+);
+
+struct VSOut {
+    @builtin(position) position : vec4<f32>,
+    @location(0) uv : vec2<f32>
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vIndex : u32) -> VSOut {
+    var pos = array<vec2<f32>, 6>(
+        vec2<f32>(-1.0, -1.0), // triangle 1
+        vec2<f32>( 1.0, -1.0),
+        vec2<f32>(-1.0,  1.0),
+        vec2<f32>(-1.0,  1.0), // triangle 2
+        vec2<f32>( 1.0, -1.0),
+        vec2<f32>( 1.0,  1.0)
+    );
+
+    var uv = array<vec2<f32>,6>(
+        vec2<f32>(0.0, 1.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(0.0, 0.0),
+        vec2<f32>(0.0, 0.0),
+        vec2<f32>(1.0, 1.0),
+        vec2<f32>(1.0, 0.0)
+    );
+
+    var out : VSOut;
+    out.position = vec4<f32>(pos[vIndex], 0.0, 1.0);
+    out.uv = uv[vIndex];
+    return out;
+}
+
+@fragment
+fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+    // Obtain previous mip texel size
+    let dims = vec2<f32>(textureDimensions(prevMip, 0));
+    let texel = 1.0 / dims;
+
+    // Centered offsets for 4x4 kernel: positions = (-1.5, -0.5, 0.5, 1.5) * texel
+    let offX = array<f32,4>(-1.5, -0.5, 0.5, 1.5);
+    let offY = array<f32,4>(-1.5, -0.5, 0.5, 1.5);
+
+    // flipY if requested: our vertex uv layout uses top-left UVs for sampling (see vs_main)
+    var baseUV = in.uv;
+    if (params.flipY == 1u) {
+        baseUV.y = 1.0 - baseUV.y;
+    }
+
+    var sum : vec4<f32> = vec4<f32>(0.0);
+    for (var j: i32 = 0; j < 4; j = j + 1) {
+        for (var i: i32 = 0; i < 4; i = i + 1) {
+            let offset = vec2<f32>(offX[i] * texel.x, offY[j] * texel.y);
+            let sampleUV = baseUV + offset;
+            let c = textureSample(prevMip, samp, sampleUV);
+            sum = sum + c * KERNEL[j][i];
+        }
+    }
+
+    return sum;
+}
+`;
+
+export async function createDownsamplePipeline(device: GPUDevice, format: GPUTextureFormat) {
+    const shaderModule = device.createShaderModule({ code: downsampleWGSL });
+
+
+    const pipeline = device.createRenderPipeline({
+        layout: 'auto',
+        vertex: { module: shaderModule, entryPoint: 'vs_main' },
+        fragment: { module: shaderModule, entryPoint: 'fs_main', targets: [{ format }] },
+        primitive: { topology: 'triangle-list' }
+    });
+
+
+    const sampler = device.createSampler({
+        minFilter: 'linear',
+        magFilter: 'linear',
+        mipmapFilter: 'linear',
+        addressModeU: 'clamp-to-edge',
+        addressModeV: 'clamp-to-edge'
+    });
+
+
+// Uniform buffer for flipY (4 bytes) -> allocate 16 bytes (aligned)
+    const uniformBuffer = device.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST
+    });
+
+
+    return { pipeline, sampler, uniformBuffer };
+}
+
+export function renderDownsampleMip(
+    device: GPUDevice,
+    commandEncoder: GPUCommandEncoder,
+    pipelineObj: { pipeline: GPURenderPipeline; sampler: GPUSampler; uniformBuffer: GPUBuffer },
+    srcView: GPUTextureView,
+    dstView: GPUTextureView,
+    flipY: boolean
+) {
+    const { pipeline, sampler, uniformBuffer } = pipelineObj;
+
+
+// Create bind group for this pass
+    const bindGroup = device.createBindGroup({
+        layout: pipeline.getBindGroupLayout(0),
+        entries: [
+            { binding: 0, resource: srcView },
+            { binding: 1, resource: sampler },
+            { binding: 2, resource: { buffer: uniformBuffer } }
+        ]
+    });
+
+
+// Update uniform (flipY as u32)
+    const flip = flipY ? 1 : 0;
+    const uniformArray = new Uint32Array([flip, 0, 0, 0]);
+    device.queue.writeBuffer(uniformBuffer, 0, uniformArray.buffer, uniformArray.byteOffset, uniformArray.byteLength);
+
+
+    const passDesc: GPURenderPassDescriptor = {
+        colorAttachments: [
+            {
+                view: dstView,
+                loadOp: 'clear',
+                storeOp: 'store',
+                clearValue: { r: 0, g: 0, b: 0, a: 0 }
+            }
+        ]
+    };
+
+
+    const pass = commandEncoder.beginRenderPass(passDesc);
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bindGroup);
+// Draw full-screen triangle-list (6 verts)
+    pass.draw(6, 1, 0, 0);
+    pass.end();
+}

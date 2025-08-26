@@ -39,8 +39,9 @@ await scene.environmentManager.setEnvironment(cubeMap, 1024, 128, 32)
 scene.lightManager.addDirectional({
     intensity: 2,
     color: [1, 1, 1],
-    position: [0, 5, 3]
+    position: [0, 0, 10]
 })
+
 
 
 const modelRenderer = new ModelRenderer({

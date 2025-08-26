@@ -43,6 +43,7 @@ export class LodSelection extends BaseLayer{
                 const indirect = this.scene.largeBufferMap.get("Indirect")?.buffer as GPUBuffer
                 const resultBuffer = this.scene.device.createBuffer({
                     size: indirect.size,
+                    label:"result Buffer",
                     usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
                 })
                 const encoder = this.device.createCommandEncoder()

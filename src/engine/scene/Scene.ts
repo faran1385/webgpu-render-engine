@@ -21,17 +21,20 @@ export class Scene extends BaseLayer {
     public environmentManager: Environment;
 
     public largeBufferMap: Map<string, LargeBuffer> = new Map<string, LargeBuffer>()
-
+    public transmissionPrimitives = new Set<Primitive>();
+    public usedGlobalBindGroup!: GPUBindGroup;
     public globalBindGroup!: GPUBindGroup;
+    public dummyGlobalBindGroup!: GPUBindGroup;
+    public currentBindGroup!: "main" | "opaqueOnly"
     public readonly renderLoopRunAble: Map<string, (...args: any[]) => void> = new Map()
 
     public readonly renderLoopAnimations: ((t: number) => void)[] = []
     public readonly _sceneObjectUpdateQueue: Map<number, SceneObject> = new Map();
 
     private _drawCalls: Set<Primitive> = new Set<Primitive>()
-    renderQueue: { queue: Primitive[], opaqueOnly: Primitive[] } = {
+    renderQueue: { queue: Primitive[], noneTransmissionOpaque: Primitive[] } = {
         queue: [],
-        opaqueOnly: [],
+        noneTransmissionOpaque: [],
     }
     private _background: Primitive | null = null
 
@@ -92,7 +95,7 @@ export class Scene extends BaseLayer {
     }
 
 
-    update(commandEncoder: GPUCommandEncoder, primitives: Primitive[], renderTarget: GPUTextureView, depthTextureView: GPUTextureView) {
+    update(commandEncoder: GPUCommandEncoder, primitives: Primitive[], renderTarget: GPUTextureView, depthTextureView: GPUTextureView, passLabel: string) {
         const time = performance.now() / 1000;
         this.renderLoopAnimations.forEach((func) => func(time))
 
@@ -122,7 +125,7 @@ export class Scene extends BaseLayer {
 
         // render
         const pass = commandEncoder.beginRenderPass({
-            label: "main pass",
+            label: passLabel,
             depthStencilAttachment: {
                 view: depthTextureView,
                 depthStoreOp: "store",
@@ -208,14 +211,96 @@ export class Scene extends BaseLayer {
         }, {
             resource: this.environmentManager.charliePrefilteredMap?.createView({dimension: "cube"}) ?? BaseLayer.dummyTextures.prefiltered.createView({dimension: "cube"}),
             binding: 14,
+        }, {
+            resource: BaseLayer.sceneOpaqueTexture?.createView() ?? BaseLayer.dummyTextures.pbr.createView(),
+            binding: 15,
         }]
+
+        const entriesDummy: GPUBindGroupEntry[] = [{
+            resource: {
+                buffer: cameraBuffers.projection
+            },
+            binding: 0,
+        }, {
+            resource: {
+                buffer: cameraBuffers.view
+            },
+            binding: 1,
+        }, {
+            resource: {
+                buffer: Scene.timeBuffer
+            },
+            binding: 2,
+        }, {
+            resource: {
+                buffer: Scene.resolutionBuffer
+            },
+            binding: 3,
+        }, {
+            resource: {
+                buffer: cameraBuffers.position
+            },
+            binding: 4,
+        }, {
+            resource: {
+                buffer: Scene.deltaBuffer
+            },
+            binding: 5,
+        }, {
+            resource: {
+                buffer: this.lightManager.lightsBuffer.ambient
+            },
+            binding: 6,
+        }, {
+            resource: {
+                buffer: this.lightManager.lightsBuffer.directional
+            },
+            binding: 7,
+        }, {
+            resource: {
+                buffer: this.lightManager.lightsBuffer.counts
+            },
+            binding: 8,
+        }, {
+            resource: BaseLayer.ggxBRDFLUTTexture?.createView() ?? BaseLayer.dummyTextures.brdfLut.createView(),
+            binding: 9,
+        }, {
+            resource: this.environmentManager.ggxPrefilteredMap?.createView({dimension: "cube"}) ?? BaseLayer.dummyTextures.prefiltered.createView({dimension: "cube"}),
+            binding: 10,
+        }, {
+            resource: this.environmentManager.irradianceMap?.createView({dimension: "cube"}) ?? BaseLayer.dummyTextures.irradiance.createView({dimension: "cube"}),
+            binding: 11,
+        }, {
+            resource: BaseLayer.samplers.ibl,
+            binding: 12,
+        }, {
+            resource: BaseLayer.charlieBRDFLUTTexture?.createView() ?? BaseLayer.dummyTextures.brdfLut.createView(),
+            binding: 13,
+        }, {
+            resource: this.environmentManager.charliePrefilteredMap?.createView({dimension: "cube"}) ?? BaseLayer.dummyTextures.prefiltered.createView({dimension: "cube"}),
+            binding: 14,
+        }, {
+            resource: BaseLayer.dummyTextures.pbr.createView(),
+            binding: 15,
+        }]
+
+        this.dummyGlobalBindGroup = Scene.device.createBindGroup({
+            label: "dummy globalBindGroup",
+            entries: entriesDummy,
+            layout: BaseLayer.bindGroupLayouts.globalBindGroupLayout
+        })
 
         this.globalBindGroup = Scene.device.createBindGroup({
             label: "globalBindGroup",
             entries: entries,
             layout: BaseLayer.bindGroupLayouts.globalBindGroupLayout
-        })
+        });
 
+        if (this.currentBindGroup === "opaqueOnly") {
+            this.usedGlobalBindGroup = this.dummyGlobalBindGroup
+        } else {
+            this.usedGlobalBindGroup = this.globalBindGroup
+        }
     }
 
     public setActiveCamera(camera: Camera): void {

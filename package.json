@@ -1,5 +1,5 @@
 {
-  "name": "webgpu",
+  "name": "webgpu-render-engine",
   "private": true,
   "version": "0.0.0",
   "type": "module",

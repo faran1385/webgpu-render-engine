@@ -67,6 +67,7 @@ export class BaseLayer {
     public static materialUpdateQueue = new Set<MaterialInstance>();
     public static pipelineUpdateQueue = new Set<Primitive>()
 
+
     public setActiveScene(activeScene: Scene): void {
         BaseLayer.activeScene = activeScene;
     }

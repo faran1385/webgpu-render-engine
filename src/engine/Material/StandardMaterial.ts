@@ -2,17 +2,17 @@ import {Material as MaterialClass} from "./Material.ts";
 import {Material} from "@gltf-transform/core";
 import {StandardMaterialExtractor} from "./standardMaterialExtractor.ts";
 import {BaseBindGroupEntryCreationType} from "../GPURenderSystem/GPUCache/GPUCacheTypes.ts";
-import {BaseLayer} from "../../layers/baseLayer.ts";
 
 
 export type matTextureInfo = {
     hash: number | null,
+    samplerKey: string,
     dimension: [number, number] | null,
     shareInfo: {
         arrayIndex: number,
         dimension: string,
     } | null,
-    textureReference: GPUTexture | null
+    override: string
 }
 export type standardMaterialTextureInfo = {
     albedo: matTextureInfo,
@@ -39,64 +39,44 @@ export type standardMaterialTextureInfo = {
 }
 
 export class StandardMaterial extends MaterialClass {
+
     descriptor: {
         bindGroupEntries: BaseBindGroupEntryCreationType[],
         layoutEntries: GPUBindGroupLayoutEntry[]
     } = {bindGroupEntries: [], layoutEntries: []}
 
-    private materialFactors!: GPUBuffer;
-
+    materialFactors!: GPUBuffer;
+    updateAbleTexture = new Map<keyof standardMaterialTextureInfo, {
+        hash: number,
+        width: number,
+        height: number,
+    }>();
     textureInfo: standardMaterialTextureInfo = {
-        albedo: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        emissive: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        ambient_occlusion: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        metallic_roughness: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        normal: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        clearcoat_roughness: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        clearcoat_normal: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        clearcoat: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        sheen_roughness: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        sheen_color: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        specular: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        specular_color: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        thickness: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        transmission: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        iridescence: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        iridescence_thickness: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        diffuse_transmission: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        diffuse_transmission_color: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        anisotropy: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        specular_glossiness: {hash: null, dimension: null, shareInfo: null, textureReference: null},
-        specular_glossiness_diffuse: {hash: null, dimension: null, shareInfo: null, textureReference: null},
+        albedo: {override: "HAS_BASE_COLOR_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        emissive: {override: "HAS_EMISSIVE_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        ambient_occlusion: {override: "HAS_AO_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        metallic_roughness: {override: "HAS_METALLIC_ROUGHNESS_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        normal: {override: "HAS_NORMAL_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        clearcoat_roughness: {override: "HAS_CLEARCOAT_ROUGHNESS_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        clearcoat_normal: {override: "HAS_CLEARCOAT_NORMAL_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        clearcoat: {override: "HAS_CLEARCOAT_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        sheen_roughness: {override: "HAS_SHEEN_ROUGHNESS_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        sheen_color: {override: "HAS_SHEEN_COLOR_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        specular: {override: "HAS_SPECULAR_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        specular_color: {override: "HAS_SPECULAR_COLOR_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        thickness: {override: "HAS_THICKNESS_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        transmission: {override: "HAS_TRANSMISSION_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        iridescence: {override: "HAS_IRIDESCENCE_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        iridescence_thickness: {override: "HAS_IRIDESCENCE_THICKNESS_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        diffuse_transmission: {override: "HAS_DIFFUSE_TRANSMISSION_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        diffuse_transmission_color: {override: "HAS_DIFFUSE_TRANSMISSION_COLOR_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        anisotropy: {override: "HAS_ANISOTROPY_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        specular_glossiness: {override: "HAS_SPECULAR_GLOSSINESS_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
+        specular_glossiness_diffuse: {override: "HAS_SPECULAR_GLOSSINESS_DIFFUSE_MAP",hash: null, samplerKey: "SAMPLER_DEFAULT", dimension: null, shareInfo: null},
     }
 
     setMaterialFactors(buffer: GPUBuffer) {
         this.materialFactors = buffer
-    }
-
-
-    setBaseColor(color: [number,number,number]) {
-        BaseLayer.device.queue.writeBuffer(this.materialFactors, 0, new Float32Array(color));
-    }
-    setSheenColor(color: [number,number,number]) {
-        BaseLayer.device.queue.writeBuffer(this.materialFactors, 64, new Float32Array(color));
-    }
-    setSheenRoughness(roughness: number) {
-        BaseLayer.device.queue.writeBuffer(this.materialFactors, 76, new Float32Array([roughness]));
-    }
-    setMetallic(metallic: number) {
-        BaseLayer.device.queue.writeBuffer(this.materialFactors, 16, new Float32Array([metallic]));
-    }
-
-    setRoughness(roughness: number) {
-        BaseLayer.device.queue.writeBuffer(this.materialFactors, 20, new Float32Array([roughness]));
-    }
-
-    setIOR(ior: number) {
-        BaseLayer.device.queue.writeBuffer(this.materialFactors, 48, new Float32Array([ior]));
-    }
-    setClearcoatIOR(ior: number) {
-        BaseLayer.device.queue.writeBuffer(this.materialFactors, 52, new Float32Array([ior]));
     }
 
     init(material: Material | null) {

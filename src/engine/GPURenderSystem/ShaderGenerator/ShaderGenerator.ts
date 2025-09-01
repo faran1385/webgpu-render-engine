@@ -241,8 +241,11 @@ fn vs(in: vsIn) -> vsOut {
                 globalInfo=setSpecular(globalInfo,uv,uv);
                 globalInfo=setTransmission(globalInfo,uv);
                 globalInfo=setSheen(globalInfo,uv,uv);
-                globalInfo=setBaseColor(globalInfo,uv);
-                globalInfo=setSpecularGlossinessDiffuse(globalInfo,uv);
+                ${overrides.HAS_SPECULAR_GLOSSINESS?`
+                    globalInfo=setSpecularGlossinessDiffuse(globalInfo,uv);
+                `:`
+                    globalInfo=setBaseColor(globalInfo,uv);
+                `}
                 globalInfo=setEmissive(globalInfo,uv);
                 globalInfo.ior=materialFactors.ior;
                 globalInfo=setMetallicRoughness(globalInfo,uv);
@@ -251,8 +254,9 @@ fn vs(in: vsIn) -> vsOut {
                 globalInfo.f0=mix(globalInfo.dielectricF0,globalInfo.baseColor,globalInfo.metallic);
                 globalInfo.f0 *=globalInfo.specular;
                 globalInfo.diffuseThickness =vec3f(1);
-                globalInfo =setSpecularGlossiness(globalInfo,uv);
-                
+                ${overrides.HAS_SPECULAR_GLOSSINESS?`
+                    globalInfo =setSpecularGlossiness(globalInfo,uv);
+                `:``}
                 ${overrides.HAS_DIFFUSE_TRANSMISSION && overrides.HAS_VOLUME ? `
                 globalInfo.diffuseThickness = globalInfo.thickness *
                 (length(vec3(modelMatrix[0].xyz)) + length(vec3(modelMatrix[1].xyz)) + length(vec3(modelMatrix[2].xyz))) / 3.0;
@@ -453,6 +457,7 @@ fn vs(in: vsIn) -> vsOut {
                 ) * globalInfo.clearcoatWeight;
                 
                 LoSpecular += ccSpecularIBL;
+                x=ccSpecularIBL;
                 ` : ``}
 
                                        
@@ -508,6 +513,7 @@ fn vs(in: vsIn) -> vsOut {
                 
                 ${overrides.HAS_CLEARCOAT ? `
                 baseIBLSpecular *=iblTransmittedFromCC;
+                baseIBLDiffuse *=iblTransmittedFromCC;
                 ` : ``}      
                 
                 var diffuseTransmissionIBL:vec3f;          
@@ -542,7 +548,7 @@ fn vs(in: vsIn) -> vsOut {
                 color = vec4f(color.rgb + emissive,globalInfo.baseColorAlpha);
                 color = vec4f(toneMapping(color.rgb),globalInfo.baseColorAlpha);
                 color = vec4f(applyGamma(color.rgb,2.2),globalInfo.baseColorAlpha);
-                // color = vec4f(vec3f(globalInfo.perceptualRoughness),globalInfo.baseColorAlpha);
+                // color = vec4f(vec3f(Lo),globalInfo.baseColorAlpha);
                 ${overrides.ALPHA_MODE === 0 ? `
                 color.a=1.;
                 ` : overrides.ALPHA_MODE === 2 ? `
@@ -557,7 +563,7 @@ fn vs(in: vsIn) -> vsOut {
                 ` : `
                 return color;
                 `}
-                
+               
             }
         `
     }

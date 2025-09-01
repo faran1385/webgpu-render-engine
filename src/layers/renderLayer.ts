@@ -4,6 +4,9 @@ import lodShader from "../shaders/builtin/lod.wgsl?raw"
 import {mat4, vec3} from "gl-matrix";
 import {Primitive} from "../engine/primitive/Primitive.ts";
 import {renderDownsampleMip} from "../helpers/global.helper.ts";
+import {MaterialLayoutGenerator} from "../engine/GPURenderSystem/MaterialLayoutGenerator/MaterialLayoutGenerator.ts";
+import {StandardMaterial} from "../engine/Material/StandardMaterial.ts";
+import {SmartRender} from "../engine/GPURenderSystem/SmartRender/SmartRender.ts";
 
 
 export class RenderLayer extends BaseLayer {
@@ -45,7 +48,7 @@ export class RenderLayer extends BaseLayer {
 
 
     private checkForUpdate() {
-
+        const matDiscGenerator = new MaterialLayoutGenerator();
         BaseLayer.activeScene._sceneObjectUpdateQueue.forEach(sceneObject => {
             if (sceneObject.needsUpdate) {
                 sceneObject.updateWorldMatrix(RenderLayer.device)
@@ -55,6 +58,20 @@ export class RenderLayer extends BaseLayer {
 
         RenderLayer.pipelineUpdateQueue.forEach(prim => {
             BaseLayer.gpuCache.changePipeline(prim);
+        })
+
+
+        RenderLayer.materialUpdateQueue.forEach(mat => {
+            matDiscGenerator.updateTexture(mat)
+        })
+
+        // not ready yet
+        RenderLayer.materialUpdateQueue.forEach(mat => {
+            matDiscGenerator.setDescriptorAfterUpdate(mat)
+            if (mat instanceof StandardMaterial) {
+                SmartRender.shaderGenerator.getStandardCode(mat)
+            }
+            matDiscGenerator.setMaterialHashes(mat)
         })
 
         BaseLayer.materialUpdateQueue.clear()
@@ -81,22 +98,22 @@ export class RenderLayer extends BaseLayer {
             RenderLayer.activeScene.update(
                 commandEncoder,
                 opaqueOnlyPrims,
-                BaseLayer.sceneOpaqueTexture!.createView({ baseMipLevel: 0, mipLevelCount: 1 }),
-                BaseLayer.sceneOpaqueDepthTexture!.createView({ baseMipLevel: 0, mipLevelCount: 1 }),
+                BaseLayer.sceneOpaqueTexture!.createView({baseMipLevel: 0, mipLevelCount: 1}),
+                BaseLayer.sceneOpaqueDepthTexture!.createView({baseMipLevel: 0, mipLevelCount: 1}),
                 "opaque pass"
             );
 
             for (let i = 1; i < mipLevels; i++) {
                 // render quad
                 renderDownsampleMip(
-                    BaseLayer.device,commandEncoder,
+                    BaseLayer.device, commandEncoder,
                     {
-                        pipeline:BaseLayer.downSamplePipeline,
+                        pipeline: BaseLayer.downSamplePipeline,
                         sampler: BaseLayer.samplers.linear,
-                        uniformBuffer:BaseLayer.downSampleUniformBuffer
+                        uniformBuffer: BaseLayer.downSampleUniformBuffer
                     },
-                    BaseLayer.sceneOpaqueTexture!.createView({ baseMipLevel: i - 1, mipLevelCount: 1 }),
-                    BaseLayer.sceneOpaqueTexture!.createView({ baseMipLevel: i, mipLevelCount: 1 }),
+                    BaseLayer.sceneOpaqueTexture!.createView({baseMipLevel: i - 1, mipLevelCount: 1}),
+                    BaseLayer.sceneOpaqueTexture!.createView({baseMipLevel: i, mipLevelCount: 1}),
                     false
                 );
             }

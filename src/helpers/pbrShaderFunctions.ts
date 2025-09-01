@@ -151,7 +151,7 @@ attenuationDistance:f32,
     var diffuseTransmissionIBL = textureSample(irradianceMap,iblSampler, -n).rgb * diffuseTransmissionColor;
     
     ${overrides.HAS_VOLUME ? `
-    diffuseTransmissionIBL = applyVolumeAttenuation(diffuseTransmissionIBL, diffuseTransmissionThickness, attenuationColor, attenuationDistance);
+    diffuseTransmissionIBL = applyVolumeAttenuation(diffuseTransmissionIBL, diffuseTransmissionThickness.r, attenuationColor, attenuationDistance);
     `:``}
     
     return diffuseTransmissionIBL;
@@ -669,7 +669,7 @@ fn getTransmission(
             return IBLOutput(kD * diffuse,specular * ao);
         }
         
-        fn getClearcoatIBL(
+        fn      getClearcoatIBL(
         r: vec3f,
         NoV: f32,
         F: vec3f,

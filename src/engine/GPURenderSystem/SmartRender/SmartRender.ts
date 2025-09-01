@@ -277,7 +277,7 @@ export class SmartRender {
                         })
                     }
 
-                    primitive.material.isDoubleSided = isTransparent
+                    primitive.material.isDoubleSided = isDoubleSided
                     primitive.setVertexBufferDescriptors(buffers)
                 })
             }

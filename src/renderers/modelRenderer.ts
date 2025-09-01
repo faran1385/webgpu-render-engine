@@ -107,6 +107,7 @@ export class ModelRenderer {
 
 
     public async init() {
+
         const primitives: Primitive[] = []
         this.fillInitEntry()
         if (this.scene.transmissionPrimitives.size > 0 && !BaseLayer.sceneOpaqueTexture) {
@@ -115,11 +116,30 @@ export class ModelRenderer {
         this.sceneObjects.forEach(sceneObject => {
             sceneObject.primitives?.forEach(p => primitives.push(p))
         })
-
         await hashAndCreateRenderSetup(this.scene.computeManager, Array.from(this.materials), primitives)
         primitives.forEach(primitive => this.scene.appendDrawCall = primitive)
-        this.materials.forEach(material => {
+        primitives.forEach(primitive => {
+            const material = primitive.material;
+            const geo = primitive.geometry;
             material.initialized = true
+            material.bindingCounter = 0;
+            material.shaderCode = null;
+            material.shaderDescriptor = {
+                ...material.shaderDescriptor,
+                compileHints: [],
+                bindings: []
+            }
+            material.descriptor.bindGroupEntries=[]
+            material.descriptor.layoutEntries=[]
+
+            geo.descriptors.layout=[]
+            geo.descriptors.bindGroup=[]
+            geo.shaderCode = null
+            geo.shaderDescriptor = {
+                ...geo.shaderDescriptor,
+                compileHints: [],
+                bindings: []
+            }
         })
     }
 }

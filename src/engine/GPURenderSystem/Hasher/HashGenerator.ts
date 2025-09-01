@@ -3,12 +3,23 @@ import {RenderState} from "../GPUCache/GPUCacheTypes.ts";
 import {MaterialInstance} from "../../Material/Material.ts";
 import {StandardMaterial, standardMaterialTextureInfo} from "../../Material/StandardMaterial.ts";
 
+type Dim = [number, number];
+
+
 type MatInfo = {
     material: StandardMaterial,
     textureKey: keyof standardMaterialTextureInfo,
-    data: Uint8Array,
-    dimensions: [number, number]
+    hash: number,
+    dimensions: Dim
 }
+
+interface SetTextureResult {
+    assignedShare?: { arrayIndex: number; dimensionKey: string };
+    addedToHashRequests: boolean;
+}
+
+const MAX_SHARED_PER_ARRAY = 50;
+
 
 export class HashGenerator {
     private static hasher: XXHashAPI;
@@ -16,12 +27,16 @@ export class HashGenerator {
     private textureId = 0;
     textureHashCache = new WeakMap<Uint8Array, number>();
     textureHashToData = new Map<number, Uint8Array>();
-    hashToRequests = new Map<number, Set<MaterialInstance>>();
+    hashToRequests = new Map<number, Map<MaterialInstance, Set<(keyof standardMaterialTextureInfo)>>>();
     sharedTextureHashes = new Map<string, Set<number>[]>()
     private shaderHashCache = new Map<string, number>();
     private bindGroupLayoutHashCache = new Map<string, number>();
     private pipelineLayoutHashCache = new Map<string, number>();
     private pipelineHashCache = new Map<string, number>();
+
+    // user loaded
+    userLoadedTextureHashCache = new WeakMap<Uint8ClampedArray, number>();
+    userLoadedTextureHashToData = new Map<number, Uint8ClampedArray>();
 
     public async init() {
         HashGenerator.hasher = await xxhash();
@@ -29,10 +44,21 @@ export class HashGenerator {
         HashGenerator.textEncoder = new TextEncoder();
     }
 
+    userLoadedHashTexture(data: Uint8ClampedArray) {
+        if (!this.userLoadedTextureHashCache.has(data)) {
+            this.textureId++
+            this.userLoadedTextureHashCache.set(data, this.textureId)
+            this.userLoadedTextureHashToData.set(this.textureId, data)
+            return this.textureId
+        }
+
+        return this.userLoadedTextureHashCache.get(data)!;
+    }
+
     hashTexture(data: Uint8Array) {
         if (!this.textureHashCache.has(data)) {
             this.textureId++
-            this.textureHashCache.set(data,this.textureId)
+            this.textureHashCache.set(data, this.textureId)
             this.textureHashToData.set(this.textureId, data)
             return this.textureId
         }
@@ -40,41 +66,78 @@ export class HashGenerator {
         return this.textureHashCache.get(data)!;
     }
 
-    setTextureHashGraph(matInfo: MatInfo) {
-        const hash = this.hashTexture(matInfo.data);
-        matInfo.material.textureInfo[matInfo.textureKey].hash = hash;
-        if (this.hashToRequests.has(hash)) {
-            const item = this.hashToRequests.get(hash)!;
-            item.add(matInfo.material)
-            if (item.size > 1) {
-
-                const sharedTexturesCategory = this.sharedTextureHashes.get(`${matInfo.dimensions[0]}_${matInfo.dimensions[1]}`)
-                if (sharedTexturesCategory) {
-                    if (sharedTexturesCategory[sharedTexturesCategory.length - 1].size < 50) {
-
-                        item.forEach(mat => mat.textureInfo[matInfo.textureKey].shareInfo = {
-                            arrayIndex: sharedTexturesCategory.length - 1,
-                            dimension: `${matInfo.dimensions[0]}_${matInfo.dimensions[1]}`,
-                        })
-                        sharedTexturesCategory[sharedTexturesCategory.length - 1].add(hash)
-                    } else {
-                        item.forEach(mat => mat.textureInfo[matInfo.textureKey].shareInfo = {
-                            arrayIndex: 0,
-                            dimension: `${matInfo.dimensions[0]}_${matInfo.dimensions[1]}`,
-                        })
-                        sharedTexturesCategory.push(new Set<number>([hash]))
-                    }
-                } else {
-                    this.sharedTextureHashes.set(`${matInfo.dimensions[0]}_${matInfo.dimensions[1]}`, [new Set<number>([hash])])
-                    item.forEach(mat => mat.textureInfo[matInfo.textureKey].shareInfo = {
-                        arrayIndex: 0,
-                        dimension: `${matInfo.dimensions[0]}_${matInfo.dimensions[1]}`,
-                    })
-                }
-            }
-        } else {
-            this.hashToRequests.set(hash, new Set<MaterialInstance>([matInfo.material]))
+    setTextureHashGraph(matInfo: MatInfo): SetTextureResult {
+        if (!matInfo || typeof matInfo.hash !== "number" || !matInfo.dimensions) {
+            return { addedToHashRequests: false };
         }
+
+        const { hash, dimensions, material, textureKey } = matInfo;
+        const dimensionKey = `${dimensions[0]}_${dimensions[1]}`;
+
+        material.textureInfo[textureKey].hash = hash;
+        material.textureInfo[textureKey].dimension = dimensions;
+
+        let requestMap = this.hashToRequests.get(hash);
+        if (!requestMap) {
+            requestMap = new Map<MaterialInstance, Set<keyof standardMaterialTextureInfo>>();
+            requestMap.set(material, new Set([textureKey]));
+            this.hashToRequests.set(hash, requestMap);
+            return { addedToHashRequests: true };
+        }
+
+        if (!requestMap.has(material)) {
+            requestMap.set(material, new Set([textureKey]));
+        } else {
+            requestMap.get(material)!.add(textureKey);
+        }
+
+        if (requestMap.size <= 1) {
+            return { addedToHashRequests: true };
+        }
+
+        let categoryArray = this.sharedTextureHashes.get(dimensionKey);
+        if (!categoryArray) {
+            categoryArray = [];
+            this.sharedTextureHashes.set(dimensionKey, categoryArray);
+        }
+
+        const assignShareIndexToRequestMap = (arrayIndex: number) => {
+            requestMap!.forEach((_, mat) => {
+                mat.textureInfo[textureKey].shareInfo = {
+                    arrayIndex,
+                    dimension: dimensionKey
+                };
+            });
+        };
+
+        if (categoryArray.length === 0) {
+            categoryArray.push(new Set<number>([hash]));
+            assignShareIndexToRequestMap(0);
+            return {
+                addedToHashRequests: true,
+                assignedShare: { arrayIndex: 0, dimensionKey }
+            };
+        }
+
+        const lastIndex = categoryArray.length - 1;
+        const lastBucket = categoryArray[lastIndex];
+
+        if (lastBucket.size < MAX_SHARED_PER_ARRAY) {
+            lastBucket.add(hash);
+            assignShareIndexToRequestMap(lastIndex);
+            return {
+                addedToHashRequests: true,
+                assignedShare: { arrayIndex: lastIndex, dimensionKey }
+            };
+        }
+
+        const newIndex = categoryArray.length;
+        categoryArray.push(new Set<number>([hash]));
+        assignShareIndexToRequestMap(newIndex);
+        return {
+            addedToHashRequests: true,
+            assignedShare: { arrayIndex: newIndex, dimensionKey }
+        };
     }
 
 

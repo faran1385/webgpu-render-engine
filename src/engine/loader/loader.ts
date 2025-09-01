@@ -9,6 +9,7 @@ import {Primitive} from "../primitive/Primitive.ts";
 import {Geometry} from "../geometry/Geometry.ts";
 import {Scene} from "../scene/Scene.ts";
 import {StandardMaterial} from "../Material/StandardMaterial.ts";
+import {BaseLayer} from "../../layers/baseLayer.ts";
 
 const io = new WebIO().registerExtensions(ALL_EXTENSIONS);
 
@@ -58,8 +59,8 @@ export class GLTFLoader {
             nodeToSceneObject.set(node, sceneObject);
             sceneObjects.add(sceneObject);
         }
-        materialMap.forEach((matClass,mat)=>matClass.init(mat))
-
+        materialMap.forEach((matClass, mat) => matClass.init(mat))
+        BaseLayer.hasher.sharedTextureHashes.clear()
         for (const node of root.listNodes()) {
             const sceneObject = nodeToSceneObject.get(node);
             const parentNode = node.getParentNode();

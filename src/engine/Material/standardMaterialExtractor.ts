@@ -18,10 +18,7 @@ import {
 
 
 export class StandardMaterialExtractor {
-    private materialSamplers = new Map<string, {
-        sampler: GPUSampler,
-        textures: string[]
-    }>()
+
     private isUnlit: boolean = false;
     private hasSpecularGlossiness: boolean = false;
 
@@ -37,20 +34,31 @@ export class StandardMaterialExtractor {
             func: (() => TextureInfo | null) | undefined,
             callBY: any
         },
-        fragmentOverride: string,
         materialInstance: MaterialInstance,
         textureInfoKey: keyof standardMaterialTextureInfo,
         makeSingleTexture: boolean = false
     ) {
         const texture = getTexture.func?.call(getTexture.callBY);
         materialFactorsArray.push(...factors)
-        materialInstance.shaderDescriptor.overrides[fragmentOverride] = false;
-        if (texture && (!this.isUnlit || (textureInfoKey === "albedo" || textureInfoKey === "emissive")) && (!this.hasSpecularGlossiness || textureInfoKey === "emissive" || textureInfoKey === "ambient_occlusion")) {
+        materialInstance.shaderDescriptor.overrides[materialInstance.textureInfo[textureInfoKey].override] = false;
+        if (texture && (!this.isUnlit || (textureInfoKey === "albedo" || textureInfoKey === "emissive")) && (!this.hasSpecularGlossiness || textureInfoKey === "specular_glossiness" || textureInfoKey === "specular_glossiness_diffuse" || textureInfoKey === "emissive" || textureInfoKey === "ambient_occlusion")) {
             const size = texture.getSize() ?? [64, 64]
             const data = texture.getImage()!;
             materialInstance.textureInfo[textureInfoKey].dimension = size;
             if (makeSingleTexture) {
                 materialInstance.textureInfo[textureInfoKey].hash = BaseLayer.hasher.hashTexture(data)
+                const requests = BaseLayer.hasher.hashToRequests.get(materialInstance.textureInfo[textureInfoKey].hash)
+
+                if (requests) {
+                    if (requests.has(materialInstance)) {
+                        requests.get(materialInstance)?.add(textureInfoKey)
+                    } else {
+                        requests.set(materialInstance, new Set([textureInfoKey]))
+                    }
+                } else {
+                    BaseLayer.hasher.hashToRequests.set(materialInstance.textureInfo[textureInfoKey].hash, new Map([[materialInstance, new Set([textureInfoKey])]]))
+                }
+
                 materialInstance.descriptor.bindGroupEntries.push({
                     bindingPoint: materialInstance.bindingCounter,
                     additional: {
@@ -61,7 +69,8 @@ export class StandardMaterialExtractor {
                                 height: size[1]
                             },
                             format: "rgba8unorm-srgb",
-                            data
+                            data,
+                            hash: materialInstance.textureInfo[textureInfoKey].hash
                         }
                     }
                 })
@@ -81,10 +90,11 @@ export class StandardMaterialExtractor {
                 })
                 materialInstance.bindingCounter++
             } else {
+                const hash = BaseLayer.hasher.hashTexture(data);
                 BaseLayer.hasher.setTextureHashGraph({
                     material: materialInstance,
                     textureKey: textureInfoKey,
-                    data,
+                    hash,
                     dimensions: size,
                 });
             }
@@ -93,16 +103,9 @@ export class StandardMaterialExtractor {
                 sampler: BaseLayer.samplers.default
             }
 
-            if (this.materialSamplers.has(samplerData.name)) {
-                this.materialSamplers.get(samplerData.name)?.textures.push(textureInfoKey)
-            } else {
-                this.materialSamplers.set(samplerData.name, {
-                    sampler: samplerData.sampler,
-                    textures: [textureInfoKey]
-                })
-            }
+            materialInstance.textureInfo[textureInfoKey].samplerKey = samplerData.name
 
-            materialInstance.shaderDescriptor.overrides[fragmentOverride] = true;
+            materialInstance.shaderDescriptor.overrides[materialInstance.textureInfo[textureInfoKey].override] = true;
             inUseTexCoords.add(getTextureInfo.func?.call(getTextureInfo.callBY)?.getTexCoord() ?? 0)
         }
     }
@@ -114,17 +117,15 @@ export class StandardMaterialExtractor {
 
         this.isUnlit = Boolean(material.getExtension("KHR_materials_unlit"));
         this.hasSpecularGlossiness = Boolean(specularGlossinessExtension);
-
         materialInstance.shaderDescriptor.overrides.IS_UNLIT = this.isUnlit;
-        materialInstance.shaderDescriptor.overrides.IS_SPECULAR_GLOSSINESS = this.hasSpecularGlossiness;
+        materialInstance.shaderDescriptor.overrides.HAS_SPECULAR_GLOSSINESS = this.hasSpecularGlossiness;
         // base color
         this.pushEntriesDescriptor(
             {func: material.getBaseColorTexture, callBY: material},
             materialFactorsArray,
             material.getBaseColorFactor().flat(),
             inUseTexCoords,
-            {func: material.getBaseColorTextureInfo, callBY: material},
-            "HAS_BASE_COLOR_MAP", materialInstance,
+            {func: material.getBaseColorTextureInfo, callBY: material}, materialInstance,
             "albedo",
             true
         )
@@ -134,8 +135,7 @@ export class StandardMaterialExtractor {
             materialFactorsArray,
             [material.getMetallicFactor(), material.getRoughnessFactor()],
             inUseTexCoords,
-            {func: material.getMetallicRoughnessTextureInfo, callBY: material},
-            "HAS_METALLIC_ROUGHNESS_MAP", materialInstance,
+            {func: material.getMetallicRoughnessTextureInfo, callBY: material}, materialInstance,
             "metallic_roughness"
         )
 
@@ -145,8 +145,7 @@ export class StandardMaterialExtractor {
             materialFactorsArray,
             [material.getNormalScale()],
             inUseTexCoords,
-            {func: material.getNormalTextureInfo, callBY: material},
-            "HAS_NORMAL_MAP", materialInstance,
+            {func: material.getNormalTextureInfo, callBY: material}, materialInstance,
             "normal"
         )
 
@@ -156,8 +155,7 @@ export class StandardMaterialExtractor {
             materialFactorsArray,
             [material.getOcclusionStrength()],
             inUseTexCoords,
-            {func: material.getOcclusionTextureInfo, callBY: material},
-            "HAS_AO_MAP", materialInstance,
+            {func: material.getOcclusionTextureInfo, callBY: material}, materialInstance,
             "ambient_occlusion"
         )
 
@@ -167,8 +165,7 @@ export class StandardMaterialExtractor {
             materialFactorsArray,
             [...material.getEmissiveFactor()],
             inUseTexCoords,
-            {func: material.getEmissiveTextureInfo, callBY: material},
-            "HAS_EMISSIVE_MAP", materialInstance,
+            {func: material.getEmissiveTextureInfo, callBY: material}, materialInstance,
             "emissive"
         )
 
@@ -202,8 +199,7 @@ export class StandardMaterialExtractor {
             materialFactorsArray,
             [0, ...sheenExtension?.getSheenColorFactor() ?? [1, 1, 1]],
             inUseTexCoords,
-            {func: sheenExtension?.getSheenColorTextureInfo, callBY: sheenExtension},
-            "HAS_SHEEN_COLOR_MAP", materialInstance,
+            {func: sheenExtension?.getSheenColorTextureInfo, callBY: sheenExtension}, materialInstance,
             "sheen_color"
         )
         // sheen roughness
@@ -212,8 +208,7 @@ export class StandardMaterialExtractor {
             materialFactorsArray,
             [sheenExtension?.getSheenRoughnessFactor() ?? 1],
             inUseTexCoords,
-            {func: sheenExtension?.getSheenRoughnessTextureInfo, callBY: sheenExtension},
-            "HAS_SHEEN_ROUGHNESS_MAP", materialInstance,
+            {func: sheenExtension?.getSheenRoughnessTextureInfo, callBY: sheenExtension}, materialInstance,
             "sheen_roughness"
         )
 
@@ -226,8 +221,7 @@ export class StandardMaterialExtractor {
             materialFactorsArray,
             [clearcoatExtension?.getClearcoatFactor() ?? 0],
             inUseTexCoords,
-            {func: clearcoatExtension?.getClearcoatTextureInfo, callBY: clearcoatExtension},
-            "HAS_CLEARCOAT_MAP", materialInstance,
+            {func: clearcoatExtension?.getClearcoatTextureInfo, callBY: clearcoatExtension}, materialInstance,
             "clearcoat"
         )
         // clearcoat normal
@@ -236,8 +230,7 @@ export class StandardMaterialExtractor {
             materialFactorsArray,
             [clearcoatExtension?.getClearcoatNormalScale() ?? 0],
             inUseTexCoords,
-            {func: clearcoatExtension?.getClearcoatTextureInfo, callBY: clearcoatExtension},
-            "HAS_CLEARCOAT_NORMAL_MAP", materialInstance,
+            {func: clearcoatExtension?.getClearcoatTextureInfo, callBY: clearcoatExtension}, materialInstance,
             "clearcoat_normal"
         )
         // clearcoat roughness
@@ -246,8 +239,7 @@ export class StandardMaterialExtractor {
             materialFactorsArray,
             [clearcoatExtension?.getClearcoatRoughnessFactor() ?? 1],
             inUseTexCoords,
-            {func: clearcoatExtension?.getClearcoatRoughnessTextureInfo, callBY: clearcoatExtension},
-            "HAS_CLEARCOAT_ROUGHNESS_MAP", materialInstance,
+            {func: clearcoatExtension?.getClearcoatRoughnessTextureInfo, callBY: clearcoatExtension}, materialInstance,
             "clearcoat_roughness"
         )
 
@@ -260,8 +252,7 @@ export class StandardMaterialExtractor {
             materialFactorsArray,
             [specularExtension?.getSpecularFactor() ?? 1],
             inUseTexCoords,
-            {func: specularExtension?.getSpecularTextureInfo, callBY: specularExtension},
-            "HAS_SPECULAR_MAP", materialInstance,
+            {func: specularExtension?.getSpecularTextureInfo, callBY: specularExtension}, materialInstance,
             "specular"
         )
 
@@ -271,8 +262,7 @@ export class StandardMaterialExtractor {
             materialFactorsArray,
             specularExtension?.getSpecularColorFactor().flat() ?? [1, 1, 1],
             inUseTexCoords,
-            {func: specularExtension?.getSpecularTextureInfo, callBY: specularExtension},
-            "HAS_SPECULAR_COLOR_MAP", materialInstance,
+            {func: specularExtension?.getSpecularTextureInfo, callBY: specularExtension}, materialInstance,
             "specular_color"
         )
 
@@ -286,7 +276,7 @@ export class StandardMaterialExtractor {
             [transmissionExtension?.getTransmissionFactor() ?? 0],
             inUseTexCoords,
             {func: transmissionExtension?.getTransmissionTextureInfo, callBY: transmissionExtension},
-            "HAS_TRANSMISSION_MAP", materialInstance,
+            materialInstance,
             "transmission"
         )
 
@@ -305,7 +295,7 @@ export class StandardMaterialExtractor {
             [volumeExtension?.getThicknessFactor() ?? 0],
             inUseTexCoords,
             {func: volumeExtension?.getThicknessTextureInfo, callBY: volumeExtension},
-            "HAS_THICKNESS_MAP", materialInstance,
+            materialInstance,
             "thickness"
         )
 
@@ -323,7 +313,7 @@ export class StandardMaterialExtractor {
             [iridescenceExtension?.getIridescenceFactor() ?? 0.9],
             inUseTexCoords,
             {func: iridescenceExtension?.getIridescenceTextureInfo, callBY: iridescenceExtension},
-            "HAS_IRIDESCENCE_MAP", materialInstance,
+            materialInstance,
             "iridescence"
         )
 
@@ -338,7 +328,7 @@ export class StandardMaterialExtractor {
             [],
             inUseTexCoords,
             {func: iridescenceExtension?.getIridescenceThicknessTextureInfo, callBY: iridescenceExtension},
-            "HAS_IRIDESCENCE_THICKNESS_MAP", materialInstance,
+            materialInstance,
             "iridescence_thickness"
         )
         //////// diffuse transmission
@@ -354,7 +344,7 @@ export class StandardMaterialExtractor {
                 func: diffuseTransmissionExtension?.getDiffuseTransmissionTextureInfo,
                 callBY: diffuseTransmissionExtension
             },
-            "HAS_DIFFUSE_TRANSMISSION_MAP", materialInstance,
+            materialInstance,
             "diffuse_transmission"
         )
 
@@ -371,7 +361,7 @@ export class StandardMaterialExtractor {
                 func: diffuseTransmissionExtension?.getDiffuseTransmissionTextureInfo,
                 callBY: diffuseTransmissionExtension
             },
-            "HAS_DIFFUSE_TRANSMISSION_COLOR_MAP", materialInstance,
+            materialInstance,
             "diffuse_transmission_color"
         )
 
@@ -390,7 +380,7 @@ export class StandardMaterialExtractor {
             [],
             inUseTexCoords,
             {func: anisotropyExtension?.getAnisotropyTextureInfo, callBY: anisotropyExtension},
-            "HAS_ANISOTROPY_MAP", materialInstance,
+            materialInstance,
             "anisotropy"
         )
 
@@ -411,7 +401,7 @@ export class StandardMaterialExtractor {
             [...specularGlossinessExtension?.getSpecularFactor() ?? [1, 1, 1], specularGlossinessExtension?.getGlossinessFactor() ?? 0],
             inUseTexCoords,
             {func: specularGlossinessExtension?.getSpecularGlossinessTextureInfo, callBY: specularGlossinessExtension},
-            "HAS_SPECULAR_GLOSSINESS_MAP", materialInstance,
+            materialInstance,
             "specular_glossiness"
         )
         this.pushEntriesDescriptor(
@@ -420,10 +410,9 @@ export class StandardMaterialExtractor {
             [...specularGlossinessExtension?.getDiffuseFactor() ?? [1, 1, 1, 1]],
             inUseTexCoords,
             {func: specularGlossinessExtension?.getDiffuseTextureInfo, callBY: specularGlossinessExtension},
-            "HAS_SPECULAR_GLOSSINESS_DIFFUSE_MAP", materialInstance,
+            materialInstance,
             "specular_glossiness_diffuse"
         )
-
 
 
         const materialFactorsBuffer = createGPUBuffer(
@@ -454,35 +443,6 @@ export class StandardMaterialExtractor {
         })
         materialInstance.bindingCounter++
 
-        // sampler
-        this.materialSamplers.forEach(({sampler, textures}, name) => {
-            materialInstance.descriptor.bindGroupEntries.push({
-                bindingPoint: materialInstance.bindingCounter,
-                sampler
-            })
-            materialInstance.descriptor.layoutEntries.push({
-                binding: materialInstance.bindingCounter,
-                sampler: {
-                    type: "filtering"
-                },
-                visibility: GPUShaderStage.FRAGMENT
-            })
-            materialInstance.shaderDescriptor.bindings.push({
-                name,
-                wgslType: 'sampler',
-                address: 'var',
-                binding: materialInstance.bindingCounter,
-                group: 1
-            })
-            textures.forEach(texture => {
-                materialInstance.shaderDescriptor.compileHints.push({
-                    searchKeyword: `${texture}.sampler`,
-                    replaceKeyword: name
-                })
-            })
-            materialInstance.bindingCounter++
-        })
-        console.log(materialFactorsArray)
     }
 
     extractMaterial(materialInstance: StandardMaterial, material: Material) {
@@ -577,9 +537,9 @@ export class StandardMaterialExtractor {
         ]);
         // specular glossiness
         // specular
-        materialFactorsArray.push(...[1,1,1,1]);
+        materialFactorsArray.push(...[1, 1, 1, 1]);
         // diffuse
-        materialFactorsArray.push(...[1,1,1,1]);
+        materialFactorsArray.push(...[1, 1, 1, 1]);
 
         const materialFactorsBuffer = createGPUBuffer(
             BaseLayer.device, new Float32Array(materialFactorsArray),

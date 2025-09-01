@@ -24,9 +24,19 @@ export class GPUCache {
         layout: GPUBindGroupLayout,
         primitives: Set<number>
     }> = new Map();
-    static textureArrayCache = new Map<string, GPUTexture>()
+    static personalTextureArrayCache = new Map<string, GPUTexture>()
+    static globalTextureArrayCache = new Map<string, GPUTexture>()
+    static textureLocationCache = new Map<number, {
+        textureArrayKey: string,
+        isGlobal: boolean,
+        width: number,
+        height: number,
+        layer: number
+    }>()
+    static visualTexturesCache = new Map<number, GPUTexture>()
     static smartRenderer: SmartRender;
     static textureGenerator: TextureGenerator;
+
 
     constructor() {
         GPUCache.smartRenderer = new SmartRender();
@@ -51,6 +61,7 @@ export class GPUCache {
         this.removeResource(hashes.pipelineLayout as never, pSet, "pipelineLayoutMap")
         this.removeResource(hashes.pipeline as never, pSet, "pipelineMap")
     }
+
 
     removeResource(key: never, primitives: Set<number>, targetMap: "shaderModuleMap" | "pipelineMap" | "bindGroupLayoutMap" | "pipelineLayoutMap", clearMap: undefined | boolean = undefined) {
         const resource = GPUCache[targetMap].get(key)
@@ -116,19 +127,24 @@ export class GPUCache {
 
     }
 
-    createShaderCodeHashes(primitives: Primitive[]) {
+    createShaderCodeHashes(primitives: Primitive[], hashGeo: boolean) {
         const shaderCodesHashes = new Map<number, [number, number]>();
         for (let i = 0; i < primitives.length; i++) {
             const item = primitives[i];
             if (!item.material.shaderCode) throw new Error(`given primitive with id : ${primitives[i].id}} has no shader code on material`);
-            if (!item.geometry.shaderCode) throw new Error(`given primitive with id : ${primitives[i].id}} has no shader code on geometry`);
             const matHash = BaseLayer.hasher.hashShaderModule(item.material.shaderCode)
-            const geoHash = BaseLayer.hasher.hashShaderModule(item.geometry.shaderCode)
-
-
-            shaderCodesHashes.set(item.id, [matHash, geoHash])
             this.appendShaderModule(item.material.shaderCode, matHash, [item])
-            this.appendShaderModule(item.geometry.shaderCode, geoHash, [item])
+
+            if (hashGeo) {
+                if (!item.geometry.shaderCode) throw new Error(`given primitive with id : ${primitives[i].id}} has no shader code on geometry`);
+                const geoHash = BaseLayer.hasher.hashShaderModule(item.geometry.shaderCode)
+                this.appendShaderModule(item.geometry.shaderCode, geoHash, [item])
+
+                shaderCodesHashes.set(item.id, [matHash, geoHash])
+            } else {
+                shaderCodesHashes.set(item.id, [matHash, Array.from(item.primitiveHashes)[0][1].shader.vertex])
+            }
+
         }
 
         return shaderCodesHashes
@@ -321,6 +337,7 @@ export class GPUCache {
                         entry.additional?.typedArray.size,
                         entry.additional?.typedArray.format
                     );
+                    GPUCache.visualTexturesCache.set(entry.additional.typedArray.hash!, convertedData)
                 } else {
                     throw new Error(`Unknown conversionType`);
                 }
@@ -345,16 +362,19 @@ export class GPUCache {
                 hashes.forEach(([hash]) => {
                     key += hash;
                 })
+                key = key.split("").join("|")
                 key += `@${size[0]}_${size[1]}`
-                if (GPUCache.textureArrayCache.has(key)) {
+
+                const cacheKey: ("globalTextureArrayCache" | "personalTextureArrayCache") = entry.additional?.textureArray.isGlobal ? "globalTextureArrayCache" : "personalTextureArrayCache";
+                if (GPUCache[cacheKey].has(key)) {
                     return {
                         binding: entry.bindingPoint,
-                        resource: GPUCache.textureArrayCache.get(key)!.createView({dimension: "2d-array"})
+                        resource: GPUCache[cacheKey].get(key)!.createView({dimension: "2d-array"})
                     }
                 }
                 const texture = BaseLayer.device.createTexture({
                     size: [...size, hashes.length],
-                    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.RENDER_ATTACHMENT,
+                    usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST | GPUTextureUsage.COPY_SRC | GPUTextureUsage.RENDER_ATTACHMENT,
                     dimension: "2d",
                     format: "rgba8unorm"
                 })
@@ -366,13 +386,26 @@ export class GPUCache {
                     }, decodedData, {
                         x: 0, y: 0, z: i
                     })
-                    hashes[i][1].forEach(texture => {
-                        material.shaderDescriptor.compileHints.push({
-                            searchKeyword: `${texture}.textureIndex`,
-                            replaceKeyword: `${i}`
+                    GPUCache.textureLocationCache.set(hashes[i][0], {
+                        width: size[0],
+                        height: size[1],
+                        layer: i,
+                        isGlobal: entry.additional.textureArray.isGlobal,
+                        textureArrayKey: key
+                    })
+                    BaseLayer.hasher.hashToRequests.get(hashes[i][0])?.forEach((_, material) => {
+                        hashes[i][1].forEach(texture => {
+                            material.shaderDescriptor.compileHints.push({
+                                searchKeyword: `${texture}.textureIndex`,
+                                replaceKeyword: `${i}`
+                            })
                         })
                     })
+
+                    BaseLayer.hasher.textureHashCache.delete(BaseLayer.hasher.textureHashToData.get(hashes[i][0])!)
+                    BaseLayer.hasher.textureHashToData.delete(hashes[i][0])
                 }
+                GPUCache[cacheKey].set(key, texture)
                 return {
                     resource: texture.createView({dimension: "2d-array"}),
                     binding: entry.bindingPoint
@@ -381,6 +414,50 @@ export class GPUCache {
                 throw new Error("in order to create bindGroup you need to specify an texture | sampler | typedArray | buffer")
             }
         }))
+        return entries
+    }
+
+    static getEntriesNonAsync(material: MaterialInstance) {
+
+        if (!material.descriptor.bindGroupEntries) throw new Error(`${material.name} has no descriptor for entries`)
+        const entries: GPUBindGroupEntry[] = material.descriptor.bindGroupEntries.map((entry) => {
+            if (entry.sampler) {
+                return {
+                    binding: entry.bindingPoint,
+                    resource: entry.sampler
+                }
+            } else if (entry?.textureDescriptor) {
+
+                return {
+                    binding: entry.bindingPoint,
+                    resource: entry?.textureDescriptor.texture.createView(entry?.textureDescriptor.viewDescriptor),
+                }
+            } else if (entry.buffer) {
+
+                return {
+                    binding: entry.bindingPoint,
+                    resource: {
+                        buffer: entry.buffer
+                    }
+                }
+            } else if (entry.additional?.textureArray) {
+                let key = ``
+                const hashes = Array.from(entry.additional.textureArray.textureMap);
+                const size = entry.additional.textureArray.size
+                hashes.forEach(([hash]) => {
+                    key += hash;
+                })
+                key = key.split("").join("|")
+                key += `@${size[0]}_${size[1]}`
+                const cacheKey: ("globalTextureArrayCache" | "personalTextureArrayCache") = entry.additional?.textureArray.isGlobal ? "globalTextureArrayCache" : "personalTextureArrayCache";
+                return {
+                    binding: entry.bindingPoint,
+                    resource: GPUCache[cacheKey].get(key)!.createView({dimension: "2d-array"})
+                }
+            } else {
+                throw new Error("in order to create bindGroup you need to specify an texture | sampler | typedArray | buffer")
+            }
+        })
         return entries
     }
 

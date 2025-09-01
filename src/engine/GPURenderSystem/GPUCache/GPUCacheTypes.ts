@@ -13,6 +13,7 @@ export type BaseBindGroupEntryCreationType = {
         textureArray?: {
             textureMap: Map<number, (keyof standardMaterialTextureInfo)[]>
             size: [number, number],
+            isGlobal: boolean
         },
         resourcesKey?: string
         typedArray?: (TextureTypedArray | BufferTypedArray),
@@ -25,7 +26,8 @@ export type TextureTypedArray = {
     format: GPUTextureFormat,
     size: { width: number; height: number; },
     data: Uint8Array
-    convertType: "texture"
+    convertType: "texture",
+    hash: number
 }
 export type BufferTypedArray = {
     data: TypedArray,

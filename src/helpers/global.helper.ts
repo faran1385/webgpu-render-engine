@@ -141,6 +141,8 @@ export async function hashAndCreateRenderSetup(
     primitives: Primitive[],
     isBindGroupLayoutAlreadySet: undefined | true = undefined
 ) {
+
+
     const geometryLayoutHashes = BaseLayer.gpuCache.createGeometryLayoutHashes(primitives)
     if (!isBindGroupLayoutAlreadySet) {
         materials.forEach(mat => {
@@ -155,7 +157,7 @@ export async function hashAndCreateRenderSetup(
     }
     await BaseLayer.gpuCache.createMaterialHashes(materials)
     materials.forEach(mat => mat.compileShader())
-    const shaderCodesHashes = BaseLayer.gpuCache.createShaderCodeHashes(primitives)
+    const shaderCodesHashes = BaseLayer.gpuCache.createShaderCodeHashes(primitives, true)
     const pipelineLayoutsHashes = BaseLayer.gpuCache.createPipelineLayoutHashes(primitives, geometryLayoutHashes)
     const pipelineHashes = BaseLayer.gpuCache.createPipelineHashes(shaderCodesHashes, pipelineLayoutsHashes)
     const geometryBindGroupMaps = BaseLayer.gpuCache.createGeometryBindGroupMaps(primitives)
@@ -293,14 +295,14 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 `;
 
 export async function createDownsamplePipeline(device: GPUDevice, format: GPUTextureFormat) {
-    const shaderModule = device.createShaderModule({ code: downsampleWGSL });
+    const shaderModule = device.createShaderModule({code: downsampleWGSL});
 
 
     const pipeline = device.createRenderPipeline({
         layout: 'auto',
-        vertex: { module: shaderModule, entryPoint: 'vs_main' },
-        fragment: { module: shaderModule, entryPoint: 'fs_main', targets: [{ format }] },
-        primitive: { topology: 'triangle-list' }
+        vertex: {module: shaderModule, entryPoint: 'vs_main'},
+        fragment: {module: shaderModule, entryPoint: 'fs_main', targets: [{format}]},
+        primitive: {topology: 'triangle-list'}
     });
 
 
@@ -320,7 +322,7 @@ export async function createDownsamplePipeline(device: GPUDevice, format: GPUTex
     });
 
 
-    return { pipeline, sampler, uniformBuffer };
+    return {pipeline, sampler, uniformBuffer};
 }
 
 export function renderDownsampleMip(
@@ -331,16 +333,16 @@ export function renderDownsampleMip(
     dstView: GPUTextureView,
     flipY: boolean
 ) {
-    const { pipeline, sampler, uniformBuffer } = pipelineObj;
+    const {pipeline, sampler, uniformBuffer} = pipelineObj;
 
 
 // Create bind group for this pass
     const bindGroup = device.createBindGroup({
         layout: pipeline.getBindGroupLayout(0),
         entries: [
-            { binding: 0, resource: srcView },
-            { binding: 1, resource: sampler },
-            { binding: 2, resource: { buffer: uniformBuffer } }
+            {binding: 0, resource: srcView},
+            {binding: 1, resource: sampler},
+            {binding: 2, resource: {buffer: uniformBuffer}}
         ]
     });
 
@@ -357,7 +359,7 @@ export function renderDownsampleMip(
                 view: dstView,
                 loadOp: 'clear',
                 storeOp: 'store',
-                clearValue: { r: 0, g: 0, b: 0, a: 0 }
+                clearValue: {r: 0, g: 0, b: 0, a: 0}
             }
         ]
     };

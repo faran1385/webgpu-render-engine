@@ -29,5 +29,13 @@
     "stats-js": "^1.0.1",
     "tweakpane": "^4.0.5",
     "xxhash-wasm": "^1.1.0"
-  }
+  },
+  "browserslist": [
+    "defaults",
+    "not chrome < 89",
+    "not firefox < 89",
+    "not safari < 15",
+    "not edge < 89"
+  ]
+
 }

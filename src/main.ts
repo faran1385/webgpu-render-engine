@@ -50,6 +50,10 @@ window.addEventListener("resize", () => {
 })
 modelRenderer.setSceneObjects(sceneObjects)
 modelRenderer.setNodeMap(nodeMap)
+
+if (window.innerWidth < 768) {
+    modelRenderer.setScale(.5, .5, .5)
+}
 await modelRenderer.init()
 modelRenderer.animate(animations[0])
 

@@ -90,7 +90,7 @@ export const initWebGPU = async () => {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
     const device = await adapter.requestDevice({
-        requiredFeatures: ["timestamp-query", 'bgra8unorm-storage', 'float32-filterable']
+        requiredFeatures: ['float32-filterable']
     });
     if (!device) {
         throw new Error('No device supplied!');

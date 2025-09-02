@@ -32,6 +32,12 @@ export class OrbitControls {
     zoomSpeed = 0.5;
     panSpeed = 1.0;
 
+    // ... (your existing properties) ...
+    private initialPinchDistance = 0;
+
+    private isRotating = false;
+    private isZooming = false;
+
     constructor(
         private camera: Camera,
         private domElement: HTMLElement
@@ -51,24 +57,29 @@ export class OrbitControls {
     private onTouchStart = (e: TouchEvent) => {
         if (this.isEnabled) {
             e.preventDefault();
-            // Handle a single finger for rotation
-            if (e.touches.length === 1) {
-                this.isDragging = true;
-                this.lastX = e.touches[0].clientX;
-                this.lastY = e.touches[0].clientY;
-                this.isPanning = false; // A single touch is for rotation
-            } else if (e.touches.length === 2) {
-                // Handle two fingers for pan/zoom
-                this.isPanning = true;
-                this.isDragging = false; // Dragging state is handled differently for multi-touch
+            const touches = e.touches;
+
+            if (touches.length === 1) {
+                // One finger for rotation
+                this.isRotating = true;
+                this.lastX = touches[0].clientX;
+                this.lastY = touches[0].clientY;
+            } else if (touches.length === 2) {
+                // Two fingers for zoom
+                this.isZooming = true;
+                this.initialPinchDistance = Math.hypot(
+                    touches[0].clientX - touches[1].clientX,
+                    touches[0].clientY - touches[1].clientY
+                );
             }
+            // Pan logic is not needed for mobile based on the request
         }
     };
 
     private onTouchEnd = () => {
         if (this.isEnabled) {
-            this.isDragging = false;
-            this.isPanning = false;
+            this.isRotating = false;
+            this.isZooming = false;
         }
     };
 
@@ -77,8 +88,7 @@ export class OrbitControls {
             e.preventDefault();
             const touches = e.touches;
 
-            if (touches.length === 1 && this.isDragging) {
-                // Single-finger rotation logic (similar to mouse drag)
+            if (this.isRotating && touches.length === 1) {
                 const dx = touches[0].clientX - this.lastX;
                 const dy = touches[0].clientY - this.lastY;
                 this.lastX = touches[0].clientX;
@@ -87,54 +97,32 @@ export class OrbitControls {
                 const rotSpeed = 0.005 * this.rotateSpeed;
                 this.azimuthVelocity -= dx * rotSpeed;
                 this.polarVelocity -= dy * rotSpeed;
-            } else if (touches.length === 2) {
-                // Two-finger gesture for pan and zoom
-                const touch1 = touches[0];
-                const touch2 = touches[1];
 
-                // Calculate the midpoint for panning
-                const currentMidX = (touch1.clientX + touch2.clientX) / 2;
-                const currentMidY = (touch1.clientY + touch2.clientY) / 2;
-                const prevMidX = (this.lastX + this.lastY) / 2;
-                const prevMidY = (this.lastY + this.lastY) / 2;
+            } else if (this.isZooming && touches.length === 2) {
+                const currentPinchDistance = Math.hypot(
+                    touches[0].clientX - touches[1].clientX,
+                    touches[0].clientY - touches[1].clientY
+                );
 
-                const dx = currentMidX - prevMidX;
-                const dy = currentMidY - prevMidY;
-                this.lastX = currentMidX;
-                this.lastY = currentMidY;
+                const pinchScale = currentPinchDistance / this.initialPinchDistance;
+                this.distance /= pinchScale;
+                this.distance = Math.max(0.1, this.distance);
 
-                const width = this.domElement.clientWidth;
-                const height = this.domElement.clientHeight;
-
-                // Pan logic
-                const panX = -dx * this.panSpeed * (this.distance / width);
-                const panY = dy * this.panSpeed * (this.distance / height);
-                const up = vec3.fromValues(0, 1, 0);
-                const right = vec3.create();
-                const viewDir = vec3.sub(vec3.create(), this.camera.getPosition(), this.target);
-                vec3.cross(right, up, viewDir);
-                vec3.normalize(right, right);
-                const actualUp = vec3.cross(vec3.create(), viewDir, right);
-                vec3.normalize(actualUp, actualUp);
-                vec3.scaleAndAdd(this.panOffset, this.panOffset, right, panX);
-                vec3.scaleAndAdd(this.panOffset, this.panOffset, actualUp, panY);
-
-                // Zoom logic (pinch gesture)
-                const prevDistance = Math.hypot(this.lastX - this.lastX, this.lastY - this.lastY);
-                const currentDistance = Math.hypot(touch1.clientX - touch2.clientX, touch1.clientY - touch2.clientY);
-                const zoomDelta = (currentDistance - prevDistance) * this.zoomSpeed * 0.001;
-                this.distance = Math.max(0.1, this.distance - zoomDelta);
+                this.initialPinchDistance = currentPinchDistance;
             }
+            // No pan logic for mobile
         }
     };
 
     private addEventListeners() {
+        // Desktop mouse events
         this.domElement.addEventListener("mousedown", this.onMouseDown);
         this.domElement.addEventListener("mousemove", this.onMouseMove);
         this.domElement.addEventListener("mouseup", this.onMouseUp);
         this.domElement.addEventListener("wheel", this.onWheel, {passive: false});
         this.domElement.addEventListener("contextmenu", e => e.preventDefault());
 
+        // Mobile touch events
         this.domElement.addEventListener("touchstart", this.onTouchStart, {passive: false});
         this.domElement.addEventListener("touchmove", this.onTouchMove, {passive: false});
         this.domElement.addEventListener("touchend", this.onTouchEnd);
@@ -235,9 +223,9 @@ export class OrbitControls {
     }
 
     dispose() {
-        this.domElement.removeEventListener("pointerdown", this.onMouseDown);
-        this.domElement.removeEventListener("pointermove", this.onMouseMove);
-        this.domElement.removeEventListener("pointerup", this.onMouseUp);
+        this.domElement.removeEventListener("mousedown", this.onMouseDown);
+        this.domElement.removeEventListener("mousemove", this.onMouseMove);
+        this.domElement.removeEventListener("mouseup", this.onMouseUp);
         this.domElement.removeEventListener("wheel", this.onWheel);
         this.domElement.removeEventListener("contextmenu", e => e.preventDefault());
 

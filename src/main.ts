@@ -20,6 +20,7 @@ const camera = new Camera({
 
 const controls = new OrbitControls(camera, document.documentElement)
 
+
 const scene = new Scene(device, canvas, ctx, camera);
 baseLayer.setActiveScene(scene)
 

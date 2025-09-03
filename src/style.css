@@ -24,8 +24,17 @@ canvas {
     align-items: center;
 }
 
-
-.overlay h1 {
+.overlay div {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+}
+.overlay div h1 {
     color: white;
-    font-family: sans-serif;
+    font-family: sans-serif
+}
+.overlay div h1:nth-child(2) {
+    padding-top: 5px;
+    padding-left: 10px;
 }

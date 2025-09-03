@@ -1,4 +1,4 @@
-export class DownloadManager {
+export class ProcessManager {
     private count: number;
     private downloadPercentageArray: number[]
 
@@ -26,5 +26,9 @@ export class DownloadManager {
         })
 
         this.totalPercentage = total / this.count;
+    }
+
+    reset() {
+        this.downloadPercentageArray = new Array(this.count).fill(0);
     }
 }

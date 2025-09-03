@@ -14,6 +14,7 @@ import {
 } from "../../helpers/pbrShaderFunctions.ts";
 import {quadVertices} from "./quadData.ts";
 import {BaseLayer} from "../../layers/baseLayer.ts";
+import {ProcessManager} from "../loader/processManager.ts";
 
 export class Environment {
     private device!: GPUDevice;
@@ -22,6 +23,7 @@ export class Environment {
     public ggxPrefilteredMap: null | GPUTexture = null;
     public charliePrefilteredMap: null | GPUTexture = null;
     private exposure = 1;
+    private processManager!: ProcessManager;
 
     constructor(device: GPUDevice, scene: Scene) {
         this.device = device;
@@ -47,7 +49,7 @@ export class Environment {
 
         const uniformBuffer = this.device.createBuffer({
             size: Float32Array.BYTES_PER_ELEMENT * 16,
-            label:"env uniform buffer",
+            label: "env uniform buffer",
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 
@@ -161,7 +163,7 @@ export class Environment {
 
         const projection = mat4.perspective(mat4.create(), Math.PI / 2, 1, 0.1, 10);
         const indexBuffer = createGPUBuffer(this.device, cubeIndices, GPUBufferUsage.INDEX, "irradiance index buffer")
-
+        let totalPercentage = 0;
         for (let i = 0; i < 6; i += 1) {
             const commandEncoder = this.device.createCommandEncoder();
             const passEncoder = commandEncoder.beginRenderPass({
@@ -196,7 +198,12 @@ export class Environment {
             passEncoder.end();
 
             this.device.queue.submit([commandEncoder.finish()]);
+            BaseLayer.device.queue.onSubmittedWorkDone().then(() => {
+                totalPercentage += 100 / 6;
+                this.processManager.updateIndex(0, Math.min(totalPercentage, 100))
+            })
         }
+
         verticesBuffer.destroy();
         depthTexture.destroy();
         indexBuffer.destroy();
@@ -209,6 +216,7 @@ export class Environment {
         TEXTURE_RESOLUTION: number,
         vertexShader: string,
         fragmentShader: string,
+        processIndex: number
     ) {
         const ROUGHNESS_LEVELS = Math.floor(Math.log2(TEXTURE_RESOLUTION));
         this.scene.ENV_MAX_LOD_COUNT = ROUGHNESS_LEVELS;
@@ -237,7 +245,7 @@ export class Environment {
         });
         const uniformBuffer = this.device.createBuffer({
             size: Float32Array.BYTES_PER_ELEMENT * (16 + 4),
-            label:"env uniform buffer",
+            label: "env uniform buffer",
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         });
 
@@ -313,7 +321,7 @@ export class Environment {
                 baseMipLevel: mip,
                 mipLevelCount: 1,
             });
-
+            let totalPercentage = 0;
             for (let i = 0; i < 6; i += 1) {
                 const commandEncoder = this.device.createCommandEncoder();
                 const passEncoder = commandEncoder.beginRenderPass({
@@ -357,6 +365,10 @@ export class Environment {
                 passEncoder.end();
 
                 this.device.queue.submit([commandEncoder.finish()]);
+                BaseLayer.device.queue.onSubmittedWorkDone().then(() => {
+                    totalPercentage += 100 / 6;
+                    this.processManager.updateIndex(processIndex, Math.min(totalPercentage, 100))
+                })
             }
         }
         verticesBuffer.destroy();
@@ -374,8 +386,12 @@ export class Environment {
         return this.exposure
     }
 
-    private initBRDFLUT(vertexShader: string, fragmentShader: string, checkTexture: GPUTexture | null,format:GPUTextureFormat) {
-        if (checkTexture) return;
+    private initBRDFLUT(vertexShader: string, fragmentShader: string, checkTexture: GPUTexture | null, format: GPUTextureFormat, processIndex: number) {
+        if (checkTexture) {
+            this.processManager.updateIndex(processIndex, 100)
+            return
+        }
+        ;
         const BRDF_LUT_SIZE = 64;
 
         const texture = this.device.createTexture({
@@ -463,28 +479,33 @@ export class Environment {
         passEncoder.end();
 
         this.device.queue.submit([commandEncoder.finish()]);
+        BaseLayer.device.queue.onSubmittedWorkDone().then(() => {
+            this.processManager.updateIndex(processIndex, 100)
+        })
         vertexBuffer.destroy();
         depthTexture.destroy();
         return texture
     }
 
-    async setEnvironment(cubeMap: GPUTexture, prefilterSampleCount: number, prefilterTextureResolution: number, irradianceResolution: number) {
+    async setEnvironment(cubeMap: GPUTexture, prefilterSampleCount: number, prefilterTextureResolution: number, irradianceResolution: number, process: (totalPercentage: number) => void) {
+        this.processManager = new ProcessManager(5, process)
+
         const irradiance = this.createIrradiance(cubeMap, irradianceResolution)
         const ggxPrefiltered = this.createPrefiltered(cubeMap,
             prefilterSampleCount,
             prefilterTextureResolution,
             ggxPrefilterCode.vertex,
-            ggxPrefilterCode.fragment)
+            ggxPrefilterCode.fragment, 1)
 
         const charliePrefiltered = this.createPrefiltered(cubeMap,
             prefilterSampleCount,
             prefilterTextureResolution,
             charliePrefilterCode.vertex,
-            charliePrefilterCode.fragment)
+            charliePrefilterCode.fragment, 2)
 
 
-        const ggxBRDFLUT = this.initBRDFLUT(ggxBRDFLUTCode.vertex, ggxBRDFLUTCode.fragment, BaseLayer.ggxBRDFLUTTexture,"rg16float")
-        const charlieBRDFLUT = this.initBRDFLUT(charlieBRDFLUTCode.vertex, charlieBRDFLUTCode.fragment, BaseLayer.charlieBRDFLUTTexture,"r16float")
+        const ggxBRDFLUT = this.initBRDFLUT(ggxBRDFLUTCode.vertex, ggxBRDFLUTCode.fragment, BaseLayer.ggxBRDFLUTTexture, "rg16float", 3)
+        const charlieBRDFLUT = this.initBRDFLUT(charlieBRDFLUTCode.vertex, charlieBRDFLUTCode.fragment, BaseLayer.charlieBRDFLUTTexture, "r16float", 4)
         if (ggxBRDFLUT) BaseLayer.ggxBRDFLUTTexture = ggxBRDFLUT;
         if (charlieBRDFLUT) BaseLayer.charlieBRDFLUTTexture = charlieBRDFLUT;
 

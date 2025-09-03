@@ -82,7 +82,11 @@ export const getDownloadWithPercentage = async (url: string, process: (percentag
         if (value) {
             chunks.push(value);
             received += value.length;
-            process((received / contentLength * 100))
+
+            let percent = (received / contentLength) * 100;
+            percent = Math.min(100, percent);
+
+            process(percent)
         }
     }
 

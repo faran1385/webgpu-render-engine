@@ -1,15 +1,15 @@
-import {Accessor, Mesh, Node, TypedArray, WebIO} from '@gltf-transform/core';
+import {Accessor, Material, Mesh, Node, TypedArray, WebIO} from '@gltf-transform/core';
 import {ALL_EXTENSIONS} from '@gltf-transform/extensions';
 import {quat, vec3} from 'gl-matrix';
 import {AttributeData, LODRange} from "./loaderTypes.ts";
 import {SceneObject} from "../sceneObject/sceneObject.ts";
-import {Material} from "@gltf-transform/core";
 import {Material as MaterialClass} from "../Material/Material.ts";
 import {Primitive} from "../primitive/Primitive.ts";
 import {Geometry} from "../geometry/Geometry.ts";
 import {Scene} from "../scene/Scene.ts";
 import {StandardMaterial} from "../Material/StandardMaterial.ts";
 import {BaseLayer} from "../../layers/baseLayer.ts";
+import {getDownloadWithPercentage} from "../../helpers/global.helper.ts";
 
 const io = new WebIO().registerExtensions(ALL_EXTENSIONS);
 
@@ -19,8 +19,9 @@ export class GLTFLoader {
     /**
      * Loads a model from URL and returns document, meshes, buffers, and animations.
      */
-    public async load(url: string, scene: Scene) {
-        let document = await io.read(url);
+    public async load(url: string, scene: Scene, process: (percentage: number) => void) {
+        const data = await getDownloadWithPercentage(url, process);
+        let document = await io.readBinary(new Uint8Array(data));
 
         const root = document.getRoot();
         const sceneObjects: Set<SceneObject> = new Set();

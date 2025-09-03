@@ -67,6 +67,30 @@ export function computeNormalMatrix3x4(modelMatrix: mat4): Float32Array {
     return normalMat3x4;
 }
 
+export const getDownloadWithPercentage = async (url: string, process: (percentage: number) => void) => {
+    const response = await fetch(url);
+    if (!response.body) throw new Error('Streams not supported');
+
+    const reader = response.body.getReader();
+    const contentLength = Number(response.headers.get('Content-Length'));
+    let received = 0;
+    const chunks: Uint8Array[] = [];
+
+    while (true) {
+        const {done, value} = await reader.read();
+        if (done) break;
+        if (value) {
+            chunks.push(value);
+            received += value.length;
+            process((received / contentLength * 100))
+        }
+    }
+
+    const blob = new Blob(chunks);
+    return await blob.arrayBuffer()
+
+}
+
 
 export const getStats = () => {
     const stats = new Stats();

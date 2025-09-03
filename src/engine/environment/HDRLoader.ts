@@ -1,5 +1,5 @@
 import {mat4} from "gl-matrix";
-import {createGPUBuffer, updateBuffer} from "../../helpers/global.helper.ts";
+import {createGPUBuffer, getDownloadWithPercentage, updateBuffer} from "../../helpers/global.helper.ts";
 
 // @ts-ignore
 import hdrParser from 'parse-hdr'
@@ -12,9 +12,8 @@ export class HDRLoader {
         this.device = device;
     }
 
-    private async createHdrTexture(url: string) {
-        const response = await fetch(url);
-        let rawData = await response.arrayBuffer();
+    private async createHdrTexture(url: string, process: (percentage: number) => void) {
+        const rawData = await getDownloadWithPercentage(url, process);
         const {data, shape, exposure} = hdrParser(rawData);
 
 
@@ -54,7 +53,7 @@ export class HDRLoader {
 
         const vpBuffer = this.device.createBuffer({
             usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-            label:"vpBuffer",
+            label: "vpBuffer",
             size: 64
         })
         const projection = mat4.perspective(mat4.create(), Math.PI / 2, 1, 0.1, 10);
@@ -157,7 +156,7 @@ export class HDRLoader {
 
         const depthTexture = this.device.createTexture({
             label: "cubemap depth texture",
-            size: { width: cubeSize, height:  cubeSize},
+            size: {width: cubeSize, height: cubeSize},
             format: "depth24plus",
             usage: GPUTextureUsage.RENDER_ATTACHMENT,
         });
@@ -186,13 +185,13 @@ export class HDRLoader {
                     depthLoadOp: "clear",
                     depthStoreOp: "store",
                 },
-                label:""
+                label: ""
             });
 
             pass.setBindGroup(0, cubeMapBindGroup);
             pass.setPipeline(cubeMapPipeline);
-            pass.setVertexBuffer(0,verticesBuffer)
-            pass.setIndexBuffer(indexBuffer,"uint16")
+            pass.setVertexBuffer(0, verticesBuffer)
+            pass.setIndexBuffer(indexBuffer, "uint16")
             pass.drawIndexed(cubeIndices.length);
             pass.end();
             this.device.queue.submit([encoder.finish()]);
@@ -205,8 +204,8 @@ export class HDRLoader {
         return cubeMap
     }
 
-    async load(url: string) {
-        const {texture, cubeSize} = await this.createHdrTexture(url)
+    async load(url: string, process: (percentage: number) => void) {
+        const {texture, cubeSize} = await this.createHdrTexture(url, process)
         return this.fillCubeMap(texture, cubeSize)
     }
 }

@@ -8,6 +8,7 @@ import {Scene} from "./engine/scene/Scene.ts";
 import {OrbitControls} from "./engine/camera/controls.ts";
 import {HDRLoader} from "./engine/environment/HDRLoader.ts";
 import {ToneMapping} from "./helpers/postProcessUtils/postProcessUtilsTypes.ts";
+import {DownloadManager} from "./engine/loader/downloadManager.ts";
 
 
 const {device, canvas, ctx, baseLayer} = await initWebGPU()
@@ -19,17 +20,31 @@ const camera = new Camera({
 })
 
 const controls = new OrbitControls(camera, document.documentElement)
-
+const loadPercentage=document.getElementById("load-percentage")!;
+const overlay=document.querySelector(".overlay") as HTMLDivElement;
+const downloadManager = new DownloadManager(2, (p) => {
+    loadPercentage.innerHTML = `${p.toFixed(2)}%`
+    if(p===100){
+        overlay.style.display = "none"
+    }
+});
 
 const scene = new Scene(device, canvas, ctx, camera);
 baseLayer.setActiveScene(scene)
 
 const mainLayer = new RenderLayer(device, canvas, ctx)
 const loader = new GLTFLoader()
-const {sceneObjects, nodeMap, animations} = await loader.load("/c.glb", scene)
+
+const {sceneObjects, nodeMap, animations} = await loader.load("/c.glb", scene, (percentage) => {
+    downloadManager.updateIndex(0, percentage)
+})
 
 const hdrLoader = new HDRLoader(device);
-const cubeMap = await hdrLoader.load("/e.hdr")
+const cubeMap = await hdrLoader.load("/e.hdr", (percentage) => {
+    downloadManager.updateIndex(1, percentage)
+})
+
+
 scene.setToneMapping = ToneMapping.ACES
 await scene.backgroundManager.setBackground(cubeMap, 1)
 await scene.environmentManager.setEnvironment(cubeMap, 1024, 128, 32)

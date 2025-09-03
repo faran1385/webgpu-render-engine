@@ -112,14 +112,17 @@ export const initWebGPU = async () => {
 
 
     const adapter = await navigator.gpu.requestAdapter({});
-    const massageText=document.getElementById("load-percentage")!;
+    const massageText=document.getElementById("load-massage")!;
+    const percentageText=document.getElementById("load-percentage")!;
 
     if(!navigator?.gpu){
         massageText.innerHTML="Webgpu is not supported";
+        percentageText.innerHTML="";
     }
 
     if (!adapter) {
         massageText.innerHTML="No adapter supplied!";
+        percentageText.innerHTML="";
         throw new Error('No adapter supplied!');
     }
     canvas.width = window.innerWidth;
@@ -129,6 +132,7 @@ export const initWebGPU = async () => {
     });
     if (!device) {
         massageText.innerHTML="No device supplied!";
+        percentageText.innerHTML="";
         throw new Error('No device supplied!');
     }
 

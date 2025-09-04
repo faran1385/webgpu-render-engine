@@ -38,7 +38,7 @@ baseLayer.setActiveScene(scene)
 const mainLayer = new RenderLayer(device, canvas, ctx)
 const loader = new GLTFLoader()
 
-const {sceneObjects, nodeMap, animations} = await loader.load("/c.glb", scene, (percentage) => {
+const {sceneObjects, nodeMap, animations} = await loader.load("/t.glb", scene, (percentage) => {
     downloadManager.updateIndex(0, percentage)
 })
 
@@ -57,11 +57,11 @@ await scene.environmentManager.setEnvironment(cubeMap, 1024, 128, 32, (p) => {
     }
 })
 
-scene.lightManager.addDirectional({
-    intensity: 2,
-    color: [1, 1, 1],
-    position: [0, 2, 3]
-})
+// scene.lightManager.addDirectional({
+//     intensity: 2,
+//     color: [1, 1, 1],
+//     position: [0, 2, 3]
+// })
 
 
 const modelRenderer = new ModelRenderer({

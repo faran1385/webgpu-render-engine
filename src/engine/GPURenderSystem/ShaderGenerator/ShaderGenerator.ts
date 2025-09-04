@@ -490,8 +490,8 @@ fn vs(in: vsIn) -> vsOut {
                 globalInfo.perceptualRoughness,
                 globalInfo.ao,
                 );
-                let baseIBLDiffuse=baseIBL.diffuse;
-                let baseIBLSpecular=baseIBL.specular;
+                var baseIBLDiffuse=baseIBL.diffuse;
+                var baseIBLSpecular=baseIBL.specular;
                 ` : `
                 var baseIBL=getIBL(
                 globalInfo.baseColor,

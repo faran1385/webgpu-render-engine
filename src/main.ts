@@ -38,7 +38,7 @@ baseLayer.setActiveScene(scene)
 const mainLayer = new RenderLayer(device, canvas, ctx)
 const loader = new GLTFLoader()
 
-const {sceneObjects, nodeMap, animations} = await loader.load("/t.glb", scene, (percentage) => {
+const {sceneObjects, nodeMap, animations} = await loader.load("/c.glb", scene, (percentage) => {
     downloadManager.updateIndex(0, percentage)
 })
 

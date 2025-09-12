@@ -67,33 +67,53 @@ export function computeNormalMatrix3x4(modelMatrix: mat4): Float32Array {
     return normalMat3x4;
 }
 
-export const getDownloadWithPercentage = async (url: string, process: (percentage: number) => void) => {
-    const response = await fetch(url);
-    if (!response.body) throw new Error('Streams not supported');
+export const getDownloadWithPercentage = async (
+    url: string,
+    process: (percentage: number) => void
+) => {
+    try {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
-    const reader = response.body.getReader();
-    const contentLength = Number(response.headers.get('Content-Length'));
-    let received = 0;
-    const chunks: Uint8Array[] = [];
+        const contentLengthHeader = response.headers.get('Content-Length');
+        const contentLength = contentLengthHeader ? Number(contentLengthHeader) : 0;
 
-    while (true) {
-        const {done, value} = await reader.read();
-        if (done) break;
-        if (value) {
-            chunks.push(value);
-            received += value.length;
-
-            let percent = (received / contentLength) * 100;
-            percent = Math.min(100, percent);
-
-            process(percent)
+        // Fallback if streams not supported
+        if (!response.body || !window.ReadableStream) {
+            const arrayBuffer = await response.arrayBuffer();
+            process(100);
+            return arrayBuffer;
         }
+
+        const reader = response.body.getReader();
+        let received = 0;
+        const chunks: Uint8Array[] = [];
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            if (value) {
+                chunks.push(value);
+                received += value.length;
+
+                if (contentLength) {
+                    let percent = (received / contentLength) * 100;
+                    percent = Math.min(100, percent);
+                    process(percent);
+                } else {
+                    process(0); // unknown size, just show 0 or increment manually if you want
+                }
+            }
+        }
+
+        const blob = new Blob(chunks);
+        return await blob.arrayBuffer();
+    } catch (err) {
+        console.error('Download failed:', err);
+        throw err;
     }
+};
 
-    const blob = new Blob(chunks);
-    return await blob.arrayBuffer()
-
-}
 
 
 export const getStats = () => {

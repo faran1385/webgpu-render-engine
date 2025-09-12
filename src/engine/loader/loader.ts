@@ -20,6 +20,7 @@ export class GLTFLoader {
      * Loads a model from URL and returns document, meshes, buffers, and animations.
      */
     public async load(url: string, scene: Scene, process: (percentage: number) => void) {
+        console.log(url)
         const data = await getDownloadWithPercentage(url, process);
         let document = await io.readBinary(new Uint8Array(data));
 

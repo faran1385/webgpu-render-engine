@@ -12,18 +12,22 @@ import {ProcessManager} from "./engine/loader/processManager.ts";
 
 
 const {device, canvas, ctx, baseLayer} = await initWebGPU()
+console.log("t1")
 const camera = new Camera({
     aspect: canvas.width / canvas.height,
     device,
     initialPosition: [3, 0, 5],
     fov: Math.PI / 3
 })
-
+console.log("t2")
 const controls = new OrbitControls(camera, document.documentElement)
-const loadMassage = document.getElementById("load-massage")!;
-const loadPercentage = document.getElementById("load-percentage")!;
-const overlay = document.querySelector(".overlay") as HTMLDivElement;
 
+console.log("t3")
+const loadMassage = document.getElementById("load-massage")!;
+console.log("t4")
+const loadPercentage = document.getElementById("load-percentage")!;
+console.log("t5")
+const overlay = document.querySelector(".overlay") as HTMLDivElement;
 const downloadManager = new ProcessManager(2, (p) => {
     loadPercentage.innerHTML = `${p.toFixed(2)}%`
     if (p === 100) {
@@ -31,6 +35,8 @@ const downloadManager = new ProcessManager(2, (p) => {
         loadPercentage.innerHTML = `0%`
     }
 });
+
+console.log("t6")
 
 const scene = new Scene(device, canvas, ctx, camera);
 baseLayer.setActiveScene(scene)

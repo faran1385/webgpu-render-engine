@@ -19,6 +19,13 @@ export class ComputeManager {
     }
 
 
+    removeComputation() {
+        this.lodSelection.removeLods();
+        this.indirectDraw.removeIndirect();
+        this.frustumCulling.removeFrustumCulling()
+    }
+
+
     private initComputeManager(device: GPUDevice, canvas: HTMLCanvasElement, ctx: GPUCanvasContext, scene: Scene) {
         this.indirectDraw = new IndirectDraw(scene);
         this.lodSelection = new LodSelection(scene, device, canvas, ctx);

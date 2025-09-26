@@ -83,6 +83,22 @@ export class IndirectDraw {
         this.resizeBuffer("Index")
     }
 
+    removeIndirect() {
+        this.indirectSceneObjects.clear();
+        this.indexSceneObjects.clear();
+        const indirect = this.scene.largeBufferMap.get("Indirect")!
+        indirect.buffer?.destroy()
+        indirect.array = [];
+        indirect.version = 0;
+        indirect.needsUpdate = true
+
+        const indices = this.scene.largeBufferMap.get("Index")!
+        indices.buffer?.destroy()
+        indices.array = [];
+        indices.version = 0;
+        indices.needsUpdate = true
+    }
+
     public renderLoop(primitives: Primitive[], environment: Primitive, pass: GPURenderPassEncoder) {
         const indirect = this.scene.largeBufferMap.get("Indirect") as LargeBuffer
         const index = this.scene.largeBufferMap.get("Index") as LargeBuffer
@@ -93,8 +109,8 @@ export class IndirectDraw {
                 if (!pipeline) throw new Error("pipeline not found");
                 pass.setPipeline(pipeline)
                 pass.setBindGroup(0, this.scene.usedGlobalBindGroup)
-                pass.setBindGroup(1,environment.material.bindGroup)
-                pass.setBindGroup(2,environment.geometry.bindGroup)
+                pass.setBindGroup(1, environment.material.bindGroup)
+                pass.setBindGroup(2, environment.geometry.bindGroup)
 
                 environment.vertexBuffers.forEach((buffer, i) => {
                     pass.setVertexBuffer(i, buffer)
@@ -116,8 +132,8 @@ export class IndirectDraw {
                 const pipeline = item.pipelines.get(side)!;
                 pass.setPipeline(pipeline)
                 pass.setBindGroup(0, this.scene.usedGlobalBindGroup)
-                pass.setBindGroup(1,item.material.bindGroup)
-                pass.setBindGroup(2,item.geometry.bindGroup)
+                pass.setBindGroup(1, item.material.bindGroup)
+                pass.setBindGroup(2, item.geometry.bindGroup)
                 item.vertexBuffers.forEach((buffer, i) => {
                     pass.setVertexBuffer(i, buffer)
                 })

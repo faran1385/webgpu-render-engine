@@ -23,6 +23,14 @@ export class SkinManager extends BaseLayer {
         return {nodeMap, buffer, data}
     }
 
+    removeSkins() {
+        SkinManager.skins.forEach((skin) => {
+            skin.buffer.destroy();
+        })
+
+        SkinManager.skins.clear()
+    }
+
     private static calculateBones(skin: Skin, nodeMap: Map<Node, SceneObject>) {
         const invBindAccessor = skin.getInverseBindMatrices();
         if (!invBindAccessor) throw new Error('Skin has no inverseBindMatrices accessor.');
@@ -38,7 +46,10 @@ export class SkinManager extends BaseLayer {
         //    We expect your SceneObject to have `skin?: Skin` set when it was created.
         let meshSceneObj: SceneObject | undefined;
         for (const so of nodeMap.values()) {
-            if (so.skin === skin) { meshSceneObj = so; break; }
+            if (so.skin === skin) {
+                meshSceneObj = so;
+                break;
+            }
         }
 
         // 3) fallback: if no SceneObject explicitly references skin, try skin.getSkeleton() node -> SceneObject

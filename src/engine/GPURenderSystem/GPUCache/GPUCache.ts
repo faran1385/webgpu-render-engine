@@ -43,6 +43,18 @@ export class GPUCache {
         GPUCache.textureGenerator = new TextureGenerator()
     }
 
+    static reset() {
+        GPUCache.textureGenerator.reset();
+        GPUCache.visualTexturesCache.clear();
+        GPUCache.textureLocationCache.clear();
+        GPUCache.globalTextureArrayCache.clear();
+        GPUCache.personalTextureArrayCache.clear();
+        GPUCache.bindGroupLayoutMap.clear();
+        GPUCache.shaderModuleMap.clear();
+        GPUCache.pipelineLayoutMap.clear();
+        GPUCache.pipelineMap.clear();
+    }
+
     isSubset(subset: Set<number>, superset: Set<number>): boolean {
         for (const el of subset) {
             if (!superset.has(el)) return false;

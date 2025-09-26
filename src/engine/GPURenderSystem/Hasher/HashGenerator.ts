@@ -44,6 +44,20 @@ export class HashGenerator {
         HashGenerator.textEncoder = new TextEncoder();
     }
 
+    reset() {
+        this.textureId = 0;
+        this.textureHashToData.clear();
+        this.textureHashCache = new WeakMap<Uint8Array, number>();
+        this.hashToRequests.clear();
+        this.sharedTextureHashes.clear()
+        this.shaderHashCache.clear();
+        this.bindGroupLayoutHashCache.clear();
+        this.pipelineLayoutHashCache.clear();
+        this.pipelineHashCache.clear();
+        this.userLoadedTextureHashToData = new Map<number, Uint8ClampedArray>();
+        this.userLoadedTextureHashCache = new WeakMap<Uint8ClampedArray, number>();
+    }
+
     userLoadedHashTexture(data: Uint8ClampedArray) {
         if (!this.userLoadedTextureHashCache.has(data)) {
             this.textureId++
@@ -68,10 +82,10 @@ export class HashGenerator {
 
     setTextureHashGraph(matInfo: MatInfo): SetTextureResult {
         if (!matInfo || typeof matInfo.hash !== "number" || !matInfo.dimensions) {
-            return { addedToHashRequests: false };
+            return {addedToHashRequests: false};
         }
 
-        const { hash, dimensions, material, textureKey } = matInfo;
+        const {hash, dimensions, material, textureKey} = matInfo;
         const dimensionKey = `${dimensions[0]}_${dimensions[1]}`;
 
         material.textureInfo[textureKey].hash = hash;
@@ -82,7 +96,7 @@ export class HashGenerator {
             requestMap = new Map<MaterialInstance, Set<keyof standardMaterialTextureInfo>>();
             requestMap.set(material, new Set([textureKey]));
             this.hashToRequests.set(hash, requestMap);
-            return { addedToHashRequests: true };
+            return {addedToHashRequests: true};
         }
 
         if (!requestMap.has(material)) {
@@ -92,7 +106,7 @@ export class HashGenerator {
         }
 
         if (requestMap.size <= 1) {
-            return { addedToHashRequests: true };
+            return {addedToHashRequests: true};
         }
 
         let categoryArray = this.sharedTextureHashes.get(dimensionKey);
@@ -115,7 +129,7 @@ export class HashGenerator {
             assignShareIndexToRequestMap(0);
             return {
                 addedToHashRequests: true,
-                assignedShare: { arrayIndex: 0, dimensionKey }
+                assignedShare: {arrayIndex: 0, dimensionKey}
             };
         }
 
@@ -127,7 +141,7 @@ export class HashGenerator {
             assignShareIndexToRequestMap(lastIndex);
             return {
                 addedToHashRequests: true,
-                assignedShare: { arrayIndex: lastIndex, dimensionKey }
+                assignedShare: {arrayIndex: lastIndex, dimensionKey}
             };
         }
 
@@ -136,7 +150,7 @@ export class HashGenerator {
         assignShareIndexToRequestMap(newIndex);
         return {
             addedToHashRequests: true,
-            assignedShare: { arrayIndex: newIndex, dimensionKey }
+            assignedShare: {arrayIndex: newIndex, dimensionKey}
         };
     }
 

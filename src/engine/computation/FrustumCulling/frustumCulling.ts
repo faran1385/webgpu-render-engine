@@ -100,6 +100,33 @@ export class FrustumCulling extends BaseLayer {
         minMaxData.needsUpdate = true
     }
 
+    public removeFrustumCulling() {
+        const minMaxData = this.scene.largeBufferMap.get("FrustumCullingMinMax")!
+        minMaxData.needsUpdate = true
+        minMaxData.version = 0
+        minMaxData.array = []
+        minMaxData.buffer?.destroy()
+
+        const indirectOffsets = this.scene.largeBufferMap.get("IndirectOffsets")!
+        indirectOffsets.needsUpdate = true
+        indirectOffsets.version = 0
+        indirectOffsets.array = []
+        indirectOffsets.buffer?.destroy()
+
+        const frustumCullingViewPlanes = this.scene.largeBufferMap.get("FrustumCullingViewPlanes")!
+        frustumCullingViewPlanes.needsUpdate = true
+        frustumCullingViewPlanes.version = 0
+        frustumCullingViewPlanes.array = []
+        frustumCullingViewPlanes.buffer?.destroy()
+
+
+        this.frustumCullingSceneObjects.clear()
+        this.calculatedMinMaxes.clear();
+        this.localLargeBufferVersions.clear();
+        this.dispatchSize = 0;
+        this.computeSetup = undefined
+    }
+
     private resizeBuffer(bufferType: "minMax" | "offsets") {
         const largeBuffer = bufferType === "minMax" ? this.scene.largeBufferMap.get("FrustumCullingMinMax")! : this.scene.largeBufferMap.get("IndirectOffsets")!
         const array = bufferType === "minMax" ? new Float32Array(largeBuffer?.array as number[]) : new Uint32Array(largeBuffer?.array as number[])

@@ -9,6 +9,7 @@ import {ComputeManager} from "../computation/computeManager.ts";
 import {Background} from "../environment/Background.ts";
 import {Environment} from "../environment/Environment.ts";
 import {ToneMapping} from "../../helpers/postProcessUtils/postProcessUtilsTypes.ts";
+import {hashAndCreateRenderSetup} from "../../helpers/global.helper.ts";
 
 
 export class Scene extends BaseLayer {
@@ -65,6 +66,19 @@ export class Scene extends BaseLayer {
 
     public set setBackground(p: Primitive) {
         this._background = p;
+    }
+
+    async resetScene() {
+        this.skinManager.removeSkins();
+        this.computeManager.removeComputation()
+        await hashAndCreateRenderSetup(this.computeManager, [this.background!.material], [this.background!], true)
+
+        this.transmissionPrimitives.clear()
+        this._drawCalls.clear()
+        this.renderQueue = {
+            queue: [],
+            noneTransmissionOpaque: [],
+        }
     }
 
     drawCalls() {

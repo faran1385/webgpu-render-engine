@@ -1,6 +1,6 @@
 import {RenderLayer} from "./layers/renderLayer.ts";
 import {GLTFLoader} from "./engine/loader/loader.ts";
-import {initWebGPU} from "./helpers/global.helper.ts";
+import {getStats, initWebGPU} from "./helpers/global.helper.ts";
 import {ModelRenderer} from "./renderers/modelRenderer.ts";
 
 import {Camera} from "./engine/camera/Camera.ts";
@@ -9,6 +9,9 @@ import {OrbitControls} from "./engine/camera/controls.ts";
 import {HDRLoader} from "./engine/environment/HDRLoader.ts";
 import {ToneMapping} from "./helpers/postProcessUtils/postProcessUtilsTypes.ts";
 import {ProcessManager} from "./engine/loader/processManager.ts";
+import {readFileAsArrayBuffer, setupDragAndDrop} from "./helpers/dragAndDrop.ts";
+import {GPUCache} from "./engine/GPURenderSystem/GPUCache/GPUCache.ts";
+import {BaseLayer} from "./layers/baseLayer.ts";
 
 
 const {device, canvas, ctx, baseLayer} = await initWebGPU()
@@ -64,9 +67,9 @@ await scene.environmentManager.setEnvironment(cubeMap, 1024, 128, 32, (p) => {
 // })
 
 
-const modelRenderer = new ModelRenderer({
-    scene
-});
+const modelRenderer = new ModelRenderer();
+modelRenderer.setScene(scene)
+
 window.addEventListener("resize", () => {
     camera.setAspect(canvas.width / canvas.height)
     camera.updateProjectionMatrix()
@@ -80,6 +83,30 @@ if (window.innerWidth < 768) {
 await modelRenderer.init()
 modelRenderer.animate(animations[0])
 
+setupDragAndDrop(async (file) => {
+    try {
+        const data = await readFileAsArrayBuffer(file)
+
+        const {nodeMap, sceneObjects, animations} = await loader.load(data, scene, undefined, async () => {
+            await scene.resetScene()
+            GPUCache.reset();
+            BaseLayer.reset()
+            modelRenderer.reset()
+        })
+
+        modelRenderer.setScene(scene)
+        modelRenderer.setSceneObjects(sceneObjects)
+        modelRenderer.setNodeMap(nodeMap)
+
+        await modelRenderer.init()
+        modelRenderer.animate(animations[0])
+    } catch (e) {
+        alert("Failed to load")
+    }
+})
+window.addEventListener("dragstart",()=>{
+    console.log("s")
+})
 
 const render = () => {
     const commandEncoder = device.createCommandEncoder()
@@ -90,9 +117,11 @@ const render = () => {
 };
 
 const update = () => {
+
     baseLayer.updateGlobalBuffers()
     render()
     requestAnimationFrame(update);
+
 }
 
 update()

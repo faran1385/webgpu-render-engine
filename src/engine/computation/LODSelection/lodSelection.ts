@@ -4,11 +4,11 @@ import {createGPUBuffer} from "../../../helpers/global.helper.ts";
 import {Scene} from "../../scene/Scene.ts";
 import {BaseLayer} from "../../../layers/baseLayer.ts";
 
-export class LodSelection extends BaseLayer{
-    private  lodSelectionSceneObjects: Set<SceneObject> = new Set<SceneObject>();
-    private  localLargeBufferVersions: Map<string, number> = new Map<string, number>();
-    private  dispatchSize: number = 0;
-    private  computeSetup: {
+export class LodSelection extends BaseLayer {
+    private lodSelectionSceneObjects: Set<SceneObject> = new Set<SceneObject>();
+    private localLargeBufferVersions: Map<string, number> = new Map<string, number>();
+    private dispatchSize: number = 0;
+    private computeSetup: {
         pipeline: GPUComputePipeline,
         layout: GPUBindGroupLayout,
         bindGroup: GPUBindGroup
@@ -37,13 +37,31 @@ export class LodSelection extends BaseLayer{
 
     }
 
+    removeLods() {
+        this.lodSelectionSceneObjects.clear();
+        this.localLargeBufferVersions.clear();
+        this.dispatchSize = 0;
+        this.computeSetup = undefined;
+        const offsets = this.scene.largeBufferMap.get("LODSelectionOffsets")!
+        offsets.buffer?.destroy()
+        offsets.array = [];
+        offsets.version = 0;
+        offsets.needsUpdate = true
+
+        const data = this.scene.largeBufferMap.get("LODSelectionData")!
+        data.buffer?.destroy()
+        data.array = [];
+        data.version = 0;
+        data.needsUpdate = true
+    }
+
     private inspector() {
         window.addEventListener("keypress", async (e) => {
             if (e.key === "s") {
                 const indirect = this.scene.largeBufferMap.get("Indirect")?.buffer as GPUBuffer
                 const resultBuffer = this.scene.device.createBuffer({
                     size: indirect.size,
-                    label:"result Buffer",
+                    label: "result Buffer",
                     usage: GPUBufferUsage.MAP_READ | GPUBufferUsage.COPY_DST
                 })
                 const encoder = this.device.createCommandEncoder()
@@ -137,7 +155,7 @@ export class LodSelection extends BaseLayer{
     }
 
     public renderLoop(commandEncoder: GPUCommandEncoder) {
-        if(this.lodSelectionSceneObjects.size > 0){
+        if (this.lodSelectionSceneObjects.size > 0) {
             const offsets = this.scene.largeBufferMap.get("LODSelectionOffsets")!
             const lodesData = this.scene.largeBufferMap.get("LODSelectionData")!
             const indirect = this.scene.largeBufferMap.get("Indirect")!

@@ -22,11 +22,18 @@ export class TextureGenerator {
         sampler: GPUSampler,
         name: `SAMPLER_${number}`
     }>()
-    private nameToSampler=new Map<string, GPUSampler>()
+    private nameToSampler = new Map<string, GPUSampler>()
     private samplerCounter = 0;
 
     public getSampler(key: string) {
         return this.nameToSampler.get(key);
+    }
+
+    reset() {
+        this.textureCache = new WeakMap<Uint8Array, GPUTexture>();
+        this.samplerCache.clear()
+        this.nameToSampler.clear()
+        this.samplerCounter = 0
     }
 
     mapMagFilter(filter?: number): GPUFilterMode {
@@ -114,7 +121,7 @@ export class TextureGenerator {
             sampler: gpuSampler,
             name: `SAMPLER_${this.samplerCounter}`,
         })
-        this.nameToSampler.set(`SAMPLER_${this.samplerCounter}`,gpuSampler)
+        this.nameToSampler.set(`SAMPLER_${this.samplerCounter}`, gpuSampler)
 
         return {
             sampler: gpuSampler,

@@ -120,8 +120,10 @@ export class RenderLayer extends BaseLayer {
 
         }
 
-        BaseLayer.activeScene.currentBindGroup = "main"
-        BaseLayer.activeScene.usedGlobalBindGroup = BaseLayer.activeScene.globalBindGroup;
-        RenderLayer.activeScene.update(commandEncoder, primitives, this.ctx.getCurrentTexture().createView(), BaseLayer.depthTexture.createView(), "main pass")
+        if(BaseLayer.activeScene.drawCalls().size > 0){
+            BaseLayer.activeScene.currentBindGroup = "main"
+            BaseLayer.activeScene.usedGlobalBindGroup = BaseLayer.activeScene.globalBindGroup;
+            RenderLayer.activeScene.update(commandEncoder, primitives, this.ctx.getCurrentTexture().createView(), BaseLayer.depthTexture.createView(), "main pass")
+        }
     }
 }

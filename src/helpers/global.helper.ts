@@ -67,7 +67,7 @@ export function computeNormalMatrix3x4(modelMatrix: mat4): Float32Array {
     return normalMat3x4;
 }
 
-export const getDownloadWithPercentage = async (url: string, process: (percentage: number) => void) => {
+export const getDownloadWithPercentage = async (url: string, process: ((percentage: number) => void) | undefined) => {
     const response = await fetch(url);
     if (!response.body) throw new Error('Streams not supported');
 
@@ -86,7 +86,7 @@ export const getDownloadWithPercentage = async (url: string, process: (percentag
             let percent = (received / contentLength) * 100;
             percent = Math.min(100, percent);
 
-            process(percent)
+            if (process) process(percent)
         }
     }
 
@@ -112,17 +112,17 @@ export const initWebGPU = async () => {
 
 
     const adapter = await navigator.gpu.requestAdapter({});
-    const massageText=document.getElementById("load-massage")!;
-    const percentageText=document.getElementById("load-percentage")!;
+    const massageText = document.getElementById("load-massage")!;
+    const percentageText = document.getElementById("load-percentage")!;
 
-    if(!navigator?.gpu){
-        massageText.innerHTML="Webgpu is not supported";
-        percentageText.innerHTML="";
+    if (!navigator?.gpu) {
+        massageText.innerHTML = "Webgpu is not supported";
+        percentageText.innerHTML = "";
     }
 
     if (!adapter) {
-        massageText.innerHTML="No adapter supplied!";
-        percentageText.innerHTML="";
+        massageText.innerHTML = "No adapter supplied!";
+        percentageText.innerHTML = "";
         throw new Error('No adapter supplied!');
     }
     canvas.width = window.innerWidth;
@@ -131,8 +131,8 @@ export const initWebGPU = async () => {
         requiredFeatures: ['float32-filterable']
     });
     if (!device) {
-        massageText.innerHTML="No device supplied!";
-        percentageText.innerHTML="";
+        massageText.innerHTML = "No device supplied!";
+        percentageText.innerHTML = "";
         throw new Error('No device supplied!');
     }
 

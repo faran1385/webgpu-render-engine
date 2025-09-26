@@ -68,6 +68,13 @@ export class BaseLayer {
     public static pipelineUpdateQueue = new Set<Primitive>()
 
 
+    static reset(){
+        this.hasher.reset();
+        this.pipelineUpdateQueue.clear()
+        this.materialUpdateQueue.clear()
+        this.transmissionPrimitives.clear()
+    }
+
     public setActiveScene(activeScene: Scene): void {
         BaseLayer.activeScene = activeScene;
     }

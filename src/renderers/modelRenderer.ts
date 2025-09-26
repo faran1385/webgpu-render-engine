@@ -13,9 +13,7 @@ export type PipelineLayoutHashItem = {
     primitive: Primitive
     hash: number
 }
-type modelRendererEntry = {
-    scene: Scene,
-}
+
 
 
 export class ModelRenderer {
@@ -23,18 +21,28 @@ export class ModelRenderer {
     private sceneObjects: Set<SceneObject> = new Set();
     private modelAnimator: ModelAnimator;
     private nodeMap: Map<Node, SceneObject> = new Map();
-    private scene: Scene;
+    private scene: Scene | null = null;
 
-    constructor({
-                    scene,
-                }: modelRendererEntry) {
+    constructor() {
         this.modelAnimator = new ModelAnimator()
-        this.scene = scene;
     }
 
     public fillInitEntry() {
         if (this.sceneObjects.size === 0) throw new Error("sceneObjects is not set");
+        if (!this.scene) throw new Error("scene is not set");
+
         GPUCache.smartRenderer.entryCreator(this.sceneObjects, this.nodeMap, Array.from(this.materials), this.scene)
+    }
+
+    reset() {
+        this.materials.clear();
+        this.sceneObjects.clear();
+        this.nodeMap.clear();
+        this.scene = null;
+    }
+
+    setScene(scene: Scene) {
+        this.scene = scene;
     }
 
     public setNodeMap(map: Map<Node, SceneObject>) {
@@ -43,8 +51,10 @@ export class ModelRenderer {
 
     public setSceneObjects(sceneObjects: Set<SceneObject>) {
         this.sceneObjects = sceneObjects;
+        if (!this.scene) throw new Error("scene is not set");
+
         this.sceneObjects.forEach(sceneObject => {
-            sceneObject.scene = this.scene
+            sceneObject.scene = this.scene as Scene
             sceneObject.primitives?.forEach(primitive => {
                 this.materials.add(primitive.material)
             })
@@ -80,25 +90,28 @@ export class ModelRenderer {
 
     public setLodThreshold(threshold: number) {
         if (this.sceneObjects.size === 0) throw new Error("sceneObjects is not set");
+        if (!this.scene) throw new Error("scene is not set");
         this.sceneObjects.forEach(sceneObject => {
             if (sceneObject.primitives && sceneObject.primitives.size > 0) {
                 sceneObject.setLodSelectionThreshold(threshold);
-                this.scene.computeManager.setLodSelection(sceneObject)
+                this.scene!.computeManager.setLodSelection(sceneObject)
             }
         })
     }
 
     public enableFrustumCulling() {
         if (this.sceneObjects.size === 0) throw new Error("sceneObjects is not set");
+        if (!this.scene) throw new Error("scene is not set");
         this.sceneObjects.forEach(sceneObject => {
             if (sceneObject.primitives && sceneObject.primitives.size > 0) {
-                this.scene.computeManager.setFrustumCulling(sceneObject)
+                this.scene!.computeManager.setFrustumCulling(sceneObject)
             }
         })
     }
 
     public animate(animation: Animation, mode: "loop" | "backAndForth" | undefined = undefined) {
         if (this.sceneObjects.size === 0) throw new Error("sceneObjects is not set");
+        if (!this.scene) throw new Error("scene is not set");
         this.scene.renderLoopAnimations.push(() => {
             const time = performance.now() / 1000
             this.modelAnimator.update(animation, time, mode, this.nodeMap)
@@ -109,7 +122,10 @@ export class ModelRenderer {
     public async init() {
 
         const primitives: Primitive[] = []
+
         this.fillInitEntry()
+        if (!this.scene) throw new Error("scene is not set");
+
         if (this.scene.transmissionPrimitives.size > 0 && !BaseLayer.sceneOpaqueTexture) {
             BaseLayer.setSceneOpaqueOnlyTexture()
         }
@@ -117,7 +133,7 @@ export class ModelRenderer {
             sceneObject.primitives?.forEach(p => primitives.push(p))
         })
         await hashAndCreateRenderSetup(this.scene.computeManager, Array.from(this.materials), primitives)
-        primitives.forEach(primitive => this.scene.appendDrawCall = primitive)
+        primitives.forEach(primitive => this.scene!.appendDrawCall = primitive)
         primitives.forEach(primitive => {
             const material = primitive.material;
             const geo = primitive.geometry;
@@ -129,11 +145,11 @@ export class ModelRenderer {
                 compileHints: [],
                 bindings: []
             }
-            material.descriptor.bindGroupEntries=[]
-            material.descriptor.layoutEntries=[]
+            material.descriptor.bindGroupEntries = []
+            material.descriptor.layoutEntries = []
 
-            geo.descriptors.layout=[]
-            geo.descriptors.bindGroup=[]
+            geo.descriptors.layout = []
+            geo.descriptors.bindGroup = []
             geo.shaderCode = null
             geo.shaderDescriptor = {
                 ...geo.shaderDescriptor,

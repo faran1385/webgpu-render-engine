@@ -1,6 +1,6 @@
 import {RenderLayer} from "./layers/renderLayer.ts";
 import {GLTFLoader} from "./engine/loader/loader.ts";
-import {getStats, initWebGPU} from "./helpers/global.helper.ts";
+import {initWebGPU} from "./helpers/global.helper.ts";
 import {ModelRenderer} from "./renderers/modelRenderer.ts";
 
 import {Camera} from "./engine/camera/Camera.ts";

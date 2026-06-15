@@ -318,6 +318,7 @@ export class GPUCache {
     protected async getEntries(material: MaterialInstance) {
         if (!material.descriptor.bindGroupEntries) throw new Error(`${material.name} has no descriptor for entries`)
         const entries: GPUBindGroupEntry[] = await Promise.all(material.descriptor.bindGroupEntries.map(async (entry) => {
+
             if (entry.sampler) {
                 return {
                     binding: entry.bindingPoint,

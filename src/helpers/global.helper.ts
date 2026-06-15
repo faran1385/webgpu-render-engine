@@ -182,7 +182,6 @@ export async function hashAndCreateRenderSetup(
     isBindGroupLayoutAlreadySet: undefined | true = undefined
 ) {
 
-
     const geometryLayoutHashes = BaseLayer.gpuCache.createGeometryLayoutHashes(primitives)
     if (!isBindGroupLayoutAlreadySet) {
         materials.forEach(mat => {
@@ -195,6 +194,7 @@ export async function hashAndCreateRenderSetup(
             mat.bindGroupLayout = (BaseLayer.gpuCache.getResource(hash, "bindGroupLayoutMap") as any).layout as any
         })
     }
+
     await BaseLayer.gpuCache.createMaterialHashes(materials)
     materials.forEach(mat => mat.compileShader())
     const shaderCodesHashes = BaseLayer.gpuCache.createShaderCodeHashes(primitives, true)

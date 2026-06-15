@@ -580,7 +580,6 @@ export class MaterialLayoutGenerator {
             group: 1
         })
         mat.bindingCounter++
-        console.log(mat.descriptor)
     }
 
     setMaterialHashes(mat: MaterialInstance) {
@@ -805,7 +804,6 @@ export class MaterialLayoutGenerator {
         destroyPending.forEach((texture) => {
             texture.destroy()
         })
-        console.log(GPUCache.personalTextureArrayCache, GPUCache.globalTextureArrayCache, mat.descriptor)
         this.setOverrides(mat)
         mat.updateAbleTexture.clear()
     }

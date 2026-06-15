@@ -60,11 +60,6 @@ await scene.environmentManager.setEnvironment(cubeMap, 1024, 128, 32, (p) => {
     }
 })
 
-// scene.lightManager.addDirectional({
-//     intensity: 2,
-//     color: [1, 1, 1],
-//     position: [0, 2, 3]
-// })
 
 
 const modelRenderer = new ModelRenderer();
@@ -84,29 +79,28 @@ await modelRenderer.init()
 modelRenderer.animate(animations[0])
 
 setupDragAndDrop(async (file) => {
+    await scene.resetScene()
+    GPUCache.reset();
+    BaseLayer.reset()
+    modelRenderer.reset()
+
     try {
         const data = await readFileAsArrayBuffer(file)
 
-        const {nodeMap, sceneObjects, animations} = await loader.load(data, scene, undefined, async () => {
-            await scene.resetScene()
-            GPUCache.reset();
-            BaseLayer.reset()
-            modelRenderer.reset()
-        })
+        const {nodeMap, sceneObjects, animations} = await loader.load(data, scene, undefined)
 
         modelRenderer.setScene(scene)
         modelRenderer.setSceneObjects(sceneObjects)
         modelRenderer.setNodeMap(nodeMap)
 
         await modelRenderer.init()
+
         modelRenderer.animate(animations[0])
     } catch (e) {
         alert("Failed to load")
     }
 })
-window.addEventListener("dragstart",()=>{
-    console.log("s")
-})
+
 
 const render = () => {
     const commandEncoder = device.createCommandEncoder()

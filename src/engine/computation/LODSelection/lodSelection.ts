@@ -69,8 +69,6 @@ export class LodSelection extends BaseLayer {
                 this.device.queue.submit([encoder.finish()])
                 await this.device.queue.onSubmittedWorkDone()
                 await resultBuffer.mapAsync(GPUMapMode.READ)
-                const data = new Uint32Array(resultBuffer.getMappedRange())
-                console.log(data)
             }
         })
     }

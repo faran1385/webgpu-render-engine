@@ -4,7 +4,6 @@ export function setupDragAndDrop(onFile: (file: File) => void) {
 
         const dragover = document.querySelector(".dragover div") as HTMLDivElement | null;
         if (dragover) {
-            console.log(dragover)
             dragover.classList.add("active");
         }
     });
@@ -12,7 +11,6 @@ export function setupDragAndDrop(onFile: (file: File) => void) {
     window.addEventListener("dragleave",()=>{
         const dragover = document.querySelector(".dragover div") as HTMLDivElement | null;
         if (dragover) {
-            console.log(dragover)
             dragover.classList.remove("active");
         }
     })
@@ -29,10 +27,8 @@ export function setupDragAndDrop(onFile: (file: File) => void) {
         } else {
             alert("Only .glb or .gltf files are supported!");
         }
-
         const dragover = document.querySelector(".dragover div") as HTMLDivElement | null;
         if (dragover) {
-            console.log(dragover)
             dragover.classList.remove("active");
         }
     });
